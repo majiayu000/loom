@@ -21,7 +21,7 @@ pub(crate) fn push_rollback_error(errors: &mut Vec<Value>, step: &str, message: 
     }));
 }
 
-pub(super) fn maybe_push_rollback_fault(errors: &mut Vec<Value>, step: &str) -> bool {
+pub(crate) fn maybe_push_rollback_fault(errors: &mut Vec<Value>, step: &str) -> bool {
     if rollback_fault_active(step) {
         push_rollback_error(errors, step, format!("fault injected at {}", step));
         return true;
@@ -357,13 +357,46 @@ pub(super) fn collect_materialized_files(
     Ok(files)
 }
 
-pub(super) fn reset_command_created_commits(ctx: &crate::state::AppContext, previous_head: &str) {
-    let _ = gitops::run_git_allow_failure(ctx, &["reset", "--soft", previous_head]);
+pub(super) fn reset_command_created_commits(
+    ctx: &crate::state::AppContext,
+    previous_head: &str,
+) -> Vec<Value> {
+    let mut errors = Vec::new();
+    if maybe_push_rollback_fault(&mut errors, "reset_command_created_commit") {
+        return errors;
+    }
+    match gitops::run_git_allow_failure(ctx, &["reset", "--soft", previous_head]) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => push_rollback_error(
+            &mut errors,
+            "reset_command_created_commit",
+            String::from_utf8_lossy(&output.stderr).trim(),
+        ),
+        Err(err) => push_rollback_error(&mut errors, "reset_command_created_commit", err),
+    }
+    errors
 }
 
-pub(super) fn unstage_registry_state(ctx: &crate::state::AppContext) {
-    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/registry"]);
-    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/v3"]);
+pub(crate) fn unstage_registry_state(ctx: &crate::state::AppContext) -> Vec<Value> {
+    let mut errors = Vec::new();
+    for (path, step) in [
+        ("state/registry", "unstage_registry_state"),
+        ("state/v3", "unstage_legacy_registry_state"),
+    ] {
+        if maybe_push_rollback_fault(&mut errors, step) {
+            continue;
+        }
+        match gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", path]) {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => push_rollback_error(
+                &mut errors,
+                step,
+                String::from_utf8_lossy(&output.stderr).trim(),
+            ),
+            Err(err) => push_rollback_error(&mut errors, step, err),
+        }
+    }
+    errors
 }
 
 pub(super) fn stage_registry_state(
@@ -389,15 +422,21 @@ pub(super) fn rollback_registry_audit_after_failure(
     had_registry_layout: bool,
     had_legacy_layout: bool,
     legacy_layout_backup: Option<&serde_json::Value>,
-) {
-    let _ = restore_registry_audit_state(paths, registry_backup);
-    rollback_registry_layout_after_failure(
+) -> Vec<Value> {
+    let mut errors = Vec::new();
+    if !maybe_push_rollback_fault(&mut errors, "restore_registry_audit_state")
+        && let Err(err) = restore_registry_audit_state(paths, registry_backup)
+    {
+        push_rollback_error(&mut errors, "restore_registry_audit_state", err);
+    }
+    errors.extend(rollback_registry_layout_after_failure(
         ctx,
         paths,
         had_registry_layout,
         had_legacy_layout,
         legacy_layout_backup,
-    );
+    ));
+    errors
 }
 
 pub(super) fn rollback_registry_layout_after_failure(
@@ -406,29 +445,38 @@ pub(super) fn rollback_registry_layout_after_failure(
     had_registry_layout: bool,
     had_legacy_layout: bool,
     legacy_layout_backup: Option<&serde_json::Value>,
-) {
+) -> Vec<Value> {
+    let mut errors = Vec::new();
     if had_legacy_layout && !had_registry_layout {
         let legacy_dir = paths.state_dir.join("v3");
         if let Some(backup) = legacy_layout_backup {
-            match remove_path_if_exists(&paths.registry_dir) {
-                Ok(()) | Err(_) => {}
+            if let Err(err) = remove_path_if_exists(&paths.registry_dir) {
+                push_rollback_error(&mut errors, "remove_registry_layout", err);
             }
-            match restore_path_from_backup(&legacy_dir, backup) {
-                Ok(()) | Err(_) => {}
+            if !maybe_push_rollback_fault(&mut errors, "restore_legacy_registry_layout")
+                && let Err(err) = restore_path_from_backup(&legacy_dir, backup)
+            {
+                push_rollback_error(&mut errors, "restore_legacy_registry_layout", err);
             }
         } else {
-            match remove_path_if_exists(&legacy_dir) {
-                Ok(()) | Err(_) => {}
+            if let Err(err) = remove_path_if_exists(&legacy_dir) {
+                push_rollback_error(&mut errors, "remove_legacy_registry_layout", err);
             }
-            match fs::rename(&paths.registry_dir, legacy_dir) {
-                Ok(()) | Err(_) => {}
+            if !maybe_push_rollback_fault(&mut errors, "restore_legacy_registry_layout")
+                && let Err(err) = fs::rename(&paths.registry_dir, legacy_dir)
+            {
+                push_rollback_error(&mut errors, "restore_legacy_registry_layout", err);
             }
         }
-    } else if !had_registry_layout && !had_legacy_layout {
-        let _ = remove_path_if_exists(&paths.registry_dir);
+    } else if !had_registry_layout
+        && !had_legacy_layout
+        && let Err(err) = remove_path_if_exists(&paths.registry_dir)
+    {
+        push_rollback_error(&mut errors, "remove_registry_layout", err);
     }
     remove_backup_path_best_effort(legacy_layout_backup);
-    unstage_registry_state(ctx);
+    errors.extend(unstage_registry_state(ctx));
+    errors
 }
 
 pub(super) fn remove_backup_path_best_effort(backup: Option<&serde_json::Value>) {
@@ -460,11 +508,16 @@ pub(super) fn rollback_import_after_commit(
     registry_backup: &RegistryAuditStateBackup,
     previous_head: &str,
     imported_rels: &[String],
-) {
-    reset_command_created_commits(ctx, previous_head);
-    rollback_imported_skills(ctx, imported_rels);
-    let _ = restore_registry_audit_state(paths, registry_backup);
-    unstage_registry_state(ctx);
+) -> Vec<Value> {
+    let mut errors = reset_command_created_commits(ctx, previous_head);
+    errors.extend(rollback_imported_skills(ctx, imported_rels));
+    if !maybe_push_rollback_fault(&mut errors, "restore_registry_audit_state")
+        && let Err(err) = restore_registry_audit_state(paths, registry_backup)
+    {
+        push_rollback_error(&mut errors, "restore_registry_audit_state", err);
+    }
+    errors.extend(unstage_registry_state(ctx));
+    errors
 }
 
 pub(super) fn rollback_monitor_after_commit(
@@ -474,30 +527,62 @@ pub(super) fn rollback_monitor_after_commit(
     previous_head: &str,
     imported_rels: &[String],
     update_rollbacks: &[MonitorUpdateRollback],
-) {
-    reset_command_created_commits(ctx, previous_head);
-    rollback_monitor_changes(ctx, imported_rels, update_rollbacks);
-    let _ = restore_registry_audit_state(paths, registry_backup);
-    unstage_registry_state(ctx);
+) -> Vec<Value> {
+    let mut errors = reset_command_created_commits(ctx, previous_head);
+    errors.extend(rollback_monitor_changes(
+        ctx,
+        imported_rels,
+        update_rollbacks,
+    ));
+    if !maybe_push_rollback_fault(&mut errors, "restore_registry_audit_state")
+        && let Err(err) = restore_registry_audit_state(paths, registry_backup)
+    {
+        push_rollback_error(&mut errors, "restore_registry_audit_state", err);
+    }
+    errors.extend(unstage_registry_state(ctx));
+    errors
 }
 
 pub(super) fn rollback_monitor_changes(
     ctx: &crate::state::AppContext,
     imported_rels: &[String],
     update_rollbacks: &[MonitorUpdateRollback],
-) {
+) -> Vec<Value> {
+    let mut errors = Vec::new();
     for update in update_rollbacks.iter().rev() {
-        let _ = remove_path_if_exists(&update.dst);
-        let _ = fs::rename(&update.previous, &update.dst);
-        let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", &update.skill_rel]);
+        if let Err(err) = remove_path_if_exists(&update.dst) {
+            push_rollback_error(&mut errors, "remove_monitor_update", err);
+        }
+        if !maybe_push_rollback_fault(&mut errors, "restore_monitor_update")
+            && let Err(err) = fs::rename(&update.previous, &update.dst)
+        {
+            push_rollback_error(&mut errors, "restore_monitor_update", err);
+        }
+        if !maybe_push_rollback_fault(&mut errors, "unstage_monitor_update") {
+            match gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", &update.skill_rel]) {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => push_rollback_error(
+                    &mut errors,
+                    "unstage_monitor_update",
+                    String::from_utf8_lossy(&output.stderr).trim(),
+                ),
+                Err(err) => push_rollback_error(&mut errors, "unstage_monitor_update", err),
+            }
+        }
     }
 
-    rollback_imported_skills(ctx, imported_rels);
+    errors.extend(rollback_imported_skills(ctx, imported_rels));
+    errors
 }
 
-pub(super) fn rollback_imported_skills(ctx: &crate::state::AppContext, skill_rels: &[String]) {
+pub(super) fn rollback_imported_skills(
+    ctx: &crate::state::AppContext,
+    skill_rels: &[String],
+) -> Vec<Value> {
+    let mut errors = Vec::new();
     for skill_rel in skill_rels {
         let dst = ctx.root.join(skill_rel);
-        rollback_added_skill(ctx, skill_rel, &dst);
+        errors.extend(rollback_added_skill(ctx, skill_rel, &dst));
     }
+    errors
 }

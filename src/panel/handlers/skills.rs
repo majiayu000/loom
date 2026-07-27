@@ -1,13 +1,16 @@
 use axum::{Json, extract::Path as AxumPath, extract::State, http::StatusCode};
 use serde_json::json;
 
-use crate::cli::{SkillInspectArgs, SkillOnlyArgs};
-use crate::commands::{App, build_skill_read_model};
+use crate::cli::{
+    Command, SkillCommand, SkillDiagnoseArgs, SkillDiagnoseCheck, SkillInspectArgs,
+    SkillTrashCommand,
+};
+use crate::commands::build_skill_read_model;
 use crate::envelope::Envelope;
 use crate::types::ErrorCode;
 
 use super::super::PanelState;
-use super::common::panel_command_envelope;
+use super::super::auth::run_panel_command;
 
 pub(in crate::panel) async fn v1_skills(
     State(state): State<PanelState>,
@@ -47,12 +50,17 @@ pub(in crate::panel) async fn v1_skill_diagnose(
     AxumPath(skill_name): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let app = App {
-        ctx: state.ctx.as_ref().clone(),
-    };
-    panel_command_envelope(
+    run_panel_command(
+        &state,
         "skill.diagnose",
-        app.cmd_skill_diagnose(&SkillOnlyArgs { skill: skill_name }),
+        StatusCode::OK,
+        Command::Skill {
+            command: SkillCommand::Diagnose(SkillDiagnoseArgs {
+                skill: skill_name,
+                agent: None,
+                check: SkillDiagnoseCheck::All,
+            }),
+        },
     )
 }
 
@@ -60,27 +68,34 @@ pub(in crate::panel) async fn v1_skill_inspect(
     AxumPath(skill_name): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let app = App {
-        ctx: state.ctx.as_ref().clone(),
-    };
-    panel_command_envelope(
+    run_panel_command(
+        &state,
         "skill.inspect",
-        app.cmd_skill_inspect(&SkillInspectArgs {
-            skill: skill_name,
-            agent: None,
-            workspace: None,
-            profile: None,
-            include_telemetry: false,
-            brief: false,
-        }),
+        StatusCode::OK,
+        Command::Skill {
+            command: SkillCommand::Inspect(SkillInspectArgs {
+                skill: skill_name,
+                agent: None,
+                workspace: None,
+                profile: None,
+                include_telemetry: false,
+                brief: false,
+            }),
+        },
     )
 }
 
 pub(in crate::panel) async fn v1_skill_trash(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let app = App {
-        ctx: state.ctx.as_ref().clone(),
-    };
-    panel_command_envelope("skill.trash.list", app.cmd_skill_trash_list())
+    run_panel_command(
+        &state,
+        "skill.trash.list",
+        StatusCode::OK,
+        Command::Skill {
+            command: SkillCommand::Trash {
+                command: SkillTrashCommand::List,
+            },
+        },
+    )
 }

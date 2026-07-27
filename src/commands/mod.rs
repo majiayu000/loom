@@ -17,6 +17,8 @@ mod mcp;
 mod meta;
 #[cfg(test)]
 mod observed_tests;
+mod ops_activity;
+pub(crate) use ops_activity::build_ops_activity;
 mod org_policy;
 mod package_export;
 mod plan_cmds;
@@ -26,6 +28,7 @@ mod provenance;
 #[path = "provider_cmds/model.rs"]
 mod provider_cmds;
 mod provision;
+mod registry_txn;
 mod rollback_reconciliation;
 mod skill_activation;
 mod skill_authoring;
@@ -374,21 +377,23 @@ impl App {
             Command::Roles { command } => self.cmd_roles(command, &request_id),
             Command::Instruction { command } => self.cmd_instruction(command),
             Command::Workflow { command } => self.cmd_workflow(command),
-            Command::Index(args) if args.action == "build" => self.cmd_index_build(args),
-            Command::Index(args) if args.action == "status" => self.cmd_index_status(),
+            Command::Index(args) if args.is_build_action() => self.cmd_index_build(args),
+            Command::Index(args) if args.is_status_action() => self.cmd_index_status(),
             Command::Index(args) => Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
                 format!(
-                    "unknown index action '{}'; expected build or status",
-                    args.action
+                    "unknown index action '{}'; expected {}",
+                    args.action,
+                    args.expected_actions()
                 ),
             )),
-            Command::Active(args) if args.action == "recommend" => self.cmd_active_recommend(args),
+            Command::Active(args) if args.is_recommend_action() => self.cmd_active_recommend(args),
             Command::Active(args) => Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
                 format!(
-                    "unknown active action '{}'; expected recommend",
-                    args.action
+                    "unknown active action '{}'; expected {}",
+                    args.action,
+                    args.expected_actions()
                 ),
             )),
             Command::Sync { command } => self.cmd_sync(command),

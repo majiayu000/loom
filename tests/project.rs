@@ -687,6 +687,36 @@ fn skill_release_removes_new_registry_layout_after_late_failure() {
 }
 
 #[test]
+fn skill_release_reports_tag_delete_rollback_failure() {
+    let root = TestDir::new("registry-skill-release-tag-delete-rollback-error");
+    write_example_skill(root.path(), "model-onboarding");
+    commit_skill_without_registry(root.path(), "model-onboarding", "seed skill");
+
+    let (release_output, release_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("LOOM_FAULT_INJECT", "skill_release_after_state_commit"),
+            ("LOOM_ROLLBACK_FAULT_INJECT", "delete_release_tag"),
+        ],
+        &["skill", "release", "model-onboarding", "v1.0.0"],
+    );
+
+    assert!(
+        !release_output.status.success(),
+        "release unexpectedly succeeded"
+    );
+    assert_eq!(release_env["ok"], Value::Bool(false));
+    assert!(
+        rollback_error_steps(&release_env).contains(&"delete_release_tag".to_string()),
+        "missing release tag rollback error: {release_env}"
+    );
+    assert!(
+        git_tag_exists(root.path(), "release/model-onboarding/v1.0.0"),
+        "injected rollback failure should leave the release tag in place"
+    );
+}
+
+#[test]
 fn skill_release_restores_legacy_v3_layout_after_late_failure() {
     let root = TestDir::new("registry-skill-release-legacy-v3-rollback");
     write_example_skill(root.path(), "model-onboarding");
@@ -1398,5 +1428,45 @@ fn skill_project_rolls_back_observation_after_late_audit_failure() {
     assert!(
         !observation_path.exists(),
         "failed project should not leave observation history"
+    );
+}
+
+#[test]
+fn skill_release_reports_index_restore_failure_on_tag_conflict() {
+    let root = TestDir::new("registry-skill-release-tag-conflict-rollback-visibility");
+    write_example_skill(root.path(), "model-onboarding");
+    commit_skill_without_registry(root.path(), "model-onboarding", "seed skill");
+    // Pre-create the release tag so create_annotated_tag fails and the release
+    // takes the early rollback path that previously discarded restore_index errors.
+    git_output(
+        root.path(),
+        &["tag", "release/model-onboarding/v1.0.0", "HEAD"],
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_ROLLBACK_FAULT_INJECT", "restore_git_index")],
+        &["skill", "release", "model-onboarding", "v1.0.0"],
+    );
+
+    assert!(
+        !output.status.success(),
+        "release unexpectedly succeeded with a pre-existing release tag"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert!(
+        rollback_error_steps(&env)
+            .iter()
+            .any(|step| step == "restore_git_index"),
+        "expected restore_git_index rollback error to be visible: {}",
+        env
+    );
+    assert!(
+        env["error"]["details"]["original_error"]["message"]
+            .as_str()
+            .expect("original error message")
+            .contains("release/model-onboarding/v1.0.0"),
+        "original tag failure must stay visible alongside rollback errors: {}",
+        env
     );
 }

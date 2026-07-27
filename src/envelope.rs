@@ -72,6 +72,46 @@ impl Envelope {
         details: serde_json::Value,
         next_actions: Vec<NextAction>,
     ) -> Self {
+        Self::err_parts(
+            cmd,
+            request_id,
+            code.as_str().to_string(),
+            message,
+            details,
+            next_actions,
+        )
+    }
+
+    /// Build an error envelope from a raw error-code string. Panel surfaces
+    /// use codes (for example `UNAUTHORIZED`) that are not part of the CLI
+    /// `ErrorCode` enum; this keeps their envelope construction on the same
+    /// single type instead of hand-assembled JSON.
+    pub fn err_code(
+        cmd: &str,
+        request_id: String,
+        code: &str,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        let next_actions = default_next_actions(code);
+        Self::err_parts(
+            cmd,
+            request_id,
+            code.to_string(),
+            message,
+            details,
+            next_actions,
+        )
+    }
+
+    fn err_parts(
+        cmd: &str,
+        request_id: String,
+        code: String,
+        message: impl Into<String>,
+        details: serde_json::Value,
+        next_actions: Vec<NextAction>,
+    ) -> Self {
         Self {
             ok: false,
             cmd: cmd.to_string(),
@@ -80,13 +120,19 @@ impl Envelope {
             cli_contract_version: crate::cli_contract::CLI_CONTRACT_VERSION.to_string(),
             data: serde_json::json!({}),
             error: Some(ErrorBody {
-                code: code.as_str().to_string(),
+                code,
                 message: message.into(),
                 details,
                 next_actions,
             }),
             meta: Meta::default(),
         }
+    }
+
+    pub fn into_value(self) -> serde_json::Value {
+        // Every field is a string, bool, or `serde_json::Value`, so
+        // serialization cannot fail.
+        serde_json::to_value(self).expect("envelope serialization is infallible")
     }
 }
 

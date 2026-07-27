@@ -126,8 +126,8 @@ impl App {
 
         let skill_rel = format!("skills/{}", plan.skill);
         if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
-            rollback_added_skill(&self.ctx, &skill_rel, &plan.path);
-            return Err(map_git(err));
+            let rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &plan.path);
+            return Err(map_git(err).with_rollback_errors(rollback_errors));
         }
 
         let commit = match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {
@@ -137,14 +137,15 @@ impl App {
                 match gitops::commit(&self.ctx, &message) {
                     Ok(commit) => Some(commit),
                     Err(err) => {
-                        rollback_added_skill(&self.ctx, &skill_rel, &plan.path);
-                        return Err(map_git(err));
+                        let rollback_errors =
+                            rollback_added_skill(&self.ctx, &skill_rel, &plan.path);
+                        return Err(map_git(err).with_rollback_errors(rollback_errors));
                     }
                 }
             }
             Err(err) => {
-                rollback_added_skill(&self.ctx, &skill_rel, &plan.path);
-                return Err(map_git(err));
+                let rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &plan.path);
+                return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
 
@@ -158,8 +159,8 @@ impl App {
                 &mut meta,
             )
         {
-            rollback_added_skill(&self.ctx, &skill_rel, &plan.path);
-            return Err(err);
+            let rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &plan.path);
+            return Err(err.with_rollback_errors(rollback_errors));
         }
 
         Ok((

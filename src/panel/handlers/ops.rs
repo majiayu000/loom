@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::net::SocketAddr;
 
 use axum::{
@@ -6,14 +5,11 @@ use axum::{
     extract::{ConnectInfo, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use chrono::{DateTime, Utc};
 use serde_json::json;
 
 use crate::cli::{Command, HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand};
+use crate::commands::build_ops_activity;
 use crate::envelope::Envelope;
-use crate::gitops;
-use crate::state::OpsAuditOperation;
-use crate::state_model::RegistryOperationRecord;
 use crate::types::ErrorCode;
 
 use super::super::auth::{
@@ -21,7 +17,7 @@ use super::super::auth::{
     registry_ok, run_panel_command,
 };
 use super::super::{HistoryRepairRequest, PanelState};
-use super::common::{DEFAULT_OPS_PAGE_SIZE, MAX_OPS_PAGE_SIZE, OpsQuery, panel_v1_registry_error};
+use super::common::{OpsQuery, panel_v1_registry_error};
 
 pub(in crate::panel) async fn v1_registry_ops(
     Query(query): Query<OpsQuery>,
@@ -29,22 +25,22 @@ pub(in crate::panel) async fn v1_registry_ops(
 ) -> (StatusCode, Json<serde_json::Value>) {
     match load_registry_snapshot(&state.ctx, "registry.ops") {
         Ok(snapshot) => {
-            let (history_bodies, history_warnings) =
-                match gitops::history_journal_bodies(&state.ctx) {
-                    Ok(bodies) => (bodies, Vec::new()),
-                    Err(err) => (
-                        Vec::new(),
-                        vec![format!("failed to read loom-history branch: {}", err)],
-                    ),
-                };
-            let audit_report = match state
-                .ctx
-                .read_ops_audit_report_with_history(history_bodies, history_warnings)
-            {
-                Ok(report) => report,
+            match build_ops_activity(&state.ctx, &snapshot, query.limit, query.offset) {
+                Ok(page) => (
+                    StatusCode::OK,
+                    Json(json!(Envelope::ok(
+                        "registry.ops",
+                        uuid::Uuid::new_v4().to_string(),
+                        page.data,
+                        crate::envelope::Meta {
+                            warnings: page.warnings,
+                            ..crate::envelope::Meta::default()
+                        }
+                    ))),
+                ),
                 Err(err) => {
                     let request_id = uuid::Uuid::new_v4().to_string();
-                    return (
+                    (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(json!(Envelope::err(
                             "registry.ops",
@@ -53,186 +49,12 @@ pub(in crate::panel) async fn v1_registry_ops(
                             err.to_string(),
                             json!({})
                         ))),
-                    );
+                    )
                 }
-            };
-            let limit = query
-                .limit
-                .unwrap_or(DEFAULT_OPS_PAGE_SIZE)
-                .clamp(1, MAX_OPS_PAGE_SIZE);
-            let offset = query.offset.unwrap_or(0);
-            let registry_count = snapshot.operations.len();
-            let mut rows = snapshot
-                .operations
-                .iter()
-                .map(registry_operation_activity_row)
-                .collect::<Vec<_>>();
-            let audited_snapshot_tags = audit_report
-                .operations
-                .iter()
-                .filter(|op| op.command == "skill.release")
-                .filter_map(|op| json_string_field(&op.details, &["tag"]))
-                .collect::<BTreeSet<_>>();
-            for op in &audit_report.operations {
-                if op.command == "release"
-                    && json_string_field(&op.details, &["tag"])
-                        .is_some_and(|tag| audited_snapshot_tags.contains(&tag))
-                {
-                    continue;
-                }
-                rows.push(audit_operation_activity_row(op));
             }
-            rows.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-            let total = rows.len();
-            let operations = rows
-                .into_iter()
-                .skip(offset)
-                .take(limit)
-                .map(|(_, _, row)| row)
-                .collect::<Vec<_>>();
-
-            (
-                StatusCode::OK,
-                Json(json!(Envelope::ok(
-                    "registry.ops",
-                    uuid::Uuid::new_v4().to_string(),
-                    json!({
-                        "state_model": "registry",
-                        "count": total,
-                        "registry_count": registry_count,
-                        "audit_count": audit_report.operations.len(),
-                        "loaded_count": operations.len(),
-                        "offset": offset,
-                        "limit": limit,
-                        "has_more": offset + operations.len() < total,
-                        "operations": operations,
-                        "checkpoint": snapshot.checkpoint,
-                    }),
-                    crate::envelope::Meta {
-                        warnings: audit_report.warnings,
-                        ..crate::envelope::Meta::default()
-                    }
-                ))),
-            )
         }
         Err(err) => panel_v1_registry_error(err),
     }
-}
-
-fn registry_operation_activity_row(
-    op: &RegistryOperationRecord,
-) -> (DateTime<Utc>, String, serde_json::Value) {
-    let summary = operation_summary(op);
-    (
-        op.updated_at,
-        op.op_id.clone(),
-        json!({
-            "op_id": op.op_id,
-            "audit_id": null,
-            "source": "registry",
-            "intent": op.intent,
-            "status": op.status,
-            "ack": op.ack,
-            "request_id": summary.request_id,
-            "skill": summary.skill,
-            "target": summary.target,
-            "binding": summary.binding,
-            "method": summary.method,
-            "last_error": op.last_error,
-            "created_at": op.created_at,
-            "updated_at": op.updated_at,
-        }),
-    )
-}
-
-fn audit_operation_activity_row(
-    op: &OpsAuditOperation,
-) -> (DateTime<Utc>, String, serde_json::Value) {
-    let intent = audit_operation_intent(op);
-    let summary = audit_operation_summary(op);
-    let ack = matches!(op.status.as_str(), "acked" | "purged" | "succeeded");
-    (
-        op.updated_at,
-        op.op_id.clone(),
-        json!({
-            "op_id": null,
-            "audit_id": op.op_id,
-            "source": op.source,
-            "intent": intent,
-            "status": op.status,
-            "ack": ack,
-            "request_id": op.request_id,
-            "skill": summary.skill,
-            "target": summary.target,
-            "binding": summary.binding,
-            "method": summary.method,
-            "last_error": null,
-            "created_at": op.created_at,
-            "updated_at": op.updated_at,
-        }),
-    )
-}
-
-fn audit_operation_intent(op: &OpsAuditOperation) -> String {
-    match op.command.as_str() {
-        "release" => "skill.release".to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn audit_operation_summary(op: &OpsAuditOperation) -> OperationSummary {
-    OperationSummary {
-        request_id: Some(op.request_id.clone()),
-        skill: json_string_field(&op.details, &["skill_id", "skill"]),
-        target: json_string_field(&op.details, &["target_id", "target"]),
-        binding: json_string_field(&op.details, &["binding_id", "binding"]),
-        method: json_string_field(&op.details, &["method"]),
-    }
-}
-
-#[derive(Default)]
-struct OperationSummary {
-    request_id: Option<String>,
-    skill: Option<String>,
-    target: Option<String>,
-    binding: Option<String>,
-    method: Option<String>,
-}
-
-fn operation_summary(op: &RegistryOperationRecord) -> OperationSummary {
-    OperationSummary {
-        request_id: json_string_field(&op.payload, &["request_id"]),
-        skill: operation_skill_summary(op),
-        target: json_string_field(&op.payload, &["target_id", "target"]),
-        binding: json_string_field(&op.payload, &["binding_id", "binding"]),
-        method: json_string_field(&op.payload, &["method"]),
-    }
-}
-
-fn operation_skill_summary(op: &RegistryOperationRecord) -> Option<String> {
-    if let Some(skill) = json_string_field(&op.payload, &["skill_id", "skill"]) {
-        return Some(skill);
-    }
-    for field in ["imported", "updated"] {
-        let skills = op
-            .effects
-            .get(field)
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|item| item.get("skill").and_then(serde_json::Value::as_str))
-            .collect::<Vec<_>>();
-        if !skills.is_empty() {
-            return Some(skills.join(", "));
-        }
-    }
-    None
-}
-
-fn json_string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| value.get(*key).and_then(serde_json::Value::as_str))
-        .map(ToString::to_string)
 }
 
 pub(in crate::panel) async fn ops_retry(

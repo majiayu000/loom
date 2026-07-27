@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use serde_json::json;
 
 use crate::cli::OrphanCleanArgs;
@@ -10,7 +9,7 @@ use crate::envelope::Meta;
 use crate::state_model::RegistryProjectionInstance;
 
 use super::super::helpers::{map_io, map_registry_state};
-use super::super::projections::record_registry_operation;
+use super::super::registry_txn::{RegistryTxnState, RegistryWriteTxn};
 use super::super::{App, CommandFailure};
 
 pub(super) enum LivePathCleanup {
@@ -142,49 +141,43 @@ impl App {
         }
         snapshot.projections.projections = retained;
 
-        paths
-            .save_projections(&snapshot.projections)
-            .map_err(map_registry_state)?;
-
-        let op_id = match record_registry_operation(
-            &paths,
-            "skill.orphan.clean",
-            json!({ "request_id": request_id }),
-            json!({
-                "cleaned_projection_ids": cleaned_ids,
-                "cleaned_paths": deleted_paths,
-                "deleted_paths": deleted_paths,
-                "skipped_paths": skipped_paths,
-                "delete_live_paths": args.delete_live_paths,
-            }),
-        ) {
-            Ok(op_id) => op_id,
-            Err(err) => {
-                let mut restored_projections = original_projections;
-                if !deleted_projection_ids.is_empty() {
-                    restored_projections.projections.retain(|projection| {
-                        !deleted_projection_ids.contains(&projection.instance_id)
-                    });
-                }
-                paths
-                    .save_projections(&restored_projections)
-                    .with_context(|| {
-                        format!(
-                            "failed to rollback projections after operation-log failure: {}",
-                            err
-                        )
-                    })
-                    .map_err(map_registry_state)?;
-
-                if !deleted_projection_ids.is_empty() {
-                    return Err(map_registry_state(err.context(
-                        "operation log failed after live path deletion; leaving metadata removed for deleted live paths",
-                    )));
-                } else {
-                    return Err(map_registry_state(err));
-                }
-            }
+        // Deleted live paths cannot be resurrected, so the rollback state keeps
+        // their metadata removed even when the operation record fails.
+        let mut restored_projections = original_projections;
+        if !deleted_projection_ids.is_empty() {
+            restored_projections
+                .projections
+                .retain(|projection| !deleted_projection_ids.contains(&projection.instance_id));
+        }
+        let op_failure_note = if deleted_projection_ids.is_empty() {
+            None
+        } else {
+            Some(
+                "operation log failed after live path deletion; leaving metadata removed for deleted live paths"
+                    .to_string(),
+            )
         };
+        let outcome = self.registry_write_txn(
+            &paths,
+            RegistryWriteTxn {
+                op_name: "skill.orphan.clean",
+                request_id,
+                state: RegistryTxnState::Projections {
+                    next: snapshot.projections,
+                    original: restored_projections,
+                },
+                op_payload: json!({ "request_id": request_id }),
+                op_effects: json!({
+                    "cleaned_projection_ids": cleaned_ids,
+                    "cleaned_paths": deleted_paths,
+                    "deleted_paths": deleted_paths,
+                    "skipped_paths": skipped_paths,
+                    "delete_live_paths": args.delete_live_paths,
+                }),
+                op_failure_note,
+                commit: None,
+            },
+        )?;
 
         Ok((
             json!({
@@ -195,10 +188,7 @@ impl App {
                 "skipped_paths": skipped_paths,
                 "delete_live_paths": args.delete_live_paths,
             }),
-            Meta {
-                op_id: Some(op_id),
-                ..Meta::default()
-            },
+            outcome.meta,
         ))
     }
 

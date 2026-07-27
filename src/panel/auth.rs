@@ -14,7 +14,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{Cli, Command};
-use crate::error_actions::default_next_actions;
+use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
 use crate::state_model::{RegistryStateError, RegistryStatePaths};
 use crate::types::ErrorCode;
@@ -284,27 +284,7 @@ pub(crate) fn error_envelope(
     code: &str,
     message: &str,
 ) -> serde_json::Value {
-    let next_actions = default_next_actions(code);
-    let mut error = json!({
-        "code": code,
-        "message": message,
-        "details": {}
-    });
-    if !next_actions.is_empty() {
-        error["next_actions"] = json!(next_actions);
-    }
-    json!({
-        "ok": false,
-        "cmd": cmd,
-        "request_id": request_id,
-        "version": env!("CARGO_PKG_VERSION"),
-        "cli_contract_version": crate::cli_contract::CLI_CONTRACT_VERSION,
-        "data": {},
-        "error": error,
-        "meta": {
-            "warnings": []
-        }
-    })
+    Envelope::err_code(cmd, request_id.to_string(), code, message, json!({})).into_value()
 }
 
 pub(super) fn load_registry_snapshot(
@@ -338,17 +318,11 @@ pub(super) fn registry_ok_with_warnings(
     data: serde_json::Value,
     warnings: Vec<String>,
 ) -> Json<serde_json::Value> {
-    Json(json!({
-        "ok": true,
-        "cmd": cmd,
-        "request_id": Uuid::new_v4().to_string(),
-        "version": env!("CARGO_PKG_VERSION"),
-        "cli_contract_version": crate::cli_contract::CLI_CONTRACT_VERSION,
-        "data": data,
-        "meta": {
-            "warnings": warnings,
-        }
-    }))
+    let meta = Meta {
+        warnings,
+        ..Meta::default()
+    };
+    Json(Envelope::ok(cmd, Uuid::new_v4().to_string(), data, meta).into_value())
 }
 
 pub(super) fn registry_error(cmd: &str, code: &str, message: String) -> Json<serde_json::Value> {

@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use anyhow::Context;
 use chrono::Utc;
 use serde_json::json;
 
@@ -10,10 +9,10 @@ use crate::state_model::{RegistryWorkspaceBinding, RegistryWorkspaceMatcher};
 use crate::types::ErrorCode;
 
 use super::super::helpers::{
-    agent_kind_as_str, commit_registry_state, map_lock, map_registry_state, unique_binding_id,
-    validate_non_empty, validate_policy_profile, workspace_matcher_kind_as_str,
+    agent_kind_as_str, map_lock, map_registry_state, unique_binding_id, validate_non_empty,
+    validate_policy_profile, workspace_matcher_kind_as_str,
 };
-use super::super::projections::{maybe_autosync_or_queue, record_registry_operation};
+use super::super::registry_txn::{RegistryTxnCommit, RegistryTxnState, RegistryWriteTxn};
 use super::super::{App, CommandFailure};
 
 impl App {
@@ -124,56 +123,38 @@ impl App {
         bindings
             .bindings
             .sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
-        paths.save_bindings(&bindings).map_err(map_registry_state)?;
-
-        let op_id = match record_registry_operation(
+        let outcome = self.registry_write_txn(
             &paths,
-            "workspace.binding.add",
-            json!({
-                "binding_id": binding.binding_id,
-                "agent": binding.agent,
-                "profile_id": binding.profile_id,
-                "matcher_kind": binding.workspace_matcher.kind,
-                "matcher_value": binding.workspace_matcher.value,
-                "target_id": binding.default_target_id,
-                "request_id": request_id
-            }),
-            json!({
-                "binding_id": binding.binding_id
-            }),
-        ) {
-            Ok(op_id) => op_id,
-            Err(err) => {
-                paths
-                    .save_bindings(&original_bindings)
-                    .with_context(|| {
-                        format!(
-                            "failed to rollback bindings after operation-log failure: {}",
-                            err
-                        )
-                    })
-                    .map_err(map_registry_state)?;
-                return Err(map_registry_state(err));
-            }
-        };
-        let commit = commit_registry_state(&self.ctx, &format!("binding({}): add", binding_id))?;
-        let mut meta = Meta {
-            op_id: Some(op_id),
-            ..Meta::default()
-        };
-        if let Some(commit) = &commit {
-            maybe_autosync_or_queue(
-                &self.ctx,
-                "workspace.binding.add",
+            RegistryWriteTxn {
+                op_name: "workspace.binding.add",
                 request_id,
-                json!({"binding_id": binding.binding_id, "commit": commit}),
-                &mut meta,
-            )?;
-        }
+                state: RegistryTxnState::Bindings {
+                    next: bindings,
+                    original: original_bindings,
+                },
+                op_payload: json!({
+                    "binding_id": binding.binding_id,
+                    "agent": binding.agent,
+                    "profile_id": binding.profile_id,
+                    "matcher_kind": binding.workspace_matcher.kind,
+                    "matcher_value": binding.workspace_matcher.value,
+                    "target_id": binding.default_target_id,
+                    "request_id": request_id
+                }),
+                op_effects: json!({
+                    "binding_id": binding.binding_id
+                }),
+                op_failure_note: None,
+                commit: Some(RegistryTxnCommit {
+                    message: format!("binding({}): add", binding_id),
+                    autosync_payload: json!({"binding_id": binding.binding_id}),
+                }),
+            },
+        )?;
 
         Ok((
-            json!({"binding": binding, "commit": commit, "noop": false}),
-            meta,
+            json!({"binding": binding, "commit": outcome.commit, "noop": false}),
+            outcome.meta,
         ))
     }
 
@@ -243,62 +224,34 @@ impl App {
             }
         }
 
-        paths
-            .save_bindings_rules_projections(
-                &snapshot.bindings,
-                &snapshot.rules,
-                &snapshot.projections,
-            )
-            .map_err(map_registry_state)?;
-
-        let op_id = match record_registry_operation(
+        let outcome = self.registry_write_txn(
             &paths,
-            "workspace.binding.remove",
-            json!({
-                "binding_id": binding.binding_id,
-                "request_id": request_id
-            }),
-            json!({
-                "binding_id": binding.binding_id,
-                "removed_rules": removed_rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
-                "orphaned_projection_ids": orphaned_projection_ids,
-                "orphan_projections": args.orphan_projections,
-            }),
-        ) {
-            Ok(op_id) => op_id,
-            Err(err) => {
-                paths
-                    .save_bindings_rules_projections(
-                        &original_bindings,
-                        &original_rules,
-                        &original_projections,
-                    )
-                    .with_context(|| {
-                        format!(
-                            "failed to rollback bindings after operation-log failure: {}",
-                            err
-                        )
-                    })
-                    .map_err(map_registry_state)?;
-                return Err(map_registry_state(err));
-            }
-        };
-
-        let mut meta = Meta {
-            op_id: Some(op_id),
-            ..Meta::default()
-        };
-        let commit =
-            commit_registry_state(&self.ctx, &format!("binding({}): remove", args.binding_id))?;
-        if let Some(commit) = &commit {
-            maybe_autosync_or_queue(
-                &self.ctx,
-                "workspace.binding.remove",
+            RegistryWriteTxn {
+                op_name: "workspace.binding.remove",
                 request_id,
-                json!({"binding_id": binding.binding_id, "commit": commit}),
-                &mut meta,
-            )?;
-        }
+                state: RegistryTxnState::BindingsRulesProjections {
+                    next: (snapshot.bindings, snapshot.rules, snapshot.projections),
+                    original: (original_bindings, original_rules, original_projections),
+                },
+                op_payload: json!({
+                    "binding_id": binding.binding_id,
+                    "request_id": request_id
+                }),
+                op_effects: json!({
+                    "binding_id": binding.binding_id,
+                    "removed_rules": removed_rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
+                    "orphaned_projection_ids": orphaned_projection_ids,
+                    "orphan_projections": args.orphan_projections,
+                }),
+                op_failure_note: None,
+                commit: Some(RegistryTxnCommit {
+                    message: format!("binding({}): remove", args.binding_id),
+                    autosync_payload: json!({"binding_id": binding.binding_id}),
+                }),
+            },
+        )?;
+        let commit = outcome.commit;
+        let mut meta = outcome.meta;
         if !orphaned_projection_ids.is_empty() {
             meta.warnings.push(format!(
                 "binding removed; {} projection(s) marked orphaned - run `loom skill orphan clean` to remove metadata",

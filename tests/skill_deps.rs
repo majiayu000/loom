@@ -427,6 +427,17 @@ fn missing_skill_returns_typed_error() {
 }
 
 #[test]
+fn diagnose_missing_skill_returns_typed_error() {
+    let root = TestDir::new("skill-diagnose-missing");
+
+    let (output, env) = run_loom(root.path(), &["skill", "diagnose", "missing"]);
+
+    assert!(!output.status.success(), "diagnose should fail: {env}");
+    assert_eq!(env["ok"], json!(false));
+    assert_eq!(env["error"]["code"], json!("SKILL_NOT_FOUND"));
+}
+
+#[test]
 fn mcp_requirement_list_merges_sources_and_redacts_secret_values() {
     let root = TestDir::new("mcp-requirements");
     write_skill(

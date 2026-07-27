@@ -1,9 +1,9 @@
 # Loom registry model CLI Contract
 
-Updated: 2026-07-21
+Updated: 2026-07-26
 Status: Implemented
 
-Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.9.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
+Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.10.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
 
 ## 1. Purpose
 
@@ -809,7 +809,7 @@ Rules:
 
 ## Continued contract
 
-Sections 11.1.5 through 19 remain normative and continue in
+Sections 11.1.5 through 26 remain normative and continue in
 [LOOM_CLI_CONTRACT_OPERATIONS.md](LOOM_CLI_CONTRACT_OPERATIONS.md).
 
 ## GH542 skill lifecycle statistics
@@ -852,3 +852,11 @@ second time. All counters use checked arithmetic and overflow fails with
 `STATE_CORRUPT` naming the aggregate field. Missing or malformed registry,
 telemetry config, or event I/O returns an error; empty, all-malformed, or
 filter-empty inputs return the complete zero/empty shape.
+
+## Registry initialization
+
+```bash
+loom --json --root <root> init
+```
+
+`init` initializes the default registry and scans existing agent skill directories.

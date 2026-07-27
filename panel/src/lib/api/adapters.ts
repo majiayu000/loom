@@ -106,7 +106,7 @@ export function adaptSkill(
 
   const newest = projForSkill.reduce<RegistryProjection | undefined>((acc, p) => {
     if (!p.updated_at) return acc;
-    if (!acc || !acc.updated_at) return p;
+    if (!acc?.updated_at) return p;
     return p.updated_at > acc.updated_at ? p : acc;
   }, undefined);
 

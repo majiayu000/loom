@@ -6,9 +6,6 @@ use crate::envelope::Envelope;
 
 use super::super::auth::status_for_registry_error_payload;
 
-pub(super) const DEFAULT_OPS_PAGE_SIZE: usize = 100;
-pub(super) const MAX_OPS_PAGE_SIZE: usize = 250;
-
 #[derive(Debug, Default, Deserialize)]
 pub(in crate::panel) struct ProjectionsQuery {
     #[serde(default)]

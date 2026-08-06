@@ -87,7 +87,7 @@ if [ -z "$target" ]; then
       target="x86_64-unknown-linux-gnu"
       ;;
     *)
-      die "no prebuilt release for ${system} ${machine}; install from source with 'cargo install skillloom'"
+      die "no prebuilt release for ${system} ${machine}; install the current source with 'git clone https://github.com/majiayu000/loom.git && cd loom && cargo install --path .'"
       ;;
   esac
 fi

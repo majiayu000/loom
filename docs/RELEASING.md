@@ -100,7 +100,7 @@ loom --help
 loom --version
 ```
 
-`cargo install skillloom` remains supported as a source-build path, but it is not the recommended first install path for users who want a guaranteed bundled Panel. Source builds that bundle Panel assets require the Panel frontend inputs and Bun during compile time; run `cd panel && bun install --frozen-lockfile` before building from source when the bundled Panel is required. Otherwise the CLI can build without embedded Panel assets.
+`cargo install --path .` from a current source checkout remains supported, but it is not the recommended first install path for users who want a guaranteed bundled Panel. Source builds that bundle Panel assets require the Panel frontend inputs and Bun during compile time; run `cd panel && bun install --frozen-lockfile` before building from source when the bundled Panel is required. Otherwise the CLI can build without embedded Panel assets. Do not advertise `cargo install skillloom` as current when the crates.io publish job was explicitly skipped.
 
 ## Future Install Surfaces
 

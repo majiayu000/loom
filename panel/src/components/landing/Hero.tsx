@@ -1,7 +1,7 @@
 import { ArrowRightIcon, ClockIcon, CopyIcon, MenuIcon, PanelIcon, StarIcon } from "../icons/landing_icons";
 import { HeroViz } from "./HeroViz";
 
-const INSTALL = "git clone https://github.com/majiayu000/loom.git && cd loom && cargo install --path .";
+const INSTALL = "curl -fsSL https://raw.githubusercontent.com/majiayu000/loom/main/scripts/install.sh | sh";
 
 export function LandingHero() {
   return (

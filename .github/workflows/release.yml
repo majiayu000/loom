@@ -237,6 +237,34 @@ jobs:
             --title "Loom ${GITHUB_REF_NAME}" \
             --notes "Release ${GITHUB_REF_NAME}."
 
+  distribution-readiness:
+    needs: github-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify advertised distribution surfaces
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/distribution-readiness.py --tag "$GITHUB_REF_NAME"
+
+      - name: Smoke public installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_root="$(mktemp -d)"
+          trap 'rm -rf "$install_root"' EXIT
+          scripts/install.sh \
+            --version "${GITHUB_REF_NAME#v}" \
+            --target x86_64-unknown-linux-gnu \
+            --bin-dir "$install_root/bin" \
+            --data-dir "$install_root/data"
+          "$install_root/bin/loom" --version
+          test -f "$install_root/data/current/skills/loom-registry/SKILL.md"
+          test -f "$install_root/data/current/contracts/agent-command-surfaces.toml"
+
   crates-io:
     needs: verify
     runs-on: ubuntu-latest
@@ -246,7 +274,14 @@ jobs:
     steps:
       - name: Skip when crates.io token is not configured
         if: env.CARGO_REGISTRY_TOKEN == ''
-        run: echo "CARGO_REGISTRY_TOKEN is not configured; skipping crates.io publish."
+        shell: bash
+        run: |
+          echo "::warning title=crates.io publish skipped::CARGO_REGISTRY_TOKEN is not configured; this release was not published to crates.io."
+          {
+            echo "### crates.io publish skipped"
+            echo
+            echo "\`CARGO_REGISTRY_TOKEN\` is not configured, so this release is available from GitHub Releases only."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout
         if: env.CARGO_REGISTRY_TOKEN != ''
@@ -276,7 +311,15 @@ jobs:
     steps:
       - name: Skip when Homebrew tap token is not configured
         if: env.HOMEBREW_TAP_TOKEN == ''
-        run: echo "HOMEBREW_TAP_TOKEN is not configured; skipping Homebrew tap PR."
+        shell: bash
+        run: |
+          echo "::warning title=Homebrew publish skipped::HOMEBREW_TAP_TOKEN is not configured; no Homebrew formula PR was opened."
+          {
+            echo "### Homebrew publish skipped"
+            echo
+            echo "\`HOMEBREW_TAP_TOKEN\` is not configured, so no formula PR was opened in \`${TAP_REPO}\`."
+            echo "Do not advertise \`brew install majiayu000/tap/loom\` until the formula exists on the tap's default branch."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Download release assets
         if: env.HOMEBREW_TAP_TOKEN != ''

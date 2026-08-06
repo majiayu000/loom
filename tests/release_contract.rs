@@ -318,6 +318,10 @@ fn readme_and_landing_advertise_the_verified_installer() {
     assert!(include_str!("../README.md").contains(installer));
     assert!(include_str!("../panel/src/components/landing/Hero.tsx").contains(installer));
     assert!(!include_str!("../README.md").contains("brew install majiayu000/tap/loom"));
+    assert!(
+        !include_str!("../scripts/install.sh")
+            .contains("install from source with 'cargo install skillloom'")
+    );
 }
 
 #[test]

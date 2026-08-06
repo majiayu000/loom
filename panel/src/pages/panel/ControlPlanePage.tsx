@@ -64,7 +64,7 @@ export function ControlPlanePage({
         </div>
         <div className="header-actions" role="tablist" aria-label="Control plane tabs">
           {TABS.map((item) => (
-            <button
+            <button type="button"
               key={item.id}
               role="tab"
               aria-selected={tab === item.id}

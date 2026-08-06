@@ -29,7 +29,7 @@ export function CliShowcase() {
           </div>
           <div className="cli-tabs">
             {CLI_TAB_ORDER.map((t) => (
-              <button key={t.key} className={tab === t.key ? "active" : ""} onClick={() => setTab(t.key)}>
+              <button type="button" key={t.key} className={tab === t.key ? "active" : ""} onClick={() => setTab(t.key)}>
                 {t.label}
               </button>
             ))}

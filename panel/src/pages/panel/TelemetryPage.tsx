@@ -86,7 +86,7 @@ export function TelemetryPage({ apiReachable, mode, refreshKey }: TelemetryPageP
           <div className="subtitle">Local usage, value, cost, drift, and risk from the telemetry report API.</div>
         </div>
         <div className="header-actions">
-          <button className="btn ghost" onClick={() => setManualTick((cur) => cur + 1)} disabled={!apiReachable || state.kind === "loading"}>
+          <button type="button" className="btn ghost" onClick={() => setManualTick((cur) => cur + 1)} disabled={!apiReachable || state.kind === "loading"}>
             <RefreshIcon /> {state.kind === "loading" ? "Refreshing..." : "Refresh"}
           </button>
         </div>

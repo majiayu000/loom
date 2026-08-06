@@ -33,7 +33,7 @@ export function StatusBar({
   const queued = viewModel.shell.counts.queuedWrites.value ?? 0;
 
   return (
-    <footer className="status-bar" aria-label="Panel status">
+    <footer className="status-bar">
       <div className="status-left">
         <span className="status-pill" data-tone={viewModel.shell.status.tone} title={viewModel.shell.status.title}>
           <span className="status-dot" />

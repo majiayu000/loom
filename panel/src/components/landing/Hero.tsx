@@ -31,7 +31,7 @@ export function LandingHero() {
           <div className="hero-install">
             <span className="prompt">$</span>
             <span>{INSTALL}</span>
-            <button
+            <button type="button"
               className="copy-btn"
               aria-label="Copy install command"
               onClick={() => navigator.clipboard?.writeText(INSTALL)}

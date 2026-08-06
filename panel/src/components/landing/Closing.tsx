@@ -59,17 +59,17 @@ export function LandingFooter() {
           </div>
           <div className="foot-col">
             <h5>Resources</h5>
-            <a href="#">CLI reference</a>
-            <a href="#">Docs</a>
-            <a href="#">Roadmap</a>
-            <a href="#">中文指南</a>
+            <a href="https://github.com/majiayu000/loom/blob/main/docs/LOOM_CLI_CONTRACT.md">CLI reference</a>
+            <a href="https://github.com/majiayu000/loom/tree/main/docs">Docs</a>
+            <a href="https://github.com/majiayu000/loom/blob/main/docs/UI_BACKLOG.md">Roadmap</a>
+            <a href="https://github.com/majiayu000/loom/blob/main/docs/LOOM_COMPLETE_GUIDE_ZH.md">中文指南</a>
           </div>
           <div className="foot-col">
             <h5>Community</h5>
             <a href="https://github.com/majiayu000/loom">GitHub</a>
             <a href="https://github.com/majiayu000/loom/issues">Issues</a>
             <a href="https://github.com/majiayu000/loom/discussions">Discussions</a>
-            <a href="#">Changelog</a>
+            <a href="https://github.com/majiayu000/loom/blob/main/CHANGELOG.md">Changelog</a>
           </div>
         </div>
         <div className="foot-bottom">

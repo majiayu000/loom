@@ -1,7 +1,19 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { usePanelData } from "../lib/api/usePanelData";
 import { api } from "../lib/api/client";
 import type { Op, PanelPageKey, Skill, Target } from "../lib/types";
+import { useMutation } from "../lib/useMutation";
+import { MutationBanner } from "../components/panel/MutationBanner";
+import { BindingAddForm } from "../components/panel/forms/BindingAddForm";
+import { TargetAddForm } from "../components/panel/forms/TargetAddForm";
 import { FirstRunPage } from "./panel/FirstRunPage";
 import { DoctorPage } from "./panel/DoctorPage";
 import { OperationLogRow } from "./OperationLogRow";
@@ -84,7 +96,7 @@ function initialView(): SkillMPage {
 
 function Icon({ d, size = 18 }: { d: string; size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <svg aria-hidden="true" focusable="false" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d={iconPath[d] ?? d} />
     </svg>
   );
@@ -103,6 +115,17 @@ function sourceLabel(skill: Skill) {
   if (skill.sourceStatus === "missing") return "missing";
   if (skill.sourceStatus === "non-compliant") return "non-compliant";
   return "registry";
+}
+
+function sourceStatusLabel(skill: Skill) {
+  return skill.observedImported ? "observed-only" : skill.sourceStatus;
+}
+
+function liveConnectionCopy(live: ReturnType<typeof usePanelData>) {
+  if (live.mode === "loading") return "正在连接注册表";
+  if (live.live) return "工作区已连接";
+  if (live.apiReachable) return "API 可达，注册表降级";
+  return "API offline";
 }
 
 function agentsForSkill(skill: Skill, targets: Target[]) {
@@ -211,6 +234,7 @@ export function SkillMPanel() {
   const [accent, setAccent] = useState(initialPrefs.accent);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const confirmCancelRef = useRef<HTMLButtonElement>(null);
 
   const counts = useMemo(() => {
     const failedOps = live.ops.filter((op) => op.status === "err").length;
@@ -257,7 +281,27 @@ export function SkillMPanel() {
       toast("err", error instanceof Error ? error.message : String(error));
     }
   };
-  const commitAction = async () => { const action = confirm; if (!action) return; setConfirm(null); await runAction(action.label, action.fn); };
+  const commitAction = async () => {
+    const action = confirm;
+    if (!action) return;
+    setConfirm(null);
+    await runAction(action.label, action.fn);
+  };
+
+  const trapConfirmFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Tab") return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+    if (controls.length === 0) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -270,11 +314,19 @@ export function SkillMPanel() {
       } else if (event.key === "Escape") {
         setPaletteOpen(false);
         setTermOpen(false);
+        setConfirm(null);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  useEffect(() => {
+    if (!confirm) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    confirmCancelRef.current?.focus();
+    return () => previous?.focus();
+  }, [confirm]);
 
   useEffect(() => {
     saveSkillMPreferences({ dark, density, accent });
@@ -294,7 +346,7 @@ export function SkillMPanel() {
           ) : (
             <>
               {view === "overview" && <Overview live={live} counts={counts} go={go} />}
-              {view === "skills" && <Skills skills={live.skills} targets={live.targets} query={query} setQuery={setQuery} selected={selected} setSelectedSkill={setSelectedSkill} convergenceSupported={live.backendCapabilities?.skill_convergence?.apply === true} onApplied={live.refetch} />}
+              {view === "skills" && <Skills skills={live.skills} targets={live.targets} query={query} setQuery={setQuery} selected={selected} setSelectedSkill={setSelectedSkill} convergenceSupported={live.backendCapabilities?.skill_convergence?.apply === true} onApplied={live.refetch} readOnly={live.mode !== "live"} />}
               {(view === "targets" || view === "bindings" || view === "projections") && <Plane live={live} tab={view} go={go} />}
               {(view === "ops" || view === "history") && <Ops live={live} history={view === "history"} go={go} confirm={setConfirm} />}
               {view === "sync" && <Sync live={live} confirm={setConfirm} />}
@@ -310,7 +362,33 @@ export function SkillMPanel() {
       <StatusBar live={live} counts={counts} dark={dark} setDark={setDark} onSync={() => go("sync")} onTerm={() => setTermOpen((open) => !open)} onTweaks={() => setTweaksOpen((open) => !open)} />
       {paletteOpen && <Palette skills={live.skills} go={(page) => { go(page); setPaletteOpen(false); }} openSkill={(name) => { setSelectedSkill(name); go("skills"); setPaletteOpen(false); }} close={() => setPaletteOpen(false)} />}
       {tweaksOpen && <Tweaks dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} close={() => setTweaksOpen(false)} />}
-      {confirm && <div className="sm-veil" onMouseDown={() => setConfirm(null)}><section className={`action-confirm ${confirm.tone === "danger" ? "danger" : ""}`} role="dialog" aria-modal="true" aria-label={confirm.title} onMouseDown={(event) => event.stopPropagation()}><div className="ac-head"><span className="ac-icon"><Icon d={confirm.tone === "danger" ? "x" : "sync"} /></span><div><h2>{confirm.title}</h2><p>{confirm.label}</p></div><button className="btn-icon" aria-label="关闭确认" onClick={() => setConfirm(null)}><Icon d="x" /></button></div><dl className="ac-facts"><div><dt>Affected scope</dt><dd>{confirm.scope}</dd></div>{typeof confirm.count === "number" && <div><dt>Queued count</dt><dd><b>{confirm.count}</b> queued</dd></div>}<div><dt>Reversibility</dt><dd>{confirm.undo}</dd></div><div><dt>Impact</dt><dd>{confirm.impact}</dd></div></dl><div className="ac-actions"><button className="btn-ghost sm" onClick={() => setConfirm(null)}>取消</button><button className={confirm.tone === "danger" ? "btn-ghost sm danger" : "btn-grad sm"} onClick={commitAction}>{confirm.action}</button></div></section></div>}
+      {confirm && (
+        <div className="sm-veil">
+          <section
+            className={`action-confirm ${confirm.tone === "danger" ? "danger" : ""}`}
+            role="dialog"
+            aria-modal="true"
+            aria-label={confirm.title}
+            onKeyDown={trapConfirmFocus}
+          >
+            <div className="ac-head">
+              <span className="ac-icon"><Icon d={confirm.tone === "danger" ? "x" : "sync"} /></span>
+              <div><h2>{confirm.title}</h2><p>{confirm.label}</p></div>
+              <button type="button" className="btn-icon" aria-label="关闭确认" onClick={() => setConfirm(null)}><Icon d="x" /></button>
+            </div>
+            <dl className="ac-facts">
+              <div><dt>Affected scope</dt><dd>{confirm.scope}</dd></div>
+              {typeof confirm.count === "number" && <div><dt>Queued count</dt><dd><b>{confirm.count}</b> queued</dd></div>}
+              <div><dt>Reversibility</dt><dd>{confirm.undo}</dd></div>
+              <div><dt>Impact</dt><dd>{confirm.impact}</dd></div>
+            </dl>
+            <div className="ac-actions">
+              <button ref={confirmCancelRef} type="button" className="btn-ghost sm" onClick={() => setConfirm(null)}>取消</button>
+              <button type="button" className={confirm.tone === "danger" ? "btn-ghost sm danger" : "btn-grad sm"} onClick={commitAction}>{confirm.action}</button>
+            </div>
+          </section>
+        </div>
+      )}
       <Toasts items={toasts} dismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))} />
     </div>
   );
@@ -327,7 +405,7 @@ function ActivityRail({ view, counts, onGo, onTerm }: { view: SkillMPage; counts
             {pages.filter((page) => page.group === group).map((page) => {
               const count = page.id === "skills" ? counts.skills : page.id === "targets" ? counts.targets : page.id === "bindings" ? counts.bindings : page.id === "projections" ? counts.projections : page.id === "ops" ? counts.attention : 0;
               return (
-                <button key={page.id} className={`act ${view === page.id ? "on" : ""} ${page.preview ? "preview" : ""}`} title={page.preview ? `${page.label} · Preview · not connected` : page.label} aria-label={page.preview ? `${page.label} Preview not connected` : page.label} onClick={() => onGo(page.id)}>
+                <button type="button" key={page.id} className={`act ${view === page.id ? "on" : ""} ${page.preview ? "preview" : ""}`} title={page.preview ? `${page.label} · Preview · not connected` : page.label} aria-label={page.preview ? `${page.label} Preview not connected` : page.label} onClick={() => onGo(page.id)}>
                   <Icon d={page.icon} size={20} />
                   <span className="act-label">{page.label}</span>{page.preview && <span className="act-preview">Preview</span>}
                   {count > 0 && <span className={`act-count ${page.id === "ops" ? "attn" : ""}`}>{count}</span>}
@@ -338,7 +416,7 @@ function ActivityRail({ view, counts, onGo, onTerm }: { view: SkillMPage; counts
         ))}
       </div>
       <div className="nav-bottom">
-        <button className="act" title="Terminal" onClick={onTerm}><Icon d="term" size={20} /></button>
+        <button type="button" className="act" title="Terminal" onClick={onTerm}><Icon d="term" size={20} /></button>
       </div>
     </nav>
   );
@@ -361,7 +439,7 @@ function Overview({ live, counts, go }: { live: ReturnType<typeof usePanelData>;
         <div>
           <div className="hero-kicker">注册表 · {statusText(live.live, counts.attention > 0 || live.warnings.length > 0)}</div>
           <h1><em>{root}</em></h1>
-          <p>{live.mode} · {live.live ? "工作区已连接" : live.apiReachable ? "API 可达，注册表降级" : "API offline"} · registry transport {live.convergence?.registry_transport.state ?? live.remote?.sync_state ?? "LOCAL_ONLY"} · projection {live.convergence?.projections.state ?? "unknown"} · visibility {live.convergence?.visibility.state ?? "unknown"}</p>
+          <p>{live.mode} · {liveConnectionCopy(live)} · registry transport {live.convergence?.registry_transport.state ?? live.remote?.sync_state ?? "LOCAL_ONLY"} · projection {live.convergence?.projections.state ?? "unknown"} · visibility {live.convergence?.visibility.state ?? "unknown"}</p>
         </div>
         <div className="hero-orb"><span /><span /><span /><span className="orb-core" /></div>
       </header>
@@ -381,8 +459,8 @@ function Overview({ live, counts, go }: { live: ReturnType<typeof usePanelData>;
             {failed ? <span className="da-fail"><b>{failed}</b> 失败</span> : null}
           </span>
           <div className="da-acts">
-            <button className="da-link" onClick={() => go("ops")}>Activity {"->"}</button>
-            <button className="da-link" onClick={() => go("doctor")}>Doctor {"->"}</button>
+            <button type="button" className="da-link" onClick={() => go("ops")}>Activity {"->"}</button>
+            <button type="button" className="da-link" onClick={() => go("doctor")}>Doctor {"->"}</button>
           </div>
         </div>
       ) : null}
@@ -392,11 +470,11 @@ function Overview({ live, counts, go }: { live: ReturnType<typeof usePanelData>;
           <Heatmap ops={live.ops} />
         </section>
         <section className="panel">
-          <div className="panel-head"><h3><Icon d="lib" />Skill 真实统计</h3><button className="link-btn" onClick={() => go("skills")}>查看 {"->"}</button></div>
+          <div className="panel-head"><h3><Icon d="lib" />Skill 真实统计</h3><button type="button" className="link-btn" onClick={() => go("skills")}>查看 {"->"}</button></div>
           <div className="ov-topskills">
             {live.skills.length > 0 && maxSkillOps === 0 && <div className="ovts-note">当前没有 skill usage ops；条形只按真实 registry edges 显示。</div>}
             {topSkills.map((item, index) => (
-              <button className="ovts-row" key={item.skill.name} onClick={() => go("skills")}>
+              <button type="button" className="ovts-row" key={item.skill.name} onClick={() => go("skills")}>
                 <span className="ovts-rank">{index + 1}</span>
                 <span className="ovts-name">{item.skill.name}</span>
                 <span className="ovts-bar"><i style={{ width: `${skillBarBase > 0 ? (skillBarValue(item) / skillBarBase) * 100 : 0}%`, background: maxSkillOps > 0 ? "var(--grad)" : "color-mix(in oklch,var(--acc3) 60%,var(--bg2))" }} /></span>
@@ -407,14 +485,14 @@ function Overview({ live, counts, go }: { live: ReturnType<typeof usePanelData>;
           </div>
         </section>
         <section className="panel">
-          <div className="panel-head"><h3><Icon d="graph" />投影健康 / 方式</h3><button className="link-btn" onClick={() => go("projections")}>查看 {"->"}</button></div>
+          <div className="panel-head"><h3><Icon d="graph" />投影健康 / 方式</h3><button type="button" className="link-btn" onClick={() => go("projections")}>查看 {"->"}</button></div>
           <HealthBars health={health} total={Math.max(1, live.projections.length)} />
           <div className="ov-methods">
             {(["symlink", "copy", "materialize"] as const).map((method) => <div className="ovm" key={method}><MethodTag method={method} /><b>{methods[method] ?? 0}</b></div>)}
           </div>
         </section>
         <section className="panel">
-          <div className="panel-head"><h3><Icon d="target" />Target 归属</h3><button className="link-btn" onClick={() => go("targets")}>查看 {"->"}</button></div>
+          <div className="panel-head"><h3><Icon d="target" />Target 归属</h3><button type="button" className="link-btn" onClick={() => go("targets")}>查看 {"->"}</button></div>
           <div className="ov-own">
             {(["managed", "observed", "external"] as const).map((own) => (
               <div className="ovo-row" key={own}>
@@ -484,7 +562,7 @@ function MethodTag({ method }: { method: string }) {
 
 function Stat({ label, value, sub, icon, hot, onClick }: { label: string; value: number | string; sub: string; icon: string; hot?: boolean; onClick?: () => void }) {
   return (
-    <button className={`stat-card link ${hot ? "hot" : ""}`} onClick={onClick}>
+    <button type="button" className={`stat-card link ${hot ? "hot" : ""}`} onClick={onClick}>
       <div className="stat-top"><Icon d={icon} />{label}</div>
       <div className="stat-val">{value}</div>
       <div className="stat-sub">{sub}</div>
@@ -492,9 +570,78 @@ function Stat({ label, value, sub, icon, hot, onClick }: { label: string; value:
   );
 }
 
-function Skills({ skills, targets, query, setQuery, selected, setSelectedSkill, convergenceSupported, onApplied }: { skills: Skill[]; targets: Target[]; query: string; setQuery: (value: string) => void; selected: Skill | null; setSelectedSkill: (name: string) => void; convergenceSupported: boolean; onApplied: () => void }) {
+const SKILL_PAGE_SIZE = 24;
+const MAX_SKILL_NAME_BYTES = 255;
+
+function skillImportNameError(name: string) {
+  const value = name.trim();
+  if (!value) return "Skill name is required.";
+  if (new TextEncoder().encode(value).length > MAX_SKILL_NAME_BYTES) return `Skill name must be at most ${MAX_SKILL_NAME_BYTES} bytes.`;
+  if (value === "." || value === "..") return "Skill name cannot be '.' or '..'.";
+  if (!/^[A-Za-z0-9._-]+$/.test(value)) return "Use only ASCII letters, numbers, dots, underscores, or hyphens in the skill name.";
+  return null;
+}
+
+function SkillImportForm({ readOnly, onCancel, onImported }: { readOnly: boolean; onCancel: () => void; onImported: (name: string) => void }) {
+  const [source, setSource] = useState("");
+  const [name, setName] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const mutation = useMutation();
+  const sourceError = submitted && !source.trim() ? "Source is required." : null;
+  const nameError = submitted ? skillImportNameError(name) : null;
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitted(true);
+    if (readOnly || !source.trim() || skillImportNameError(name)) return;
+    const importedName = name.trim();
+    void mutation.run("Import skill", () => api.skillAdd({ source: source.trim(), name: importedName }), () => onImported(importedName));
+  };
+
+  return (
+    <form className="skill-import-form" aria-label="Import skill" onSubmit={submit}>
+      <div className="skill-import-fields">
+        <div className="skill-import-field">
+          <label htmlFor="skill-import-source">Source</label>
+          <input
+            id="skill-import-source"
+            value={source}
+            onChange={(event) => setSource(event.target.value)}
+            aria-invalid={sourceError ? "true" : undefined}
+            aria-describedby={sourceError ? "skill-import-source-help skill-import-source-error" : "skill-import-source-help"}
+            placeholder="/path/to/skill, https://… or github:owner/repo//subdir"
+          />
+          <p id="skill-import-source-help" className="field-hint">Local path, Git URL, or GitHub locator.</p>
+          {sourceError && <p id="skill-import-source-error" className="field-error">{sourceError}</p>}
+        </div>
+        <div className="skill-import-field">
+          <label htmlFor="skill-import-name">Skill name</label>
+          <input
+            id="skill-import-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            aria-invalid={nameError ? "true" : undefined}
+            aria-describedby={nameError ? "skill-import-name-error" : undefined}
+            placeholder="my-skill"
+          />
+          {nameError && <p id="skill-import-name-error" className="field-error">{nameError}</p>}
+        </div>
+      </div>
+      <MutationBanner state={mutation} />
+      <div className="skill-import-actions">
+        <button type="button" className="btn-ghost sm" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="btn-grad sm" disabled={readOnly || mutation.busy}>{mutation.busy ? "Importing…" : "Import skill"}</button>
+      </div>
+    </form>
+  );
+}
+
+function Skills({ skills, targets, query, setQuery, selected, setSelectedSkill, convergenceSupported, onApplied, readOnly }: { skills: Skill[]; targets: Target[]; query: string; setQuery: (value: string) => void; selected: Skill | null; setSelectedSkill: (name: string) => void; convergenceSupported: boolean; onApplied: () => void; readOnly: boolean }) {
   const [source, setSource] = useState("all");
   const [sort, setSort] = useState("name");
+  const [page, setPage] = useState(0);
+  const [importOpen, setImportOpen] = useState(false);
+  const focusImportedRef = useRef<string | null>(null);
   const tags = Array.from(new Set(skills.map((skill) => skill.tag))).slice(0, 8);
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -503,51 +650,84 @@ function Skills({ skills, targets, query, setQuery, selected, setSelectedSkill, 
       .filter((skill) => source === "all" || sourceLabel(skill) === source || skill.sourceStatus === source)
       .sort((a, b) => sort === "edges" ? b.projectionCount - a.projectionCount : sort === "bindings" ? b.bindingCount - a.bindingCount : a.name.localeCompare(b.name));
   }, [query, skills, sort, source]);
+  const pageCount = Math.max(1, Math.ceil(shown.length / SKILL_PAGE_SIZE));
+  const activePage = Math.min(page, pageCount - 1);
+  const visibleSkills = shown.slice(activePage * SKILL_PAGE_SIZE, (activePage + 1) * SKILL_PAGE_SIZE);
+  const updateQuery = (value: string) => { setQuery(value); setPage(0); };
+  const updateSource = (value: string) => { setSource(value); setPage(0); };
+  const updateSort = (value: string) => { setSort(value); setPage(0); };
+
+  useEffect(() => {
+    if (!focusImportedRef.current || selected?.name !== focusImportedRef.current) return;
+    const importedIndex = shown.findIndex((skill) => skill.name === focusImportedRef.current);
+    if (importedIndex < 0) return;
+    const importedPage = Math.floor(importedIndex / SKILL_PAGE_SIZE);
+    if (activePage !== importedPage) {
+      setPage(importedPage);
+      return;
+    }
+    const card = Array.from(document.querySelectorAll<HTMLElement>("[data-skill-card]")).find((element) => element.dataset.skillCard === selected.name);
+    if (card) {
+      card.focus();
+      focusImportedRef.current = null;
+    }
+  }, [activePage, selected, shown]);
+
   return (
     <div className="view view-lib">
       <header className="view-head">
         <div><h1>技能库</h1><p>{skills.length} 个 skill · live registry inventory · 真实后端数据</p></div>
-        <div className="lib-head-right"><div className="searchbox"><Icon d="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 skill…（名称 / 描述 / 标签）" /><kbd>⌘K</kbd></div><span className="soon-pill"><Icon d="plus" size={14} />新增入口未接入</span></div>
+        <div className="lib-head-right"><div className="searchbox"><Icon d="search" /><input aria-label="Search skills" type="search" value={query} onChange={(event) => updateQuery(event.target.value)} placeholder="搜索 skill…（名称 / 描述 / 标签）" /><kbd>⌘K</kbd></div><button type="button" className="btn-grad sm" onClick={() => setImportOpen((open) => !open)} disabled={readOnly} title={readOnly ? "Registry data is not ready; importing is disabled." : undefined}><Icon d="plus" size={14} />Import skill</button></div>
       </header>
+      {importOpen && (
+        <SkillImportForm
+          readOnly={readOnly}
+          onCancel={() => setImportOpen(false)}
+          onImported={(name) => {
+            focusImportedRef.current = name;
+            setQuery("");
+            setSource("all");
+            setSort("name");
+            setPage(0);
+            setSelectedSkill(name);
+            setImportOpen(false);
+            onApplied();
+          }}
+        />
+      )}
       <div className="filter-bar">
-        <div className="chip-group">{["all", "observed", "present", "missing", "non-compliant"].map((item) => <button key={item} className={`chip ${source === item ? "on" : ""}`} onClick={() => setSource(item)}>{item === "all" ? "全部来源" : item}</button>)}</div>
-        <div className="chip-group">{tags.map((tag) => <button key={tag} className="chip" onClick={() => setQuery(tag)}>#{tag}</button>)}</div>
-        <div className="sort-group"><span className="sort-label">排序</span>{[["name", "名称"], ["edges", "投影"], ["bindings", "绑定"]].map(([id, label]) => <button key={id} className={`sort-pill ${sort === id ? "on" : ""}`} onClick={() => setSort(id)}>{label}</button>)}</div>
+        <div className="chip-group">{["all", "observed", "present", "missing", "non-compliant"].map((item) => <button type="button" key={item} className={`chip ${source === item ? "on" : ""}`} aria-pressed={source === item} onClick={() => updateSource(item)}>{item === "all" ? "全部来源" : item}</button>)}</div>
+        <div className="chip-group">{tags.map((tag) => <button type="button" key={tag} className="chip" onClick={() => updateQuery(tag)}>#{tag}</button>)}</div>
+        <div className="sort-group"><span className="sort-label">排序</span>{[["name", "名称"], ["edges", "投影"], ["bindings", "绑定"]].map(([id, label]) => <button type="button" key={id} className={`sort-pill ${sort === id ? "on" : ""}`} aria-pressed={sort === id} onClick={() => updateSort(id)}>{label}</button>)}</div>
       </div>
       <div className="lib-layout">
-        <div className="lib-grid" role="list" aria-label="Skill list">
-          {shown.map((skill) => {
+        <div className="lib-grid">
+          {visibleSkills.map((skill) => {
             const targetAgents = agentsForSkill(skill, targets);
             const active = (skill.observedTargetIds?.length ?? 0) > 0 || skill.projectionCount > 0;
             const isSelected = selected?.name === skill.name;
             return (
-              <article
+              <button type="button"
                 key={skill.name}
                 className={`skill-card ${isSelected ? "sel" : ""}`}
-                role="button"
-                tabIndex={0}
+                data-skill-card={skill.name}
                 aria-pressed={isSelected}
                 aria-label={`查看 ${skill.name} 详情`}
                 onClick={() => setSelectedSkill(skill.name)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    setSelectedSkill(skill.name);
-                  }
-                }}
               >
                 <div className="sc-head"><Glyph>{skill.name}</Glyph><div className="sc-title"><h3>{skill.name}</h3><span className="sc-meta">{sourceLabel(skill)} · {skill.changed}</span></div><span className={`sc-state ${active ? "on" : ""}`}>{active ? "已连接" : "未连接"}</span></div>
-                <p className="sc-desc">{skill.description || "No description from backend."}</p>
-                <div className="sc-signals"><span className={`sec-badge small ${skill.sourceStatus === "present" ? "verified" : "caution"}`}>{skill.sourceStatus}</span><span className="sc-cat">{skill.bindingCount} bindings</span><span className="sc-cat">{skill.projectionCount} projections</span></div>
-                <div className="sc-tools">{targetAgents.slice(0, 3).map((agent) => <span key={agent} className="tool-pill on" style={{ "--tc": agentMeta[agent]?.color ?? "var(--acc2)" } as CSSProperties}><i />{agentMeta[agent]?.short ?? agent.slice(0, 2).toUpperCase()}</span>)}<span className="sc-scope">{targetAgents.length > 0 ? "real target rows" : "no target rows"}</span></div>
+                <p className="sc-desc">{skill.description || "No description observed in the registry."}</p>
+                <div className="sc-signals"><span className={`sec-badge small ${skill.sourceStatus === "present" ? "verified" : "caution"}`}>{sourceStatusLabel(skill)}</span><span className="sc-cat">{skill.bindingCount} bindings</span><span className="sc-cat">{skill.projectionCount} projections</span></div>
+                <div className="sc-tools">{targetAgents.slice(0, 3).map((agent) => <span key={agent} className="tool-pill on" style={{ "--tc": agentMeta[agent]?.color ?? "var(--acc2)" } as CSSProperties}><i />{agentMeta[agent]?.short ?? agent.slice(0, 2).toUpperCase()}</span>)}<span className="sc-scope">{targetAgents.length > 0 ? "real target rows" : "no target rows observed"}</span></div>
                 <div className="sc-foot"><span className="sc-tags"><span className="sm-tag">#{skill.tag}</span><span className="sm-tag">{skill.latestRev}</span></span><span className="sc-calls">查看详情</span></div>
-              </article>
+              </button>
             );
           })}
           {shown.length === 0 && <div className="lib-empty"><Icon d="lib" size={28} /><p>没有匹配当前筛选的 skill</p></div>}
         </div>
         <SkillMDetail skill={selected} convergenceSupported={convergenceSupported} onApplied={onApplied} />
       </div>
+      {pageCount > 1 && <nav className="skill-pagination" aria-label="Skill pages"><span>Page {activePage + 1} of {pageCount} · showing {activePage * SKILL_PAGE_SIZE + 1}-{Math.min((activePage + 1) * SKILL_PAGE_SIZE, shown.length)} of {shown.length}</span><button type="button" aria-label="Previous skill page" disabled={activePage === 0} onClick={() => setPage(Math.max(0, activePage - 1))}>Prev</button><button type="button" aria-label="Next skill page" disabled={activePage >= pageCount - 1} onClick={() => setPage(Math.min(pageCount - 1, activePage + 1))}>Next</button></nav>}
     </div>
   );
 }
@@ -557,33 +737,59 @@ function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: 
   const pending = pendingQueueCount(live);
   const panelHost = panelHostLabel();
   const [projectionPage, setProjectionPage] = useState(0);
+  const [targetAddOpen, setTargetAddOpen] = useState(false);
+  const [bindingAddOpen, setBindingAddOpen] = useState(false);
+  const [projectOpen, setProjectOpen] = useState(false);
+  const readOnly = live.mode !== "live";
   const projectionPageCount = Math.max(1, Math.ceil(live.projections.length / PROJECTION_PAGE_SIZE)), activeProjectionPage = Math.min(projectionPage, projectionPageCount - 1), scopedProjections = live.projections.slice(activeProjectionPage * PROJECTION_PAGE_SIZE, activeProjectionPage * PROJECTION_PAGE_SIZE + PROJECTION_PAGE_SIZE);
   const allProjectionSkills = new Set(live.projections.map((p) => p.skill_id)), allProjectionTargets = new Set(live.projections.map((p) => p.target_id)), scopedProjectionSkills = new Set(scopedProjections.map((p) => p.skill_id)), scopedProjectionTargets = new Set(scopedProjections.map((p) => p.target_id));
   const graphSkills = live.projections.length ? live.skills.filter((skill) => scopedProjectionSkills.has(skill.name)) : live.skills, graphTargets = live.projections.length ? live.targets.filter((target) => scopedProjectionTargets.has(target.id)) : live.targets;
   const projectionScopeStats = [{ key: "skills", shown: graphSkills.length, total: live.projections.length ? live.skills.filter((skill) => allProjectionSkills.has(skill.name)).length : live.skills.length }, { key: "targets", shown: graphTargets.length, total: live.projections.length ? live.targets.filter((target) => allProjectionTargets.has(target.id)).length : live.targets.length }, { key: "projections", shown: scopedProjections.length, total: live.projections.length }].filter((item) => item.shown < item.total);
+  const completeMutation = () => {
+    setTargetAddOpen(false);
+    setBindingAddOpen(false);
+    setProjectOpen(false);
+    live.refetch();
+  };
+
+  useEffect(() => {
+    if (!readOnly) return;
+    setTargetAddOpen(false);
+    setBindingAddOpen(false);
+    setProjectOpen(false);
+  }, [readOnly]);
+
   return (
     <div className="view view-plane">
-      <header className="view-head"><div><h1>控制平面</h1><p>把注册表里的 skill 通过 binding 投影到各 agent 目录 · symlink / copy / materialize</p></div><span className="soon-pill"><Icon d="branch" size={14} />批量投影未接入</span></header>
-      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />Git 注册表</span><code>{registryLabel(live.registryRoot)}</code><span className="rs-div" /><span className="rs-stat"><b>{live.skills.length}</b> skills · <b>{live.targets.length}</b> targets</span><span className="rs-div" /><span className="rs-guard"><Icon d="bolt" size={12} />硬写保护 已开</span><span className="rs-flex" /><span className="rs-panel" title="当前 Panel 地址"><Icon d="eye" size={13} />{panelHost}</span></div>
+      <header className="view-head">
+        <div><h1>控制平面</h1><p>把注册表里的 skill 通过 binding 投影到各 agent 目录 · symlink / copy / materialize</p></div>
+        <div className="ops-head-actions">
+          {tab === "targets" && <button type="button" className="btn-grad sm" disabled={readOnly} title={readOnly ? "Registry data is not ready; target creation is disabled." : undefined} onClick={() => setTargetAddOpen((open) => !open)}><Icon d="plus" size={14} />{targetAddOpen ? "Close" : "New target"}</button>}
+          {tab === "bindings" && <button type="button" className="btn-grad sm" disabled={readOnly || live.targets.length === 0} title={readOnly ? "Registry data is not ready; binding creation is disabled." : live.targets.length === 0 ? "Create a target before adding a binding." : undefined} onClick={() => setBindingAddOpen((open) => !open)}><Icon d="plus" size={14} />{bindingAddOpen ? "Close" : "New binding"}</button>}
+          {tab === "projections" && <button type="button" className="btn-grad sm" disabled={readOnly || live.skills.length === 0 || live.bindings.length === 0} title={readOnly ? "Registry data is not ready; projection is disabled." : live.skills.length === 0 ? "Import a skill before projecting." : live.bindings.length === 0 ? "Create a binding before projecting." : undefined} onClick={() => setProjectOpen((open) => !open)}><Icon d="bolt" size={14} />{projectOpen ? "Close" : "Project skill"}</button>}
+        </div>
+      </header>
+      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />Git 注册表</span><code>{registryLabel(live.registryRoot)}</code><span className="rs-div" /><span className="rs-stat"><b>{live.skills.length}</b> skills · <b>{live.targets.length}</b> targets</span><span className="rs-div" /><span className="rs-guard"><Icon d="eye" size={12} />写保护状态 未暴露</span><span className="rs-flex" /><span className="rs-panel" title="当前 Panel 地址"><Icon d="eye" size={13} />{panelHost}</span></div>
       <div className="plane-stats">
-        <button className="pstat" onClick={() => go("targets")}><span className="pstat-l">Targets</span><span className="pstat-n">{live.targets.length}</span></button>
-        <button className="pstat" onClick={() => go("bindings")}><span className="pstat-l">Bindings</span><span className="pstat-n">{live.bindings.length}</span></button>
-        <button className="pstat" onClick={() => go("projections")}><span className="pstat-l">Projections</span><span className="pstat-n">{live.projections.length}</span></button>
+        <button type="button" className="pstat" onClick={() => go("targets")}><span className="pstat-l">Targets</span><span className="pstat-n">{live.targets.length}</span></button>
+        <button type="button" className="pstat" onClick={() => go("bindings")}><span className="pstat-l">Bindings</span><span className="pstat-n">{live.bindings.length}</span></button>
+        <button type="button" className="pstat" onClick={() => go("projections")}><span className="pstat-l">Projections</span><span className="pstat-n">{live.projections.length}</span></button>
         <div className={`pstat ${drifts ? "warn" : ""}`}><span className="pstat-l">漂移</span><span className="pstat-n">{drifts}</span></div>
         <div className={`pstat ${pending ? "acc" : ""}`}><span className="pstat-l">待投影</span><span className="pstat-n">{pending}</span></div>
       </div>
       <nav className="plane-tabs">
-        {([["projections", "投影关系图", "graph"], ["targets", "Targets", "target"], ["bindings", "Bindings", "branch"]] as const).map(([id, label, icon]) => <button key={id} className={`det-tab ${tab === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={icon} size={14} />{label}</button>)}
+        {([["projections", "投影关系图", "graph"], ["targets", "Targets", "target"], ["bindings", "Bindings", "branch"]] as const).map(([id, label, icon]) => <button type="button" key={id} className={`det-tab ${tab === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={icon} size={14} />{label}</button>)}
         <span className="tab-flex" />
-        {tab === "targets" ? <span className="soon-pill"><Icon d="plus" size={13} />target 新增未接入</span> : null}
-        {tab === "bindings" ? <span className="soon-pill"><Icon d="plus" size={13} />binding 新增未接入</span> : null}
       </nav>
+      {tab === "targets" && targetAddOpen && <div className="skillm-control-form"><TargetAddForm onCancel={() => setTargetAddOpen(false)} onSuccess={completeMutation} /></div>}
+      {tab === "bindings" && bindingAddOpen && <div className="skillm-control-form"><BindingAddForm targets={live.targets} onCancel={() => setBindingAddOpen(false)} onSuccess={completeMutation} /></div>}
+      {tab === "projections" && projectOpen && <SkillMProjectForm skills={live.skills} bindings={live.bindings} readOnly={readOnly} onCancel={() => setProjectOpen(false)} onSuccess={completeMutation} />}
       {tab === "targets" && <div className="targets-grid">{live.targets.map((t) => <TargetCard key={t.id} target={t} />)}{live.targets.length === 0 && <EmptyPanel text="No target rows from backend." />}</div>}
       {tab === "bindings" && <BindingsTable bindings={live.bindings} />}
       {tab === "projections" && (
         <section className="panel">
-          <div className="panel-head projection-head"><h3><Icon d="graph" />Projection graph</h3><div className="projection-scope-controls"><span className="panel-hint">{scopedProjections.length} of {live.projections.length} edges</span>{projectionPageCount > 1 && <div className="scope-pager" aria-label="Projection scope pages"><button type="button" aria-label="Previous projection page" disabled={activeProjectionPage === 0} onClick={() => setProjectionPage(Math.max(0, activeProjectionPage - 1))}>Prev</button><span>Page {activeProjectionPage + 1} of {projectionPageCount}</span><button type="button" aria-label="Next projection page" disabled={activeProjectionPage >= projectionPageCount - 1} onClick={() => setProjectionPage(Math.min(projectionPageCount - 1, activeProjectionPage + 1))}>Next</button></div>}</div></div>
-          {projectionScopeStats.length > 0 && <div className="scope-disclosure" aria-label="Projection scope disclosure">{projectionScopeStats.map((item) => <span key={item.key}>displaying {item.shown} of {item.total} {item.key}</span>)}</div>}
+          <div className="panel-head projection-head"><h3><Icon d="graph" />Projection graph</h3><div className="projection-scope-controls"><span className="panel-hint">{scopedProjections.length} of {live.projections.length} edges</span>{projectionPageCount > 1 && <div className="scope-pager"><button type="button" aria-label="Previous projection page" disabled={activeProjectionPage === 0} onClick={() => setProjectionPage(Math.max(0, activeProjectionPage - 1))}>Prev</button><span>Page {activeProjectionPage + 1} of {projectionPageCount}</span><button type="button" aria-label="Next projection page" disabled={activeProjectionPage >= projectionPageCount - 1} onClick={() => setProjectionPage(Math.min(projectionPageCount - 1, activeProjectionPage + 1))}>Next</button></div>}</div></div>
+          {projectionScopeStats.length > 0 && <div className="scope-disclosure">{projectionScopeStats.map((item) => <span key={item.key}>displaying {item.shown} of {item.total} {item.key}</span>)}</div>}
           <ProjectionGraph skills={graphSkills} targets={graphTargets} projections={scopedProjections} />
           <DataGrid columns={["skill", "target", "method", "health", "rev"]} rows={scopedProjections.map((p) => [p.skill_id, shortName(p.target_id), p.method, p.health, p.last_applied_rev?.slice(0, 8) || "—"])} />
         </section>
@@ -592,9 +798,96 @@ function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: 
   );
 }
 
+function SkillMProjectForm({
+  skills,
+  bindings,
+  readOnly,
+  onCancel,
+  onSuccess,
+}: {
+  skills: Skill[];
+  bindings: ReturnType<typeof usePanelData>["bindings"];
+  readOnly: boolean;
+  onCancel: () => void;
+  onSuccess: () => void;
+}) {
+  const [skill, setSkill] = useState(skills[0]?.name ?? "");
+  const [bindingId, setBindingId] = useState(bindings[0]?.id ?? "");
+  const [method, setMethod] = useState<"symlink" | "copy" | "materialize">("symlink");
+  const [reviewing, setReviewing] = useState(false);
+  const mutation = useMutation();
+  const binding = bindings.find((item) => item.id === bindingId) ?? null;
+  const ready = Boolean(skill && binding && !readOnly && !mutation.busy);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!ready || !binding) return;
+    if (!reviewing) {
+      setReviewing(true);
+      return;
+    }
+    void mutation.run(
+      "Project skill",
+      () => api.project({ skill, binding: binding.id, target: binding.target, method }),
+      onSuccess,
+    );
+  };
+
+  const changeSkill = (value: string) => {
+    setSkill(value);
+    setReviewing(false);
+  };
+  const changeBinding = (value: string) => {
+    setBindingId(value);
+    setReviewing(false);
+  };
+  const changeMethod = (value: "symlink" | "copy" | "materialize") => {
+    setMethod(value);
+    setReviewing(false);
+  };
+
+  return (
+    <form className="skill-import-form skillm-project-form" aria-label="Project skill" onSubmit={submit}>
+      <div className="skill-import-fields">
+        <div className="skill-import-field">
+          <label htmlFor="skillm-project-skill">Skill</label>
+          <select id="skillm-project-skill" value={skill} onChange={(event) => changeSkill(event.target.value)}>
+            {skills.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
+          </select>
+        </div>
+        <div className="skill-import-field">
+          <label htmlFor="skillm-project-binding">Binding</label>
+          <select id="skillm-project-binding" value={bindingId} onChange={(event) => changeBinding(event.target.value)}>
+            {bindings.map((item) => <option key={item.id} value={item.id}>{item.id} · {item.target}</option>)}
+          </select>
+        </div>
+        <div className="skill-import-field">
+          <label htmlFor="skillm-project-method">Projection method</label>
+          <select id="skillm-project-method" value={method} onChange={(event) => changeMethod(event.target.value as "symlink" | "copy" | "materialize")}>
+            <option value="symlink">symlink</option>
+            <option value="copy">copy</option>
+            <option value="materialize">materialize</option>
+          </select>
+        </div>
+      </div>
+      {reviewing && binding && (
+        <div className="projection-review" role="status">
+          Review: project <b>{skill}</b> through <b>{binding.id}</b> into <b>{binding.target}</b> using <b>{method}</b>. This writes the target projection and records an auditable operation.
+        </div>
+      )}
+      <MutationBanner state={mutation} />
+      {!ready && !mutation.busy && <p className="field-hint">Import a skill and create a binding before projecting. Registry data must be live.</p>}
+      <div className="skill-import-actions">
+        <button type="button" className="btn-ghost sm" onClick={onCancel} disabled={mutation.busy}>Cancel</button>
+        <button type="submit" className="btn-grad sm" disabled={!ready}>{mutation.busy ? "Projecting…" : reviewing ? "Confirm projection" : "Review projection"}</button>
+      </div>
+    </form>
+  );
+}
+
 function TargetCard({ target }: { target: Target }) {
   const meta = agentMeta[target.agent] ?? { name: target.agent, short: target.agent.slice(0, 2).toUpperCase(), color: "var(--acc2)" };
-  return <article className="target-card" style={{ "--ac": meta.color } as CSSProperties}><div className="tc-head"><span className="tc-agent" style={{ background: meta.color }}>{meta.short}</span><div className="tc-title"><h3>{meta.name}</h3><code>{target.path}</code></div><OwnBadge ownership={target.ownership} /></div><div className="tc-meta"><span>profile <b>{target.profile}</b></span><span>{target.projectedSkills ?? 0} 个投影</span><span className="tc-ok"><Icon d="check" size={11} />同步</span></div><div className="tc-actions"><span className="mini-state">verify 未接入</span><span className="mini-state">{target.ownership === "observed" ? "managed 转换未接入" : "capture 未接入"}</span></div></article>;
+  return <article className="target-card" style={{ "--ac": meta.color } as CSSProperties}><div className="tc-head"><span className="tc-agent" style={{ background: meta.color }}>{meta.short}</span><div className="tc-title"><h3>{meta.name}</h3><code>{target.path}</code></div><OwnBadge ownership={target.ownership} /></div><div className="tc-meta"><span>profile <b>{target.profile}</b></span><span>{target.projectedSkills ?? 0} 个投影</span><span className="tc-ok"><Icon d="check" size={11} />来自注册表</span></div></article>;
 }
 
 function OwnBadge({ ownership }: { ownership: string }) {
@@ -603,7 +896,7 @@ function OwnBadge({ ownership }: { ownership: string }) {
 }
 
 function BindingsTable({ bindings }: { bindings: ReturnType<typeof usePanelData>["bindings"] }) {
-  return <div className="bindings-table"><div className="bt-head"><span>Skill</span><span>Policy</span><span>Matcher</span><span>Target</span><span>方式</span><span /></div>{bindings.map((b) => <div className="bt-row" key={b.id}><span className="bt-skill"><Glyph>{b.skill}</Glyph>{b.skill}</span><span className="bt-agent"><i />{b.policy}</span><span className="bt-matcher"><b>{b.matcher.split(":")[0]}</b><code>{b.matcher.split(":").slice(1).join(":") || "—"}</code></span><span className="bt-target"><code>{shortName(b.target)}</code></span><span><MethodTag method={b.method} /></span><span className="bt-act"><span className="mini-state">只读</span></span></div>)}{bindings.length === 0 && <div className="panel-empty">No bindings yet. Create a real binding before Loom can materialize projections.</div>}</div>;
+  return <div className="bindings-table"><div className="bt-head"><span>Skill</span><span>Policy</span><span>Matcher</span><span>Target</span><span>方式</span><span>Status</span></div>{bindings.map((b) => <div className="bt-row" key={b.id}><span className="bt-skill"><Glyph>{b.skill}</Glyph>{b.skill}</span><span className="bt-agent"><i />{b.policy}</span><span className="bt-matcher"><b>{b.matcher.split(":")[0]}</b><code>{b.matcher.split(":").slice(1).join(":") || "—"}</code></span><span className="bt-target"><code>{shortName(b.target)}</code></span><span><MethodTag method={b.method} /></span><span className="bt-act"><span className="mini-state">configured</span></span></div>)}{bindings.length === 0 && <div className="panel-empty">No bindings yet. Create a real binding before Loom can materialize projections.</div>}</div>;
 }
 
 function DataGrid({ columns, rows }: { columns: string[]; rows: Array<Array<string | number>> }) {
@@ -641,14 +934,16 @@ function Ops({ live, history, go, confirm }: { live: ReturnType<typeof usePanelD
   const queue = counts ? live.ops.filter((op) => op.actionable) : live.ops.filter((op) => op.status !== "ok");
   const queueCount = counts?.actionable_operations ?? Math.max(queue.length, live.queuedWriteCount);
   const rows = history ? live.ops : queue;
+  const readOnly = live.mode !== "live";
+  const readOnlyReason = readOnly ? "Registry data is not ready; operation mutations are disabled." : undefined;
   return (
     <div className="view view-ops">
       <header className="view-head">
         <div><h1>Ops &amp; 审计</h1><p>每条命令都来自 live API · 可重放、可诊断、可清理</p></div>
-        <div className="ops-head-actions"><button className="btn-ghost sm" onClick={() => confirm({ label: "Purge ops", action: "确认清理", title: "清理 Ops 队列？", scope: `当前本地 Ops 队列 · ${queueCount} 条待处理/失败，${live.ops.length} 条可见记录`, undo: "不可自动撤销；清理后只能依赖底层审计归档或重新执行命令恢复上下文。", impact: "将调用 Ops purge API，移除当前队列上下文并刷新面板数据。", tone: "danger", fn: api.opsPurge })}><Icon d="x" />purge</button><button className="btn-grad sm" onClick={() => confirm({ label: "Replay queued ops", action: "确认重放", title: "重放 Ops 队列？", scope: "当前本地 Ops 待处理/失败队列", count: queueCount, undo: "重放调度本身不能撤销；每条结果会继续进入操作记录。", impact: "将调用 Ops retry API，重试 pending/failed 操作，可能触发后续投影、同步或写入效果。", tone: "sync", fn: api.opsRetry })}><Icon d="sync" />replay 队列</button></div>
+        <div className="ops-head-actions"><button type="button" className="btn-ghost sm" disabled={readOnly} title={readOnlyReason} onClick={() => confirm({ label: "Purge ops", action: "确认清理", title: "清理 Ops 队列？", scope: `当前本地 Ops 队列 · ${queueCount} 条待处理/失败，${live.ops.length} 条可见记录`, undo: "不可自动撤销；清理后只能依赖底层审计归档或重新执行命令恢复上下文。", impact: "将调用 Ops purge API，移除当前队列上下文并刷新面板数据。", tone: "danger", fn: api.opsPurge })}><Icon d="x" />purge</button><button type="button" className="btn-grad sm" disabled={readOnly} title={readOnlyReason} onClick={() => confirm({ label: "Replay queued ops", action: "确认重放", title: "重放 Ops 队列？", scope: "当前本地 Ops 待处理/失败队列", count: queueCount, undo: "重放调度本身不能撤销；每条结果会继续进入操作记录。", impact: "将调用 Ops retry API，重试 pending/failed 操作，可能触发后续投影、同步或写入效果。", tone: "sync", fn: api.opsRetry })}><Icon d="sync" />replay 队列</button></div>
       </header>
       <div className="ops-stats">{[["可执行操作", counts?.actionable_operations], ["本地 journal", counts?.local_journal_events], ["待推送 history", counts?.unpushed_history_events], ["仅本地 history", counts?.local_only_history_events]].map(([label, value]) => <div className="pstat" key={label}><span className="pstat-l">{label}</span><span className="pstat-n">{value ?? "—"}</span></div>)}</div>
-      <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queueCount ? <span className="tab-count">{queueCount}</span> : null}</button>)}<span className="tab-flex" /></nav>
+      <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button type="button" key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queueCount ? <span className="tab-count">{queueCount}</span> : null}</button>)}<span className="tab-flex" /></nav>
       {history ? <SkillMAuditHistory live={live.live} refreshKey={live.lastUpdated} /> : <section className="ops-table">{rows.map((op) => <OperationLogRow key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>队列已清空 · 没有待处理或失败的操作</p></div>}</section>}
     </div>
   );
@@ -657,15 +952,50 @@ function Ops({ live, history, go, confirm }: { live: ReturnType<typeof usePanelD
 function Sync({ live, confirm }: { live: ReturnType<typeof usePanelData>; confirm: (action: Confirm) => void }) {
   const remote = live.remote;
   const remoteConfigured = Boolean(remote?.configured || remote?.url || remote?.remote);
+  const readOnly = live.mode !== "live";
+  const remoteLabel = remote?.url || remote?.remote || "local-only registry";
+  const remoteDisabledReason = readOnly
+    ? "Registry data is not ready; sync mutations are disabled."
+    : !remoteConfigured
+      ? "Configure a Git remote before pulling or pushing."
+      : undefined;
   const syncOps = live.ops.filter((op) => op.kind.startsWith("sync."));
   const operationBacklog = live.operationCounts?.actionable_operations ?? remote?.operation_backlog ?? live.queuedWriteCount;
+  const requestSync = (kind: "pull" | "push" | "replay") => {
+    const action = kind === "pull" ? api.syncPull : kind === "push" ? api.syncPush : api.syncReplay;
+    const title = kind === "pull" ? "拉取远端注册表？" : kind === "push" ? "推送本地注册表？" : "重放同步队列？";
+    const impact = kind === "pull"
+      ? "将调用 Sync pull API，把远端注册表变更合并到本地工作区。"
+      : kind === "push"
+        ? "将调用 Sync push API，把本地注册表提交发布到已配置远端。"
+        : "将调用 Sync replay API，重试同步队列并可能更新本地注册表同步状态。";
+    confirm({
+      label: `Sync ${kind}`,
+      action: kind === "pull" ? "确认拉取" : kind === "push" ? "确认推送" : "确认重放",
+      title,
+      scope: `Git sync · ${remoteLabel}`,
+      count: kind === "replay" ? operationBacklog : undefined,
+      undo: kind === "push" ? "远端更新不能由面板自动撤销；需要后续提交或 Git 恢复。" : "同步调度本身不能撤销；结果会写入审计事件。",
+      impact,
+      tone: "sync",
+      fn: action,
+    });
+  };
   return (
     <div className="view view-sync">
-      <header className="view-head"><div><h1>注册表同步</h1><p>Git 支撑 · push / pull / replay · remote 为空时保持 local-only</p></div><div className="ops-head-actions"><span className="soon-pill"><Icon d="dl" size={14} />pull 未接入</span><button className="btn-grad sm" onClick={() => confirm({ label: "Sync replay", action: "确认重放", title: "重放同步队列？", scope: `Git sync 队列 · ${remote?.url || remote?.remote || "local-only registry"}`, count: operationBacklog, undo: "重放调度本身不能撤销；同步结果会继续写入审计事件。", impact: "将调用 Sync replay API，重试同步队列并可能更新本地注册表同步状态。", tone: "sync", fn: api.syncReplay })}><Icon d="sync" />replay</button></div></header>
-      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />remote origin</span><code>{remote?.url || remote?.remote || "not configured"}</code><span className="rs-div" /><span className="rs-stat">registry transport <b>{live.convergence?.registry_transport.state ?? remote?.sync_state ?? "local_only"}</b></span><span className="rs-div" /><span className="rs-stat">projection <b>{live.convergence?.projections.state ?? "unknown"}</b></span><span className="rs-div" /><span className="rs-stat">visibility <b>{live.convergence?.visibility.state ?? "unknown"}</b></span><span className="rs-div" /><span className="rs-stat">backlog <b>{operationBacklog}</b></span><span className="rs-flex" /><button className="rs-panel" onClick={() => confirm({ label: "Sync replay", action: "确认重放", title: "重放同步队列？", scope: `Git sync 队列 · ${remote?.url || remote?.remote || "local-only registry"}`, count: operationBacklog, undo: "重放调度本身不能撤销；同步结果会继续写入审计事件。", impact: "将调用 Sync replay API，重试同步队列并可能更新本地注册表同步状态。", tone: "sync", fn: api.syncReplay })}><Icon d="sync" size={13} />replay</button></div>
+      <header className="view-head">
+        <div><h1>注册表同步</h1><p>Git 支撑 · push / pull / replay · remote 为空时保持 local-only</p></div>
+        <div className="ops-head-actions">
+          <button type="button" className="btn-ghost sm" disabled={Boolean(remoteDisabledReason)} title={remoteDisabledReason} onClick={() => requestSync("pull")}><Icon d="dl" size={14} />pull</button>
+          <button type="button" className="btn-ghost sm" disabled={Boolean(remoteDisabledReason)} title={remoteDisabledReason} onClick={() => requestSync("push")}><Icon d="branch" size={14} />push</button>
+          <button type="button" className="btn-grad sm" disabled={readOnly} title={readOnly ? remoteDisabledReason : undefined} onClick={() => requestSync("replay")}><Icon d="sync" />replay</button>
+        </div>
+      </header>
+      {remoteDisabledReason && <div className="sync-disabled-reason" role="status">{remoteDisabledReason}</div>}
+      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />remote origin</span><code>{remote?.url || remote?.remote || "not configured"}</code><span className="rs-div" /><span className="rs-stat">registry transport <b>{live.convergence?.registry_transport.state ?? remote?.sync_state ?? "local_only"}</b></span><span className="rs-div" /><span className="rs-stat">projection <b>{live.convergence?.projections.state ?? "unknown"}</b></span><span className="rs-div" /><span className="rs-stat">visibility <b>{live.convergence?.visibility.state ?? "unknown"}</b></span><span className="rs-div" /><span className="rs-stat">backlog <b>{operationBacklog}</b></span><span className="rs-flex" /><span className="rs-panel"><Icon d="sync" size={13} />{remoteConfigured ? "remote configured" : "local only"}</span></div>
       <div className="ops-stats">{[["可执行操作", live.operationCounts?.actionable_operations], ["本地 journal", live.operationCounts?.local_journal_events], ["待推送 history", live.operationCounts?.unpushed_history_events], ["仅本地 history", live.operationCounts?.local_only_history_events]].map(([label, value]) => <div className="pstat" key={label}><span className="pstat-l">{label}</span><span className="pstat-n">{value ?? "—"}</span></div>)}</div>
       <div className="sync-grid">
-        <section className="panel sync-topo-panel"><div className="panel-head"><h3><Icon d="sync" />注册表拓扑</h3><span className="panel-hint">{remoteConfigured ? "local -> origin" : "local only"}</span></div><svg viewBox="0 0 640 300" className="sync-topo"><path className={`beam ${remoteConfigured ? "on" : ""}`} stroke="var(--acc3)" d="M150 220 C150 112 320 132 320 86" /><circle className="topo-cloud" cx="320" cy="78" r="34" /><text x="320" y="82" textAnchor="middle" className="topo-name">origin</text><text x="320" y="104" textAnchor="middle" className="topo-sub">{remoteConfigured ? "configured" : "not configured"}</text><circle className="topo-node self" cx="150" cy="220" r="38" /><text x="150" y="218" textAnchor="middle" className="topo-name">local</text><text x="150" y="235" textAnchor="middle" className="topo-sub">{operationBacklog} queued</text></svg></section>
+        <section className="panel sync-topo-panel"><div className="panel-head"><h3><Icon d="sync" />注册表拓扑</h3><span className="panel-hint">{remoteConfigured ? "local -> origin" : "local only"}</span></div><svg aria-hidden="true" focusable="false" viewBox="0 0 640 300" className="sync-topo"><path className={`beam ${remoteConfigured ? "on" : ""}`} stroke="var(--acc3)" d="M150 220 C150 112 320 132 320 86" /><circle className="topo-cloud" cx="320" cy="78" r="34" /><text x="320" y="82" textAnchor="middle" className="topo-name">origin</text><text x="320" y="104" textAnchor="middle" className="topo-sub">{remoteConfigured ? "configured" : "not configured"}</text><circle className="topo-node self" cx="150" cy="220" r="38" /><text x="150" y="218" textAnchor="middle" className="topo-name">local</text><text x="150" y="235" textAnchor="middle" className="topo-sub">{operationBacklog} queued</text></svg></section>
         <section className="panel"><div className="panel-head"><h3><Icon d="clock" />事件流</h3><span className="panel-hint">{syncOps.length} sync events</span></div><div className="ev-stream">{syncOps.slice(0, 6).map((op) => {
           const details = operationDetailParts(op).filter((part) => !part.startsWith("id ")).slice(0, 2);
           return <div key={op.id} className={`ev-row ev-${operationTone(op.status)}`}><span className="ev-ic"><Icon d={op.status === "ok" ? "check" : op.status === "err" ? "bolt" : "sync"} size={13} /></span><span className="ev-time">{op.time}</span><span className="ev-text"><b>{operationActionLabel(op.kind)}</b><span>{operationSubjectLabel(op)}</span></span><span className="ev-dev">{details.join(" · ") || operationStatusLabel(op.status)}</span></div>;
@@ -688,15 +1018,15 @@ function Settings({ live, dark, setDark, density, setDensity, accent, setAccent 
       <section className="set-card"><div className="set-cardhead"><h3>Agent directories ({live.agentDirs.length})</h3><span>来自 workspace/info.agent_dirs</span></div><div className="set-agents">{live.agentDirs.map((dir) => <span key={`${dir.agent}-${dir.path}`} className="set-agent" title={dir.path}><span className="tc-agent" style={{ background: agentMeta[dir.agent]?.color }}>{agentMeta[dir.agent]?.short ?? dir.agent.slice(0, 2).toUpperCase()}</span>{dir.agent}<code>{dir.env_var ?? "no env"}</code></span>)}</div>{live.agentDirs.length === 0 && <div className="panel-empty">workspace/info 没有返回 agent_dirs。</div>}</section>
       <section className="set-card"><div className="set-cardhead"><h3>外观</h3><span>本机偏好</span></div>
         <div className="set-row"><div className="set-k"><h4>Theme</h4><p>深色模式</p></div><Switch label="切换深色模式" on={dark} onChange={setDark} /></div>
-        <div className="set-row"><div className="set-k"><h4>Accent</h4><p>Neon / Aurora / Sunset</p></div><div className="twk-chips">{themes.map((theme, index) => <button key={theme.join("")} className="twk-chip" aria-label={`选择配色 ${index + 1}`} data-on={theme.join("") === accent.join("") ? "1" : "0"} onClick={() => setAccent(theme)}>{theme.map((color) => <i key={color} style={{ background: color }} />)}</button>)}</div></div>
-        <div className="set-row"><div className="set-k"><h4>Density</h4><p>Layout spacing</p></div><div className="twk-radio">{(["compact", "regular", "comfy"] as const).map((value) => <button key={value} data-on={density === value ? "1" : "0"} onClick={() => setDensity(value)}>{value}</button>)}</div></div>
+        <div className="set-row"><div className="set-k"><h4>Accent</h4><p>Neon / Aurora / Sunset</p></div><div className="twk-chips">{themes.map((theme, index) => <button type="button" key={theme.join("")} className="twk-chip" aria-label={`选择配色 ${index + 1}`} data-on={theme.join("") === accent.join("") ? "1" : "0"} onClick={() => setAccent(theme)}>{theme.map((color) => <i key={color} style={{ background: color }} />)}</button>)}</div></div>
+        <div className="set-row"><div className="set-k"><h4>Density</h4><p>Layout spacing</p></div><div className="twk-radio">{(["compact", "regular", "comfy"] as const).map((value) => <button type="button" key={value} data-on={density === value ? "1" : "0"} onClick={() => setDensity(value)}>{value}</button>)}</div></div>
       </section>
     </div>
   );
 }
 
 function Switch({ on, onChange, label = "切换开关" }: { on: boolean; onChange: (value: boolean) => void; label?: string }) {
-  return <button className={`sm-switch ${on ? "on" : ""}`} role="switch" aria-label={label} aria-checked={on} onClick={() => onChange(!on)}><span className="knob" /></button>;
+  return <button type="button" className={`sm-switch ${on ? "on" : ""}`} role="switch" aria-label={label} aria-checked={on} onClick={() => onChange(!on)}><span className="knob" /></button>;
 }
 
 function Market({ live }: { live: ReturnType<typeof usePanelData> }) {
@@ -710,8 +1040,8 @@ function Forge({ live }: { live: ReturnType<typeof usePanelData> }) {
 function Terminal({ live, close }: { live: ReturnType<typeof usePanelData>; close: () => void }) {
   return (
     <div className="sm-terminal">
-      <div className="term-head"><span><Icon d="term" /> TERMINAL - read-only preview</span><button className="btn-icon" aria-label="关闭终端预览" onClick={close}><Icon d="x" /></button></div>
-      <div className="term-body"><p>SkillM Terminal - read-only preview</p><p><b>$</b> loom workspace status</p><p>{live.live ? "registry live" : live.error ?? "offline"} · {live.skills.length} skills · {live.targets.length} targets · {live.queuedWriteCount} queued</p></div>
+      <div className="term-head"><span><Icon d="term" /> TERMINAL - read-only preview</span><button type="button" className="btn-icon" aria-label="关闭终端预览" onClick={close}><Icon d="x" /></button></div>
+      <div className="term-body"><p>SkillM Terminal - read-only preview</p><p><b>$</b> loom workspace status</p><p>{live.mode === "loading" ? "loading registry" : live.live ? "registry live" : live.error ?? "offline"} · {live.skills.length} skills · {live.targets.length} targets · {live.queuedWriteCount} queued</p></div>
       <div className="term-note"><span>只读命令预览</span><code>help · ls · doctor · sync</code></div>
     </div>
   );
@@ -719,16 +1049,22 @@ function Terminal({ live, close }: { live: ReturnType<typeof usePanelData>; clos
 
 function Palette({ skills, go, openSkill, close }: { skills: Skill[]; go: (page: SkillMPage) => void; openSkill: (name: string) => void; close: () => void }) {
   const [filter, setFilter] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const q = filter.trim().toLowerCase();
   const filteredPages = pages.filter((page) => !q || `${page.label} ${page.group} ${page.preview ? "preview not connected" : ""}`.toLowerCase().includes(q));
   const filteredSkills = skills.filter((skill) => !q || `${skill.name} ${skill.tag} ${skill.description ?? ""}`.toLowerCase().includes(q)).slice(0, 8);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
   return (
-    <div className="sm-veil" onMouseDown={close}>
-      <div className="cmd-pal" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="cmd-search"><Icon d="search" /><input autoFocus value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索页面或 skill" aria-label="搜索命令" /><button className="btn-icon" aria-label="关闭命令面板" onClick={close}><Icon d="x" /></button></div>
+    <div className="sm-veil">
+      <div className="cmd-pal" role="dialog" aria-modal="true" aria-label="Command palette">
+        <div className="cmd-search"><Icon d="search" /><input ref={inputRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索页面或 skill" aria-label="搜索命令" /><button type="button" className="btn-icon" aria-label="关闭命令面板" onClick={close}><Icon d="x" /></button></div>
         <div className="cmd-list">
-          {filteredPages.map((page) => <button key={page.id} className={`cmd-item ${page.preview ? "preview" : ""}`} aria-label={page.preview ? `Go to ${page.label} Preview not connected` : `Go to ${page.label}`} onClick={() => go(page.id)}><Icon d={page.icon} />Go to {page.label}<span>{page.preview ? "Preview · not connected" : page.group}</span></button>)}
-          {filteredSkills.map((skill) => <button key={skill.name} className="cmd-item" onClick={() => openSkill(skill.name)}><Icon d="eye" />Open {skill.name}<span>{sourceLabel(skill)}</span></button>)}
+          {filteredPages.map((page) => <button type="button" key={page.id} className={`cmd-item ${page.preview ? "preview" : ""}`} aria-label={page.preview ? `Go to ${page.label} Preview not connected` : `Go to ${page.label}`} onClick={() => go(page.id)}><Icon d={page.icon} />Go to {page.label}<span>{page.preview ? "Preview · not connected" : page.group}</span></button>)}
+          {filteredSkills.map((skill) => <button type="button" key={skill.name} className="cmd-item" onClick={() => openSkill(skill.name)}><Icon d="eye" />Open {skill.name}<span>{sourceLabel(skill)}</span></button>)}
           {filteredPages.length + filteredSkills.length === 0 ? <div className="panel-empty">没有匹配的命令。</div> : null}
         </div>
       </div>
@@ -740,33 +1076,33 @@ function Tweaks({ dark, setDark, density, setDensity, accent, setAccent, close }
   const themes = [["#ff0080", "#7928ca", "#00d9ff"], ["#34d399", "#0ea5e9", "#a3e635"], ["#ff6b35", "#f43f5e", "#fbbf24"]];
   return (
     <aside className="twk-panel skillm-tweaks">
-      <div className="twk-hd"><b>Tweaks</b><button className="twk-x" aria-label="关闭 Tweaks" onClick={close}>×</button></div>
+      <div className="twk-hd"><b>Tweaks</b><button type="button" className="twk-x" aria-label="关闭 Tweaks" onClick={close}>×</button></div>
       <div className="twk-body">
         <div className="twk-sect">视觉方向</div>
-        <div className="twk-row"><div className="twk-lbl"><span>配色（Neon / Aurora / Sunset）</span></div><div className="twk-chips">{themes.map((theme, index) => <button key={theme.join("")} className="twk-chip" aria-label={`选择配色 ${index + 1}`} data-on={theme.join("") === accent.join("") ? "1" : "0"} onClick={() => setAccent(theme)}>{theme.map((color) => <i key={color} style={{ background: color }} />)}</button>)}</div></div>
+        <div className="twk-row"><div className="twk-lbl"><span>配色（Neon / Aurora / Sunset）</span></div><div className="twk-chips">{themes.map((theme, index) => <button type="button" key={theme.join("")} className="twk-chip" aria-label={`选择配色 ${index + 1}`} data-on={theme.join("") === accent.join("") ? "1" : "0"} onClick={() => setAccent(theme)}>{theme.map((color) => <i key={color} style={{ background: color }} />)}</button>)}</div></div>
         <div className="twk-row twk-row-h"><div className="twk-lbl"><span>深色模式</span></div><Switch label="切换深色模式" on={dark} onChange={setDark} /></div>
         <div className="twk-sect">布局</div>
-        <div className="twk-radio">{(["compact", "regular", "comfy"] as const).map((value) => <button key={value} data-on={density === value ? "1" : "0"} onClick={() => setDensity(value)}>{value}</button>)}</div>
+        <div className="twk-radio">{(["compact", "regular", "comfy"] as const).map((value) => <button type="button" key={value} data-on={density === value ? "1" : "0"} onClick={() => setDensity(value)}>{value}</button>)}</div>
       </div>
     </aside>
   );
 }
 
 function Toasts({ items, dismiss }: { items: Toast[]; dismiss: (id: string) => void }) {
-  return <div className="sm-toasts">{items.map((toast) => <button key={toast.id} className={`sm-toast ${toast.kind}`} onClick={() => dismiss(toast.id)}><Icon d={toast.kind === "err" ? "x" : "bolt"} />{toast.text}</button>)}</div>;
+  return <div className="sm-toasts">{items.map((toast) => <button type="button" key={toast.id} className={`sm-toast ${toast.kind}`} onClick={() => dismiss(toast.id)}><Icon d={toast.kind === "err" ? "x" : "bolt"} />{toast.text}</button>)}</div>;
 }
 
 function StatusBar({ live, counts, dark, setDark, onSync, onTerm, onTweaks }: { live: ReturnType<typeof usePanelData>; counts: { pending: number; drifted: number }; dark: boolean; setDark: (value: boolean) => void; onSync: () => void; onTerm: () => void; onTweaks: () => void }) {
   return (
     <footer className="sm-statusbar">
-      <button className="sb-item sb-sync" onClick={onSync}><Icon d="sync" size={14} />{live.remote?.sync_state ?? "local"}</button>
-      <span className="sb-item">{live.live ? "已同步" : "offline"} · {live.lastUpdated ? "刚刚" : "pending"}</span>
+      <button type="button" className="sb-item sb-sync" onClick={onSync}><Icon d="sync" size={14} />{live.remote?.sync_state ?? "local"}</button>
+      <span className="sb-item">{live.mode === "loading" ? "加载中" : live.live ? "已同步" : "offline"} · {live.lastUpdated ? "刚刚" : "pending"}</span>
       <span className="sb-item warn">{counts.drifted} drift · {counts.pending} queued</span>
       <span className="sb-flex" />
-      <button className="sb-item" onClick={onTerm}><Icon d="term" size={14} />terminal</button>
-      <button className="sb-item" onClick={() => setDark(!dark)}>{dark ? "dark" : "light"}</button>
-      <button className="sb-item" onClick={onTweaks}><Icon d="gear" size={14} />tweaks</button>
-      <span className="sb-ver">SkillM 1.0.0</span>
+      <button type="button" className="sb-item" onClick={onTerm}><Icon d="term" size={14} />terminal</button>
+      <button type="button" className="sb-item" onClick={() => setDark(!dark)}>{dark ? "dark" : "light"}</button>
+      <button type="button" className="sb-item" onClick={onTweaks}><Icon d="gear" size={14} />tweaks</button>
+      <span className="sb-ver">Loom Panel</span>
     </footer>
   );
 }

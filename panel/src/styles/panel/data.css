@@ -146,6 +146,12 @@
   gap: 12px;
 }
 
+.target-card-button {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+}
+
 .target-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -400,6 +406,16 @@
   margin-bottom: 6px;
   background: var(--bg-1);
   font-size: 12px;
+}
+.op-row-select {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .op-row .op-main {
   min-width: 0;

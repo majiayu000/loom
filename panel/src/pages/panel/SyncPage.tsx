@@ -175,7 +175,7 @@ export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRo
                 aria-label="Remote URL"
                 style={inputStyle}
               />
-              <button
+              <button type="button"
                 className="btn"
                 disabled={readOnly || syncBusy || remoteUrl.trim().length === 0}
                 title={readOnly ? "registry offline" : "set origin remote URL"}
@@ -189,7 +189,7 @@ export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRo
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-head">
             <h3>History repair</h3>
-            <button
+            <button type="button"
               className="btn sm"
               disabled={readOnly || diagnoseLoading}
               onClick={() => setRepairVersion((value) => value + 1)}
@@ -218,10 +218,10 @@ export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRo
                   {diagnose?.conflicts[0]?.path}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button className="btn" disabled={readOnly || syncBusy} onClick={() => runHistoryRepair("local")}>
+                  <button type="button" className="btn" disabled={readOnly || syncBusy} onClick={() => runHistoryRepair("local")}>
                     Repair from local
                   </button>
-                  <button className="btn" disabled={readOnly || syncBusy} onClick={() => runHistoryRepair("remote")}>
+                  <button type="button" className="btn" disabled={readOnly || syncBusy} onClick={() => runHistoryRepair("remote")}>
                     Repair from remote
                   </button>
                 </div>
@@ -237,7 +237,7 @@ export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRo
             <h3>Actions</h3>
           </div>
           <div className="card-body" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button
+            <button type="button"
               className="btn"
               disabled={readOnly || syncBusy}
               onClick={() => pull.run("sync pull", api.syncPull, onMutation)}
@@ -245,7 +245,7 @@ export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRo
             >
               <SyncIcon /> {pull.busy ? "pulling…" : "Pull"}
             </button>
-            <button
+            <button type="button"
               className="btn"
               disabled={readOnly || syncBusy}
               onClick={() => push.run("sync push", api.syncPush, onMutation)}
@@ -253,7 +253,7 @@ export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRo
             >
               <SyncIcon /> {push.busy ? "pushing…" : "Push"}
             </button>
-            <button
+            <button type="button"
               className="btn primary"
               disabled={readOnly || syncBusy}
               onClick={() => replay.run("sync replay", api.syncReplay, onMutation)}
@@ -261,7 +261,7 @@ export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRo
             >
               <PlayIcon /> {replay.busy ? "replaying…" : `Replay queued writes (${queuedWriteCount})`}
             </button>
-            <button
+            <button type="button"
               className="btn ghost"
               disabled={readOnly}
               onClick={onMutation}

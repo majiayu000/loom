@@ -8,10 +8,10 @@ function StatusRing({ status }: { status: Op["status"] }) {
 export function OpRow({ op }: { op: Op }) {
   const label = describeActivityOperation(op);
   return (
-    <div className="op-row">
+    <span className="op-row">
       <StatusRing status={op.status} />
-      <div className="op-main">
-        <div className="op-title">
+      <span className="op-main">
+        <span className="op-title">
           <span className="op-kind" title={`source command: ${op.kind}`}>
             {label.category}
           </span>
@@ -24,17 +24,17 @@ export function OpRow({ op }: { op: Op }) {
               {op.method}
             </span>
           )}
-        </div>
-        <div className="op-sub">
+        </span>
+        <span className="op-sub">
           <span className={`op-status ${op.status}`}>{statusWord(op.status)}</span>
           {label.details.map((detail) => (
             <span key={detail} className="op-meta" title={detail.startsWith("id ") ? label.technicalId : undefined}>
               {detail}
             </span>
           ))}
-        </div>
-      </div>
-      <div className="op-time">{op.time}</div>
-    </div>
+        </span>
+      </span>
+      <span className="op-time">{op.time}</span>
+    </span>
   );
 }

@@ -5,8 +5,15 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+## [0.1.6] - 2026-08-06
+
 ### Changed
 
+- GitHub Release archives are now the recommended one-command install path,
+  with checksum verification, bundled Skill/contract data, and a live
+  distribution-readiness gate.
+- The production SkillM Panel now preserves target, binding, projection, and
+  Git sync mutation parity while bounding large skill inventories.
 - Agent-facing CLI compatibility is now independently versioned, inventoried,
   and paired with the shipped Skill through a verified release manifest.
 - Release archives and Homebrew installs now carry the same binary, Skill,
@@ -30,6 +37,9 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ### Fixed
 
+- The Panel now offers a complete skill import flow, reports first-load and
+  observed-only state truthfully, and enforces zero production accessibility
+  diagnostics with keyboard and reduced-motion coverage.
 - Local-only registries no longer report successful journal rows and audit
   history as pending operations. CLI, doctor, Panel API, and Panel now expose
   the same four non-overlapping actionable, local-journal, unpushed-history,
@@ -151,6 +161,7 @@ archives, checksums, and provenance details on GitHub Releases.
 
 - Initial public release archives for Loom.
 
+[0.1.6]: https://github.com/majiayu000/loom/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/majiayu000/loom/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/majiayu000/loom/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/majiayu000/loom/compare/v0.1.2...v0.1.3

@@ -586,7 +586,7 @@ fn remote_ahead_preserves_recorded_commit_evidence() {
     git(fixture.root.path(), &["push", "origin", "HEAD:main"]);
     git(
         peer.path(),
-        &["clone", "--branch", "main", remote_path, "."],
+        &["clone", "--no-local", "--branch", "main", remote_path, "."],
     );
     git(peer.path(), &["config", "user.email", "test@example.com"]);
     git(peer.path(), &["config", "user.name", "Test User"]);

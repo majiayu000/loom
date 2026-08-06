@@ -19,7 +19,7 @@ export function TweakPanel({ state, onChange, onDismiss }: TweakPanelProps) {
     <div className="tweaks">
       <div className="t-head">
         <span>Tweaks</span>
-        <button onClick={onDismiss} style={{ color: "var(--ink-3)", fontSize: 14 }}>
+        <button type="button" onClick={onDismiss} style={{ color: "var(--ink-3)", fontSize: 14 }}>
           ×
         </button>
       </div>
@@ -28,7 +28,7 @@ export function TweakPanel({ state, onChange, onDismiss }: TweakPanelProps) {
           <div className="t-label">Projection viz</div>
           <div className="seg">
             {(["loom", "force", "tree"] as const).map((m) => (
-              <button key={m} className={state.vizMode === m ? "on" : ""} onClick={() => onChange({ vizMode: m })}>
+              <button type="button" key={m} className={state.vizMode === m ? "on" : ""} onClick={() => onChange({ vizMode: m })}>
                 {m}
               </button>
             ))}
@@ -38,10 +38,13 @@ export function TweakPanel({ state, onChange, onDismiss }: TweakPanelProps) {
           <div className="t-label">Accent</div>
           <div className="swatch-row">
             {ACCENTS.map((s) => (
-              <div
+              <button
+                type="button"
                 key={s.name}
                 className={`swatch ${state.accent === s.val ? "on" : ""}`}
                 style={{ background: s.val }}
+                aria-label={`Accent ${s.name}`}
+                aria-pressed={state.accent === s.val}
                 onClick={() => onChange({ accent: s.val })}
               />
             ))}
@@ -51,7 +54,7 @@ export function TweakPanel({ state, onChange, onDismiss }: TweakPanelProps) {
           <div className="t-label">Density</div>
           <div className="seg">
             {(["cozy", "normal", "dense"] as const).map((d) => (
-              <button key={d} className={state.density === d ? "on" : ""} onClick={() => onChange({ density: d })}>
+              <button type="button" key={d} className={state.density === d ? "on" : ""} onClick={() => onChange({ density: d })}>
                 {d}
               </button>
             ))}
@@ -60,10 +63,10 @@ export function TweakPanel({ state, onChange, onDismiss }: TweakPanelProps) {
         <div className="t-group">
           <div className="t-label">Sidebar</div>
           <div className="seg">
-            <button className={!state.compact ? "on" : ""} onClick={() => onChange({ compact: false })}>
+            <button type="button" className={!state.compact ? "on" : ""} onClick={() => onChange({ compact: false })}>
               expanded
             </button>
-            <button className={state.compact ? "on" : ""} onClick={() => onChange({ compact: true })}>
+            <button type="button" className={state.compact ? "on" : ""} onClick={() => onChange({ compact: true })}>
               compact
             </button>
           </div>
@@ -72,7 +75,7 @@ export function TweakPanel({ state, onChange, onDismiss }: TweakPanelProps) {
           <div className="t-label">Display font</div>
           <div className="seg">
             {(["Fraunces", "Inter", "JetBrains Mono"] as const).map((f) => (
-              <button
+              <button type="button"
                 key={f}
                 className={state.displayFont === f ? "on" : ""}
                 onClick={() => onChange({ displayFont: f })}

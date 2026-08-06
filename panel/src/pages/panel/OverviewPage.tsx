@@ -256,13 +256,13 @@ export function OverviewPage({
           </div>
         </div>
         <div className="header-actions">
-          <button className="btn primary" onClick={onNewTarget} disabled={readOnly} title={readOnly ? "registry offline" : undefined}>
+          <button type="button" className="btn primary" onClick={onNewTarget} disabled={readOnly} title={readOnly ? "registry offline" : undefined}>
             <TargetIcon /> Add target
           </button>
-          <button className="btn ghost" onClick={onNewBinding} disabled={!canAddBinding} title={addBindingTitle}>
+          <button type="button" className="btn ghost" onClick={onNewBinding} disabled={!canAddBinding} title={addBindingTitle}>
             <PlusIcon /> Add binding
           </button>
-          <button className="btn ghost" onClick={onOpenSync}>
+          <button type="button" className="btn ghost" onClick={onOpenSync}>
             <RefreshIcon /> Replay / sync
           </button>
         </div>
@@ -307,7 +307,7 @@ export function OverviewPage({
             </div>
             <div className="viz-switch">
               {(["loom", "force", "tree"] as const).map((m) => (
-                <button
+                <button type="button"
                   key={m}
                   className={vizMode === m ? "active" : ""}
                   onClick={() => setVizMode(m)}
@@ -366,7 +366,7 @@ export function OverviewPage({
           <div className="card">
             <div className="card-head">
               <h3>Recent Activity</h3>
-              <button className="btn sm" onClick={onViewActivity} title="Open the full activity queue">
+              <button type="button" className="btn sm" onClick={onViewActivity} title="Open the full activity queue">
                 View all →
               </button>
             </div>
@@ -446,7 +446,7 @@ function NextStepRow({ step, active }: { step: NextStep; active: boolean }) {
         <div className="next-step-detail">{step.detail}</div>
       </div>
       {!step.done && (
-        <button
+        <button type="button"
           className={`btn sm next-step-action ${active ? "is-primary" : ""}`}
           onClick={step.onAction}
           disabled={step.disabled}

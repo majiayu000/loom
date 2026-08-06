@@ -21,14 +21,14 @@ export function SkillViewModeSwitch({
   onModeChange: (mode: SkillsViewMode) => void;
 }) {
   return (
-    <div style={modeSwitchStyle} role="group" aria-label="Skill view">
-      <button style={modeSwitchButtonStyle(mode === "skills")} onClick={() => onModeChange("skills")}>
+    <fieldset style={{ ...modeSwitchStyle, border: 0, margin: 0, padding: 0 }} aria-label="Skill view">
+      <button type="button" aria-pressed={mode === "skills"} style={modeSwitchButtonStyle(mode === "skills")} onClick={() => onModeChange("skills")}>
         Skills
       </button>
-      <button style={modeSwitchButtonStyle(mode === "trash")} onClick={() => onModeChange("trash")}>
+      <button type="button" aria-pressed={mode === "trash"} style={modeSwitchButtonStyle(mode === "trash")} onClick={() => onModeChange("trash")}>
         Trash
       </button>
-    </div>
+    </fieldset>
   );
 }
 
@@ -159,7 +159,7 @@ export function TrashSkillAction({ skill, readOnly, onSuccess }: TrashSkillActio
   return (
     <div style={{ display: "grid", gap: 8, margin: "0 0 14px" }}>
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
+        <button type="button"
           className="btn ghost danger"
           aria-label={`Trash ${skill.name}`}
           onClick={() => setConfirmOpen((value) => !value)}
@@ -179,10 +179,10 @@ export function TrashSkillAction({ skill, readOnly, onSuccess }: TrashSkillActio
           </div>
           <MutationBanner state={trash} spacing="top" />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-            <button className="btn ghost" onClick={() => setConfirmOpen(false)} disabled={trash.busy}>
+            <button type="button" className="btn ghost" onClick={() => setConfirmOpen(false)} disabled={trash.busy}>
               Cancel
             </button>
-            <button className="btn ghost danger" onClick={moveToTrash} disabled={disabled} title={title}>
+            <button type="button" className="btn ghost danger" onClick={moveToTrash} disabled={disabled} title={title}>
               Move to trash
             </button>
           </div>
@@ -242,7 +242,7 @@ function TrashEntryDetail({
 
       <div className="card" style={{ padding: 12, marginTop: 14 }}>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button
+          <button type="button"
             className="btn primary"
             onClick={runRestore}
             disabled={mutationDisabled}
@@ -250,7 +250,7 @@ function TrashEntryDetail({
           >
             {restore.busy ? "restoring..." : "Restore"}
           </button>
-          <button
+          <button type="button"
             className="btn ghost danger"
             onClick={() => setConfirmPurge((value) => !value)}
             disabled={mutationDisabled}
@@ -268,10 +268,10 @@ function TrashEntryDetail({
               This only purges <span>{entry.trash_id}</span>.
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-              <button className="btn ghost" onClick={() => setConfirmPurge(false)} disabled={purge.busy}>
+              <button type="button" className="btn ghost" onClick={() => setConfirmPurge(false)} disabled={purge.busy}>
                 Cancel
               </button>
-              <button
+              <button type="button"
                 className="btn ghost danger"
                 onClick={runPurge}
                 disabled={mutationDisabled}

@@ -54,7 +54,7 @@ export function HowItWorks() {
 
         <div className="how-wrap">
           <div className="how-diagram">
-            <svg viewBox="0 0 880 320">
+            <svg aria-hidden="true" focusable="false" viewBox="0 0 880 320">
               <defs>
                 <marker id="how-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                   <path d="M0 0 L10 5 L0 10 z" fill="#d97736" />

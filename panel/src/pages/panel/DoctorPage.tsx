@@ -56,7 +56,7 @@ export function DoctorPage({ apiReachable, mode, refreshKey, onNavigate }: Docto
           <div className="subtitle">Live registry health from the workspace doctor contract.</div>
         </div>
         <div className="header-actions">
-          <button className="btn ghost" onClick={() => setManualTick((cur) => cur + 1)} disabled={!apiReachable || state.kind === "loading"}>
+          <button type="button" className="btn ghost" onClick={() => setManualTick((cur) => cur + 1)} disabled={!apiReachable || state.kind === "loading"}>
             <RefreshIcon /> {state.kind === "loading" ? "Refreshing..." : "Refresh"}
           </button>
         </div>
@@ -155,7 +155,7 @@ function DoctorRow({ check, onNavigate }: { check: DoctorCheck; onNavigate?: (pa
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 5 }}>
             <span style={{ color: "var(--ink-3)" }}>{check.next_action}</span>
             {onNavigate && (
-              <button className="btn sm" onClick={() => onNavigate(nextActionPage(check))}>
+              <button type="button" className="btn sm" onClick={() => onNavigate(nextActionPage(check))}>
                 Open {nextActionPageLabel(check)}
               </button>
             )}

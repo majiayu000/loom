@@ -22,7 +22,7 @@ import { ApiError, api } from "./client";
 type RegistryCounts = NonNullable<NonNullable<RegistryPayload["data"]>["counts"]>;
 type AgentDir = NonNullable<InfoPayload["agent_dirs"]>[number];
 
-export type PanelDataMode = "live" | "first-run" | "offline-empty" | "offline-stale";
+export type PanelDataMode = "loading" | "live" | "first-run" | "offline-empty" | "offline-stale";
 
 export interface PanelLiveData {
   live: boolean;
@@ -63,7 +63,7 @@ const INITIAL_STATE: LiveState = {
   apiReachable: false,
   loading: true,
   error: null,
-  mode: "offline-empty",
+  mode: "loading",
   setupRequired: false,
   lastUpdated: null,
   registryRoot: null,

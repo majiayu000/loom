@@ -6,7 +6,7 @@ interface LoomMarkProps extends SVGProps<SVGSVGElement> {
 
 export function LoomMark({ size = 24, ...props }: LoomMarkProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" {...props}>
+    <svg aria-hidden="true" focusable="false" width={size} height={size} viewBox="0 0 24 24" {...props}>
       <line x1="6" y1="3" x2="6" y2="21" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       <line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       <line x1="18" y1="3" x2="18" y2="21" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -24,7 +24,7 @@ export function LoomMark({ size = 24, ...props }: LoomMarkProps) {
 
 export function LoomFooterMark({ size = 22 }: { size?: number }) {
   return (
-    <svg
+    <svg aria-hidden="true" focusable="false"
       width={size}
       height={size}
       viewBox="0 0 24 24"

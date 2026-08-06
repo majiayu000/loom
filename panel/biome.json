@@ -18,16 +18,16 @@
     "rules": {
       "recommended": true,
       "a11y": {
-        "noAutofocus": "warn",
-        "noLabelWithoutControl": "warn",
-        "noNoninteractiveElementToInteractiveRole": "warn",
-        "noStaticElementInteractions": "warn",
-        "noSvgWithoutTitle": "warn",
-        "useAriaPropsSupportedByRole": "warn",
-        "useButtonType": "warn",
-        "useKeyWithClickEvents": "warn",
-        "useSemanticElements": "warn",
-        "useValidAnchor": "warn"
+        "noAutofocus": "error",
+        "noLabelWithoutControl": "error",
+        "noNoninteractiveElementToInteractiveRole": "error",
+        "noStaticElementInteractions": "error",
+        "noSvgWithoutTitle": "error",
+        "useAriaPropsSupportedByRole": "error",
+        "useButtonType": "error",
+        "useKeyWithClickEvents": "error",
+        "useSemanticElements": "error",
+        "useValidAnchor": "error"
       },
       "complexity": {
         "noImportantStyles": "warn"

@@ -53,7 +53,7 @@ export function SkillInspectSections({ inspect }: { inspect: SkillInspectPayload
   const specFindings = inspect.spec.findings ?? [];
 
   return (
-    <div style={containerStyle} aria-label="Skill inspect detail">
+    <div style={containerStyle}>
       <InspectSection title="Source">
         <div className="kv" style={{ margin: 0 }}>
           <KeyValue label="Path" value={inspect.source.path} />

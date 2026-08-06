@@ -34,7 +34,14 @@ export function MutationBanner({
   const classes = ["mutation-note", className].filter(Boolean).join(" ");
 
   return (
-    <div className={classes} data-tone={resolvedTone} data-variant={variant} data-spacing={spacing}>
+    <div
+      className={classes}
+      data-tone={resolvedTone}
+      data-variant={variant}
+      data-spacing={spacing}
+      role={error ? "alert" : "status"}
+      aria-live="polite"
+    >
       {content}
     </div>
   );

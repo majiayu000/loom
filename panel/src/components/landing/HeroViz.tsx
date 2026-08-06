@@ -35,7 +35,7 @@ export function HeroViz() {
     <div className="hero-viz">
       <span className="corner-label tl">registry</span>
       <span className="corner-label br">targets</span>
-      <svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet">
+      <svg aria-hidden="true" focusable="false" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet">
         <defs>
           <linearGradient id="warp-g" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#d97736" stopOpacity="0.1" />

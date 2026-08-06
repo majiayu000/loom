@@ -36,26 +36,26 @@ export function TargetAddForm({ onCancel, onSuccess }: TargetAddFormProps) {
   };
 
   return (
-    <form onSubmit={submit} className="card" style={{ padding: 16, marginBottom: 12 }}>
+    <form aria-label="Add target" onSubmit={submit} className="card" style={{ padding: 16, marginBottom: 12 }}>
       <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8, alignItems: "center" }}>
-        <label className="hint">agent</label>
-        <select value={agent} onChange={(e) => setAgent(e.target.value)} style={inputStyle}>
+        <label className="hint" htmlFor="target-add-agent">agent</label>
+        <select id="target-add-agent" value={agent} onChange={(e) => setAgent(e.target.value)} style={inputStyle}>
           {AGENT_OPTIONS.map((a) => (
             <option key={a.slug} value={a.slug}>
               {a.label}
             </option>
           ))}
         </select>
-        <label className="hint">path</label>
+        <label className="hint" htmlFor="target-add-path">path</label>
         <input
+          id="target-add-path"
           value={path}
           onChange={(e) => setPath(e.target.value)}
           placeholder="$HOME/.claude/skills"
           style={inputStyle}
-          autoFocus
         />
-        <label className="hint">ownership</label>
-        <select value={ownership} onChange={(e) => setOwnership(e.target.value as Ownership)} style={inputStyle}>
+        <label className="hint" htmlFor="target-add-ownership">ownership</label>
+        <select id="target-add-ownership" value={ownership} onChange={(e) => setOwnership(e.target.value as Ownership)} style={inputStyle}>
           {OWNERSHIPS.map((o) => (
             <option key={o} value={o}>
               {o}
@@ -63,7 +63,7 @@ export function TargetAddForm({ onCancel, onSuccess }: TargetAddFormProps) {
           ))}
         </select>
       </div>
-      {error && <div style={errorStyle}>{error}</div>}
+      {error && <div role="alert" style={errorStyle}>{error}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
         <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
           Cancel

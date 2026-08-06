@@ -51,36 +51,36 @@ export function BindingAddForm({ targets, onCancel, onSuccess }: BindingAddFormP
   };
 
   return (
-    <form onSubmit={submit} className="card" style={{ padding: 16, marginBottom: 12 }}>
+    <form aria-label="Add binding" onSubmit={submit} className="card" style={{ padding: 16, marginBottom: 12 }}>
       <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8, alignItems: "center" }}>
-        <label className="hint">agent</label>
-        <select value={agent} onChange={(e) => setAgent(e.target.value)} style={inputStyle}>
+        <label className="hint" htmlFor="binding-add-agent">agent</label>
+        <select id="binding-add-agent" value={agent} onChange={(e) => setAgent(e.target.value)} style={inputStyle}>
           {AGENT_OPTIONS.map((a) => (
             <option key={a.slug} value={a.slug}>
               {a.label}
             </option>
           ))}
         </select>
-        <label className="hint">profile</label>
-        <input value={profile} onChange={(e) => setProfile(e.target.value)} style={inputStyle} />
-        <label className="hint">matcher kind</label>
-        <select value={matcherKind} onChange={(e) => setMatcherKind(e.target.value as MatcherKind)} style={inputStyle}>
+        <label className="hint" htmlFor="binding-add-profile">profile</label>
+        <input id="binding-add-profile" value={profile} onChange={(e) => setProfile(e.target.value)} style={inputStyle} />
+        <label className="hint" htmlFor="binding-add-matcher-kind">matcher kind</label>
+        <select id="binding-add-matcher-kind" value={matcherKind} onChange={(e) => setMatcherKind(e.target.value as MatcherKind)} style={inputStyle}>
           {MATCHERS.map((m) => (
             <option key={m} value={m}>
               {m}
             </option>
           ))}
         </select>
-        <label className="hint">matcher value</label>
+        <label className="hint" htmlFor="binding-add-matcher-value">matcher value</label>
         <input
+          id="binding-add-matcher-value"
           value={matcherValue}
           onChange={(e) => setMatcherValue(e.target.value)}
           placeholder="/Users/me/work"
           style={inputStyle}
-          autoFocus
         />
-        <label className="hint">target</label>
-        <select value={targetId} onChange={(e) => setTargetId(e.target.value)} style={inputStyle}>
+        <label className="hint" htmlFor="binding-add-target">target</label>
+        <select id="binding-add-target" value={targetId} onChange={(e) => setTargetId(e.target.value)} style={inputStyle}>
           {targets.length === 0 && <option value="">(no targets — add one first)</option>}
           {targets.map((t) => (
             <option key={t.id} value={t.id}>
@@ -92,7 +92,7 @@ export function BindingAddForm({ targets, onCancel, onSuccess }: BindingAddFormP
       <div className="hint" style={{ marginTop: 10, color: "var(--ink-3)" }}>
         Policy profile defaults to <code>safe-capture</code>. Use the CLI (<code>loom workspace binding add --policy-profile</code>) for custom profiles.
       </div>
-      {error && <div style={errorStyle}>{error}</div>}
+      {error && <div role="alert" style={errorStyle}>{error}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
         <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
           Cancel

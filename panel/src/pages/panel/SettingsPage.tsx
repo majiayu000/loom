@@ -172,7 +172,7 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
             <div style={{ marginBottom: 10, color: "var(--ink-2)" }}>
               Theme, density, accent, font and compact mode are local browser preferences. Click below to reset them and reload.
             </div>
-            <button className="btn" onClick={resetTweaks} disabled={cleared}>
+            <button type="button" className="btn" onClick={resetTweaks} disabled={cleared}>
               Reset UI preferences
             </button>
           </div>

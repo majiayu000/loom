@@ -1,6 +1,38 @@
 use super::*;
 
 #[tokio::test]
+async fn registry_skill_add_accepts_local_source_and_returns_cli_envelope() {
+    let (root, state) = make_test_state();
+    let source = root.join("source-skill");
+    fs::create_dir_all(&source).expect("create local source");
+    fs::write(
+        source.join("SKILL.md"),
+        "---\nname: imported-skill\n---\n# Imported\n",
+    )
+    .expect("write local source");
+    crate::gitops::ensure_repo_initialized(state.ctx.as_ref()).expect("init registry git");
+
+    let (status, Json(payload)) = registry_skill_add(
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state),
+        Json(SkillAddRequest {
+            source: source.display().to_string(),
+            name: "imported-skill".to_string(),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("skill.add"));
+    assert_eq!(payload["data"]["skill"], json!("imported-skill"));
+    assert!(root.join("skills/imported-skill/SKILL.md").exists());
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
 async fn v1_skills_returns_union_read_model() {
     let (root, state) = make_test_state();
     write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);

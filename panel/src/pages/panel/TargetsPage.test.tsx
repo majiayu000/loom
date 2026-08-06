@@ -77,6 +77,28 @@ describe("TargetsPage — ownership tier tooltip", () => {
     expect(byOwnership.get("external")).toMatch(/hands-off/);
   });
 
+  it("exposes each target card as a native selectable button", () => {
+    const onSelectTarget = vi.fn();
+    render(
+      <TargetsPage
+        targets={[makeTarget("target-managed", "managed")]}
+        skills={[]}
+        selectedTarget={null}
+        onSelectTarget={onSelectTarget}
+        onRemoveTarget={() => {}}
+        onMutation={() => {}}
+        readOnly={false}
+        mutationVersion={0}
+      />,
+    );
+
+    const target = screen.getByRole("button", { name: /claude\/home/ });
+    fireEvent.click(target);
+
+    expect(target).toHaveAttribute("aria-pressed", "false");
+    expect(onSelectTarget).toHaveBeenCalledWith("target-managed");
+  });
+
   it("shows the agent adapter source for each target", () => {
     render(
       <TargetsPage

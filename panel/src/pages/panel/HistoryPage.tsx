@@ -215,7 +215,7 @@ export function HistoryPage({
                   {diagnose.conflicts.length} conflict{diagnose.conflicts.length === 1 ? "" : "s"}
                 </span>
                 <span style={{ color: "var(--ink-2)" }}>{diagnose.conflicts[0]?.path}</span>
-                <button
+                <button type="button"
                   className="btn sm"
                   onClick={() => runRepair("local")}
                   disabled={repairDisabled}
@@ -223,7 +223,7 @@ export function HistoryPage({
                 >
                   Repair from local
                 </button>
-                <button
+                <button type="button"
                   className="btn sm"
                   onClick={() => runRepair("remote")}
                   disabled={repairDisabled}
@@ -245,7 +245,7 @@ export function HistoryPage({
         <div style={{ display: "flex", gap: 12, marginBottom: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
             {(["all", "pending", "ok", "err"] as FilterKey[]).map((k) => (
-              <button
+              <button type="button"
                 key={k}
                 className="btn sm"
                 onClick={() => setFilter(k)}
@@ -264,7 +264,7 @@ export function HistoryPage({
             ))}
           </div>
           {hasStructuredFilters && (
-            <button className="btn sm" onClick={() => setFilters(EMPTY_HISTORY_FILTERS)}>
+            <button type="button" className="btn sm" onClick={() => setFilters(EMPTY_HISTORY_FILTERS)}>
               Clear operation filters
             </button>
           )}
@@ -275,10 +275,10 @@ export function HistoryPage({
                   {historySummary}
                 </span>
               )}
-              <button className="btn sm" onClick={() => setOffset((cur) => Math.max(0, cur - payload.limit))} disabled={payload.offset === 0}>
+              <button type="button" className="btn sm" onClick={() => setOffset((cur) => Math.max(0, cur - payload.limit))} disabled={payload.offset === 0}>
                 newer
               </button>
-              <button className="btn sm" onClick={() => setOffset((cur) => cur + payload.limit)} disabled={!payload.has_more}>
+              <button type="button" className="btn sm" onClick={() => setOffset((cur) => cur + payload.limit)} disabled={!payload.has_more}>
                 older
               </button>
             </div>
@@ -459,7 +459,7 @@ function HistoryDetailDrawer({ op, onClose }: { op: RegistryOperationRecord; onC
     <div className="card" style={{ marginTop: 14 }}>
       <div className="card-head">
         <h3>Audit detail</h3>
-        <button className="btn sm" onClick={onClose}>Close</button>
+        <button type="button" className="btn sm" onClick={onClose}>Close</button>
       </div>
       <div className="card-body">
         <div className="kv" style={{ margin: 0 }}>

@@ -104,7 +104,7 @@ export function LifecycleActions({
   return (
     <div className="card" style={{ padding: 12, margin: "14px 0" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
-        <button
+        <button type="button"
           className="btn ghost"
           onClick={runCommit}
           disabled={disabled}
@@ -113,7 +113,7 @@ export function LifecycleActions({
         >
           {commit.busy ? "committing..." : "Commit"}
         </button>
-        <button
+        <button type="button"
           className="btn ghost"
           onClick={runAnchor}
           disabled={disabled}

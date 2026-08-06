@@ -205,7 +205,7 @@ export function SkillsPage({
           )}
           {mode === "skills" && (
             <>
-              <button
+              <button type="button"
                 className="btn primary"
                 onClick={runCapture}
                 disabled={captureDisabled}
@@ -213,7 +213,7 @@ export function SkillsPage({
               >
                 <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
               </button>
-              <button
+              <button type="button"
                 className="btn primary"
                 onClick={() => setAddOpen((value) => !value)}
                 disabled={readOnly}
@@ -391,16 +391,16 @@ function SkillAddForm({ onCancel, onSuccess }: { onCancel: () => void; onSuccess
   return (
     <form onSubmit={submit} className="card" style={{ padding: 16, marginBottom: 12 }}>
       <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8, alignItems: "center" }}>
-        <label className="hint">source</label>
+        <label className="hint" htmlFor="skills-page-add-source">source</label>
         <input
+          id="skills-page-add-source"
           value={source}
           onChange={(event) => setSource(event.target.value)}
           placeholder="/Users/me/.claude/skills/my-skill"
           style={formInputStyle}
-          autoFocus
         />
-        <label className="hint">name</label>
-        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="my-skill" style={formInputStyle} />
+        <label className="hint" htmlFor="skills-page-add-name">name</label>
+        <input id="skills-page-add-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="my-skill" style={formInputStyle} />
       </div>
       <MutationBanner state={add} spacing="top" />
       <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
@@ -592,25 +592,25 @@ function SkillDetail({
       <SkillDetailPage skillName={skill.name} />
 
       <div className="tabs">
-        <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
+        <button type="button" className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
           Overview
         </button>
-        <button className={tab === "lifecycle" ? "active" : ""} onClick={() => setTab("lifecycle")}>
+        <button type="button" className={tab === "lifecycle" ? "active" : ""} onClick={() => setTab("lifecycle")}>
           Lifecycle
         </button>
-        <button className={tab === "diagnose" ? "active" : ""} onClick={() => setTab("diagnose")}>
+        <button type="button" className={tab === "diagnose" ? "active" : ""} onClick={() => setTab("diagnose")}>
           Diagnose
         </button>
-        <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
+        <button type="button" className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
           History
         </button>
-        <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")}>
+        <button type="button" className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")}>
           Diff
         </button>
-        <button className={tab === "projections" ? "active" : ""} onClick={() => setTab("projections")}>
+        <button type="button" className={tab === "projections" ? "active" : ""} onClick={() => setTab("projections")}>
           Projections ({skillProjections.length})
         </button>
-        <button className={tab === "trash" ? "active" : ""} onClick={() => setTab("trash")}>
+        <button type="button" className={tab === "trash" ? "active" : ""} onClick={() => setTab("trash")}>
           Trash state
         </button>
       </div>
@@ -719,7 +719,7 @@ function ProjectSkillForm({
           <option value="copy">copy</option>
           <option value="materialize">materialize</option>
         </select>
-        <button className="btn primary" onClick={runProject} disabled={readOnly || project.busy || !selectedBinding}>
+        <button type="button" className="btn primary" onClick={runProject} disabled={readOnly || project.busy || !selectedBinding}>
           {project.busy ? "projecting…" : "Project"}
         </button>
       </div>

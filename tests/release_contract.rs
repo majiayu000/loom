@@ -115,6 +115,229 @@ fn git(repo: &Path, args: &[&str]) -> String {
         .to_string()
 }
 
+#[cfg(unix)]
+fn installer_fixture(name: &str) -> (TestDir, PathBuf, String, String) {
+    let fixture = TestDir::new(name);
+    let version = "9.8.7".to_string();
+    let target = "fixture-target".to_string();
+    let archive = format!("skillloom-{version}-{target}.tar.gz");
+    let staging = fixture.path().join("staging");
+    let bundle = staging.join(format!("skillloom-{version}-{target}"));
+    let release = fixture
+        .path()
+        .join("releases/download")
+        .join(format!("v{version}"));
+    write_file(
+        &bundle.join("loom"),
+        "#!/bin/sh\nprintf 'loom fixture\\n'\n",
+    );
+    let mut permissions = fs::metadata(bundle.join("loom"))
+        .expect("fixture binary metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(bundle.join("loom"), permissions).expect("fixture binary executable");
+    write_file(
+        &bundle.join("skills/loom-registry/SKILL.md"),
+        "# Installer fixture\n",
+    );
+    write_file(
+        &bundle.join("contracts/agent-command-surfaces.toml"),
+        "[[surface]]\nid = \"fixture\"\n",
+    );
+    write_file(&bundle.join("contract-manifest.json"), "{}\n");
+    fs::create_dir_all(&release).expect("release fixture directory");
+    let archive_path = release.join(&archive);
+    let tar = Command::new("tar")
+        .args(["-C", staging.to_str().expect("staging path"), "-czf"])
+        .arg(&archive_path)
+        .arg(bundle.file_name().expect("bundle name"))
+        .output()
+        .expect("create installer archive");
+    assert!(
+        tar.status.success(),
+        "tar failed: {}",
+        String::from_utf8_lossy(&tar.stderr)
+    );
+    let checksum = Command::new("shasum")
+        .args(["-a", "256"])
+        .arg(&archive_path)
+        .output()
+        .expect("checksum installer archive");
+    assert!(checksum.status.success());
+    let digest = String::from_utf8(checksum.stdout)
+        .expect("checksum output")
+        .split_whitespace()
+        .next()
+        .expect("checksum digest")
+        .to_string();
+    write_file(
+        &release.join("SHA256SUMS"),
+        &format!("{digest}  {archive}\n"),
+    );
+    (fixture, release, version, target)
+}
+
+#[cfg(unix)]
+#[test]
+fn installer_verifies_and_installs_release_bundle() {
+    let (fixture, release, version, target) = installer_fixture("release-installer-success");
+    let bin_dir = fixture.path().join("installed/bin");
+    let data_dir = fixture.path().join("installed/data");
+    let base_url = format!(
+        "file://{}",
+        release
+            .parent()
+            .expect("download root")
+            .to_str()
+            .expect("download root path")
+    );
+    let output = Command::new("sh")
+        .arg("scripts/install.sh")
+        .args(["--version", &version, "--target", &target, "--bin-dir"])
+        .arg(&bin_dir)
+        .arg("--data-dir")
+        .arg(&data_dir)
+        .env("LOOM_INSTALL_BASE_URL", base_url)
+        .output()
+        .expect("run release installer");
+    assert!(
+        output.status.success(),
+        "installer failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(bin_dir.join("loom").is_file());
+    assert_eq!(
+        fs::read_to_string(data_dir.join("current/skills/loom-registry/SKILL.md"))
+            .expect("installed Skill"),
+        "# Installer fixture\n"
+    );
+    assert!(
+        data_dir
+            .join("current/contracts/agent-command-surfaces.toml")
+            .is_file()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn installer_fails_closed_on_checksum_mismatch() {
+    let (fixture, release, version, target) = installer_fixture("release-installer-checksum");
+    write_file(
+        &release.join("SHA256SUMS"),
+        &format!("{}  skillloom-{version}-{target}.tar.gz\n", "0".repeat(64)),
+    );
+    let bin_dir = fixture.path().join("installed/bin");
+    let data_dir = fixture.path().join("installed/data");
+    let base_url = format!(
+        "file://{}",
+        release
+            .parent()
+            .expect("download root")
+            .to_str()
+            .expect("download root path")
+    );
+    let output = Command::new("sh")
+        .arg("scripts/install.sh")
+        .args(["--version", &version, "--target", &target, "--bin-dir"])
+        .arg(&bin_dir)
+        .arg("--data-dir")
+        .arg(&data_dir)
+        .env("LOOM_INSTALL_BASE_URL", base_url)
+        .output()
+        .expect("run release installer");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("checksum mismatch"));
+    assert!(!bin_dir.join("loom").exists());
+    assert!(!data_dir.exists());
+}
+
+#[test]
+fn optional_publish_skips_are_visible_in_release_summary() {
+    let workflow = include_str!("../.github/workflows/release.yml");
+    for message in [
+        "::warning title=crates.io publish skipped::",
+        "::warning title=Homebrew publish skipped::",
+    ] {
+        assert!(
+            workflow.contains(message),
+            "missing workflow warning: {message}"
+        );
+    }
+    assert!(workflow.matches("GITHUB_STEP_SUMMARY").count() >= 2);
+    assert!(workflow.contains("Do not advertise"));
+}
+
+#[test]
+fn distribution_readiness_accepts_complete_release_fixture() {
+    let fixture = TestDir::new("distribution-readiness-complete");
+    let readme = fixture.path().join("README.md");
+    write_file(
+        &readme,
+        "curl -fsSL https://raw.githubusercontent.com/majiayu000/loom/main/scripts/install.sh | sh\n",
+    );
+    let release = fixture.path().join("release.json");
+    write_file(
+        &release,
+        r#"{
+          "tag_name": "v9.8.7",
+          "draft": false,
+          "assets": [
+            {"name": "SHA256SUMS", "state": "uploaded", "size": 320},
+            {"name": "skillloom-9.8.7-aarch64-apple-darwin.tar.gz", "state": "uploaded", "size": 1},
+            {"name": "skillloom-9.8.7-x86_64-apple-darwin.tar.gz", "state": "uploaded", "size": 1},
+            {"name": "skillloom-9.8.7-x86_64-unknown-linux-gnu.tar.gz", "state": "uploaded", "size": 1}
+          ]
+        }"#,
+    );
+    let output = Command::new("python3")
+        .args([
+            "scripts/distribution-readiness.py",
+            "--tag",
+            "v9.8.7",
+            "--readme",
+        ])
+        .arg(&readme)
+        .arg("--release-json")
+        .arg(&release)
+        .output()
+        .expect("run distribution readiness fixture");
+    assert!(
+        output.status.success(),
+        "readiness failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn distribution_readiness_rejects_missing_release_asset() {
+    let fixture = TestDir::new("distribution-readiness-missing-asset");
+    let readme = fixture.path().join("README.md");
+    write_file(
+        &readme,
+        "curl -fsSL https://raw.githubusercontent.com/majiayu000/loom/main/scripts/install.sh | sh\n",
+    );
+    let release = fixture.path().join("release.json");
+    write_file(
+        &release,
+        r#"{"tag_name":"v9.8.7","draft":false,"assets":[{"name":"SHA256SUMS","state":"uploaded","size":320}]}"#,
+    );
+    let output = Command::new("python3")
+        .args([
+            "scripts/distribution-readiness.py",
+            "--tag",
+            "v9.8.7",
+            "--readme",
+        ])
+        .arg(&readme)
+        .arg("--release-json")
+        .arg(&release)
+        .output()
+        .expect("run incomplete distribution fixture");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("release asset is missing"));
+}
+
 #[test]
 #[ignore = "release workflow supplies an unpacked, verified native bundle"]
 fn packaged_surface_fixture_matrix() {

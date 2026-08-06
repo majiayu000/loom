@@ -38,30 +38,20 @@ Loom can import from local directories, Git URLs, and GitHub locators, but it is
 ## Quick Start
 
 ```bash
-# 1. Install a prebuilt release archive (recommended)
-# Pick one target: aarch64-apple-darwin, x86_64-apple-darwin, x86_64-unknown-linux-gnu
-VERSION="0.1.5" # replace with the latest release version
-TARGET="aarch64-apple-darwin"
-BASE_URL="https://github.com/majiayu000/loom/releases/download/v${VERSION}"
-curl -LO "${BASE_URL}/skillloom-${VERSION}-${TARGET}.tar.gz"
-curl -LO "${BASE_URL}/SHA256SUMS"
-shasum -a 256 -c SHA256SUMS --ignore-missing
-tar -xzf "skillloom-${VERSION}-${TARGET}.tar.gz"
-sudo install "skillloom-${VERSION}-${TARGET}/loom" /usr/local/bin/loom
-
-# or install from the Homebrew tap after its formula PR is merged
-brew install majiayu000/tap/loom
+# 1. Install the latest prebuilt release (recommended)
+# Review the installer first: https://github.com/majiayu000/loom/blob/main/scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/majiayu000/loom/main/scripts/install.sh | sh
 
 # or build from source
 git clone https://github.com/majiayu000/loom.git
 cd loom && cargo install --path .
 
 # Optional: install the first-party Agent Skill for the agent(s) you use.
-# For an extracted release archive:
-SKILL_SOURCE="$PWD/skillloom-${VERSION}-${TARGET}/skills/loom-registry"
-# For Homebrew, use this source instead:
+# For the one-command installer:
+SKILL_SOURCE="${XDG_DATA_HOME:-$HOME/.local/share}/loom/current/skills/loom-registry"
+# After Homebrew publishes a formula, use this source instead:
 # SKILL_SOURCE="$(brew --prefix loom)/share/loom/skills/loom-registry"
-# For a source checkout after `cd loom`, use this source instead:
+# For a source checkout, use this source instead:
 # SKILL_SOURCE="$PWD/skills/loom-registry"
 
 install_loom_registry_skill() {
@@ -92,6 +82,8 @@ loom skill activate fixflow --agent codex --scope user --dry-run
 loom skill activate fixflow --agent codex --scope user
 loom skill visibility fixflow --agent codex
 ```
+
+The installer detects Apple Silicon macOS, Intel macOS, and x86_64 Linux, verifies the release archive against `SHA256SUMS`, installs the binary to `~/.local/bin`, and keeps versioned bundled Skills/contracts under `~/.local/share/loom`. Pass `--help` to the downloaded script to override the version or install directories. Homebrew is intentionally not advertised until the tap contains a published formula.
 
 The Agent Skill is named `loom-registry` to avoid colliding with Loom.com video Skills. The copy commands fail closed when a same-name target already exists; inspect and resolve that target manually instead of overwriting it. Start a new Claude Code or Codex session after copying so the agent can discover the Skill. A source build can use `skills/loom-registry` from the checkout; `cargo install` installs only the CLI binary and does not install the Agent Skill.
 

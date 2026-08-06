@@ -4,7 +4,7 @@ Loom is distributed as the `skillloom` crate with a `loom` binary.
 
 ## Release Surfaces
 
-- GitHub Release: built from tags matching `v*.*.*`; each archive includes the `loom` binary plus README/LICENSE.
+- GitHub Release: built from tags matching `v*.*.*`; each archive includes the `loom` binary, README/LICENSE, the first-party Agent Skill, and its CLI contract.
 - crates.io: published when `CARGO_REGISTRY_TOKEN` is configured.
 - Homebrew: opens a `loom` formula PR against `majiayu000/homebrew-tap` when `HOMEBREW_TAP_TOKEN` is configured.
 
@@ -14,6 +14,8 @@ GitHub Release archives are the preferred install path. They are built with the 
 - `skillloom-<version>-x86_64-apple-darwin.tar.gz`
 - `skillloom-<version>-x86_64-unknown-linux-gnu.tar.gz`
 - `SHA256SUMS`
+
+The public one-command installer at `scripts/install.sh` detects the supported host target, verifies the matching archive against `SHA256SUMS`, and installs the binary plus bundled Skill/contract data without requiring `sudo`.
 
 The release workflow also creates GitHub artifact attestations for the `.tar.gz` archives. The Homebrew formula installs the `loom` binary from GitHub Release archives. The crate name remains `skillloom` because `loom` is already used by an unrelated crates.io package.
 
@@ -51,6 +53,9 @@ Configure repository secrets:
 
 5. Watch the `Release` workflow.
 6. Merge the Homebrew tap PR if the workflow opens one.
+
+Missing publishing tokens produce explicit workflow warnings and job summaries. A green release workflow therefore proves the GitHub Release, but crates.io and Homebrew must each be checked independently before those install paths are advertised.
+The `distribution-readiness` job also queries the just-published GitHub Release and fails if any supported archive or `SHA256SUMS` is absent, if the recommended installer disappears from README, or if README advertises Homebrew without a live formula.
 
 ## Install Checks
 

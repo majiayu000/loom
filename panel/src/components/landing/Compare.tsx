@@ -76,7 +76,7 @@ export function Compare() {
 
         <p className="compare-note">
           If you want a one-click GUI with broad agent coverage and don't need projection/binding semantics,{" "}
-          <a href="#">skills-hub</a> or <a href="#">cc-switch</a> are great picks too.
+          <a href="https://github.com/search?q=skills-hub&amp;type=repositories">skills-hub</a> or <a href="https://github.com/search?q=cc-switch&amp;type=repositories">cc-switch</a> are great picks too.
         </p>
       </div>
     </section>

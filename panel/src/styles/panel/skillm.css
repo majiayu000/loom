@@ -43,6 +43,23 @@ body{font-family:var(--sans);background:var(--bg);overflow:hidden;}
   radial-gradient(900px 600px at 12% -5%,color-mix(in oklch,var(--acc2) 12%,transparent),transparent 60%),
   radial-gradient(800px 500px at 95% 8%,color-mix(in oklch,var(--acc3) 10%,transparent),transparent 55%),
   var(--bg);}
+.sm-app {
+  --bg-0: var(--bg);
+  --bg-1: var(--panel);
+  --bg-2: var(--panel2);
+  --ink-0: var(--ink);
+  --ink-1: var(--sub);
+  --ink-2: var(--sub);
+  --ink-3: var(--faint);
+  --line-soft: var(--line1);
+  --line-hi: var(--line2);
+  --accent: var(--acc2);
+  --accent-hover: var(--acc3);
+  --radius: var(--r-sm);
+  --radius-lg: var(--r);
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+}
 .sm-particles{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;}
 .sm-frame{flex:1;display:flex;min-height:0;position:relative;z-index:1;}
 .sm-main{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;position:relative;scroll-behavior:smooth;}
@@ -110,6 +127,7 @@ body{font-family:var(--sans);background:var(--bg);overflow:hidden;}
 .btn-grad.sm{padding:8px 15px;font-size:13px;border-radius:9px;}
 .btn-grad.wide{width:100%;justify-content:center;margin-top:6px;}
 .btn-grad.disabled{opacity:.4;pointer-events:none;filter:grayscale(.4);}
+.btn-grad:disabled,.btn-ghost:disabled{opacity:.45;cursor:not-allowed;transform:none;filter:grayscale(.35);}
 .btn-ghost{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line2);background:transparent;
   color:var(--ink);font-family:var(--sans);font-weight:600;font-size:13px;padding:8px 14px;border-radius:9px;
   cursor:pointer;transition:var(--t);white-space:nowrap;}
@@ -1437,4 +1455,102 @@ button.pstat:hover{transform:translateY(-2px);border-color:var(--line2);box-shad
   .sm-statusbar::-webkit-scrollbar{display:none;}
   .sm-statusbar .sb-item{flex:0 0 auto;min-width:0;white-space:nowrap;}
   .sm-terminal{left:68px;bottom:30px;height:min(300px,calc(100vh - 78px));}
+}
+
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--acc3);
+  outline-offset: 2px;
+}
+
+.skill-card {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.skill-import-form {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 16px;
+  padding: 16px;
+  border: 1px solid var(--line-hi);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--bg-2) 88%, var(--acc3));
+}
+
+.skill-import-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.skill-import-field {
+  display: grid;
+  gap: 5px;
+}
+
+.skill-import-field label {
+  color: var(--ink-1);
+  font: 600 11px var(--font-mono);
+}
+
+.skill-import-field input,
+.skill-import-field select {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line-hi);
+  border-radius: 6px;
+  background: var(--bg-1);
+  color: var(--ink-0);
+  font: 12px var(--font-mono);
+}
+
+.skillm-control-form {
+  margin: 0 0 16px;
+}
+
+.skillm-control-form .card {
+  border-color: var(--line2);
+  background: var(--panel);
+}
+
+.projection-review {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklch, var(--acc3) 35%, var(--line1));
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--acc3) 8%, var(--panel));
+  color: var(--sub);
+  font: 11px/1.5 var(--mono);
+}
+
+.sync-disabled-reason {
+  margin: -8px 0 12px;
+  color: var(--warn);
+  font: 11px/1.4 var(--mono);
+}
+
+.field-hint,
+.field-error {
+  margin: 0;
+  font: 11px/1.4 var(--font-mono);
+}
+
+.field-hint { color: var(--ink-3); }
+.field-error { color: var(--err); }
+.skill-import-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.skill-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 14px; color: var(--ink-2); font: 11px var(--font-mono); }
+.skill-pagination button { font: inherit; }
+
+@media (max-width: 760px) {
+  .skill-import-fields { grid-template-columns: 1fr; }
+  .skill-pagination { align-items: stretch; flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

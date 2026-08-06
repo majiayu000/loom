@@ -75,7 +75,7 @@ export function FirstRunPage({ registryRoot, onReady }: FirstRunPageProps) {
             {resultText(result) && (
               <div style={{ color: "var(--ok)", fontSize: 12, marginBottom: 12 }}>{resultText(result)}</div>
             )}
-            <button className="btn primary" onClick={initialize} disabled={running}>
+            <button type="button" className="btn primary" onClick={initialize} disabled={running}>
               {running ? "Initializing..." : "Initialize"}
             </button>
           </div>

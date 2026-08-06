@@ -252,7 +252,7 @@ export function ProjectionGraph({
           )}
         </div>
         {emptyAction && (
-          <button
+          <button type="button"
             className="btn primary"
             onClick={emptyAction.onClick}
             disabled={emptyAction.disabled}
@@ -273,7 +273,7 @@ export function ProjectionGraph({
   };
 
   return (
-    <svg
+    <svg aria-label="Interactive projection graph"
       viewBox={`0 0 ${layout.width} ${layout.height}`}
       style={{ width: "100%", height: "100%", display: "block" }}
     >
@@ -360,7 +360,7 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
         const selected = selectedSkill === s.id;
         const showLabel = shouldShowLoomSkillLabel(index, layout.skills.length, selected);
         return (
-          <g key={s.id} opacity={hi ? 1 : 0.25} onClick={() => onSelectSkill(s.id)} style={{ cursor: "pointer" }}>
+          <a key={s.id} href={`#skill-${s.id}`} aria-label={`Select skill ${s.label}`} onClick={(event) => { event.preventDefault(); onSelectSkill(s.id); }} style={{ cursor: "pointer", opacity: hi ? 1 : 0.25 }}>
             <line
               x1={s.x}
               y1={s.y}
@@ -383,7 +383,7 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
                 {shortLabel(s.label)}
               </text>
             )}
-          </g>
+          </a>
         );
       })}
 
@@ -391,7 +391,7 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
         const hi = isHi(null, t.id);
         const color = ownershipColor(t.ownership);
         return (
-          <g key={t.id} opacity={hi ? 1 : 0.25} onClick={() => onSelectTarget(t.id)} style={{ cursor: "pointer" }}>
+          <a key={t.id} href={`#target-${t.id}`} aria-label={`Select target ${t.label}`} onClick={(event) => { event.preventDefault(); onSelectTarget(t.id); }} style={{ cursor: "pointer", opacity: hi ? 1 : 0.25 }}>
             <line
               x1={t.x}
               y1={t.y}
@@ -421,7 +421,7 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
             >
               {t.ownership}
             </text>
-          </g>
+          </a>
         );
       })}
 
@@ -473,7 +473,7 @@ function ForceMode({ layout, projections, selectedSkill, selectedTarget, isHi, o
       {layout.skills.map((s) => {
         const hi = isHi(s.id, null);
         return (
-          <g key={s.id} onClick={() => onSelectSkill(s.id)} style={{ cursor: "pointer" }} opacity={hi ? 1 : 0.3}>
+          <a key={s.id} href={`#skill-${s.id}`} aria-label={`Select skill ${s.label}`} onClick={(event) => { event.preventDefault(); onSelectSkill(s.id); }} style={{ cursor: "pointer", opacity: hi ? 1 : 0.3 }}>
             <rect
               x={s.x - 110}
               y={s.y - 10}
@@ -486,14 +486,14 @@ function ForceMode({ layout, projections, selectedSkill, selectedTarget, isHi, o
             <text x={s.x - 8} y={s.y + 4} textAnchor="end" fontSize="11" fontFamily="JetBrains Mono, monospace" fill="var(--ink-0)">
               {s.label}
             </text>
-          </g>
+          </a>
         );
       })}
       {layout.targets.map((t) => {
         const hi = isHi(null, t.id);
         const color = ownershipColor(t.ownership);
         return (
-          <g key={t.id} onClick={() => onSelectTarget(t.id)} style={{ cursor: "pointer" }} opacity={hi ? 1 : 0.3}>
+          <a key={t.id} href={`#target-${t.id}`} aria-label={`Select target ${t.label}`} onClick={(event) => { event.preventDefault(); onSelectTarget(t.id); }} style={{ cursor: "pointer", opacity: hi ? 1 : 0.3 }}>
             <rect
               x={t.x + 2}
               y={t.y - 10}
@@ -507,7 +507,7 @@ function ForceMode({ layout, projections, selectedSkill, selectedTarget, isHi, o
             <text x={t.x + 22} y={t.y + 4} fontSize="11" fontFamily="JetBrains Mono, monospace" fill="var(--ink-0)">
               {t.label}
             </text>
-          </g>
+          </a>
         );
       })}
     </>
@@ -538,7 +538,7 @@ function TreeMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
       {layout.skills.map((s) => {
         const hi = isHi(s.id, null);
         return (
-          <g key={s.id} onClick={() => onSelectSkill(s.id)} style={{ cursor: "pointer" }} opacity={hi ? 1 : 0.3}>
+          <a key={s.id} href={`#skill-${s.id}`} aria-label={`Select skill ${s.label}`} onClick={(event) => { event.preventDefault(); onSelectSkill(s.id); }} style={{ cursor: "pointer", opacity: hi ? 1 : 0.3 }}>
             <circle
               cx={s.x}
               cy={s.y}
@@ -550,14 +550,14 @@ function TreeMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
             <text x={s.x} y={s.y - 12} textAnchor="middle" fontSize="10" fontFamily="JetBrains Mono, monospace" fill="var(--ink-1)">
               {s.label}
             </text>
-          </g>
+          </a>
         );
       })}
       {layout.targets.map((t) => {
         const hi = isHi(null, t.id);
         const color = ownershipColor(t.ownership);
         return (
-          <g key={t.id} onClick={() => onSelectTarget(t.id)} style={{ cursor: "pointer" }} opacity={hi ? 1 : 0.3}>
+          <a key={t.id} href={`#target-${t.id}`} aria-label={`Select target ${t.label}`} onClick={(event) => { event.preventDefault(); onSelectTarget(t.id); }} style={{ cursor: "pointer", opacity: hi ? 1 : 0.3 }}>
             <rect
               x={t.x - 55}
               y={t.y - 9}
@@ -577,7 +577,7 @@ function TreeMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
             >
               {t.label}
             </text>
-          </g>
+          </a>
         );
       })}
     </>

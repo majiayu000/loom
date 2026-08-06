@@ -60,7 +60,7 @@ export function UseSkillForm({
   return (
     <div className="card" style={{ padding: 12, marginBottom: 12 }}>
       <div style={{ display: "grid", gap: 8 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }} role="group" aria-label="Use agents">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {AGENT_OPTIONS.map((option) => (
             <label key={option.slug} className="chip" style={{ cursor: readOnly ? "default" : "pointer" }}>
               <input

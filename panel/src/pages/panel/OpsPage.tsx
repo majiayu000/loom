@@ -48,7 +48,7 @@ export function OpsPage({ ops, operationCounts, onMutation, readOnly }: OpsPageP
           </div>
         </div>
         <div className="header-actions">
-          <button
+          <button type="button"
             className="btn ghost"
             disabled={readOnly || actionBusy || actionableCount === 0}
             onClick={() => retry.run("retry pending", api.opsRetry, onMutation)}
@@ -62,7 +62,7 @@ export function OpsPage({ ops, operationCounts, onMutation, readOnly }: OpsPageP
           >
             <RefreshIcon /> {retry.busy ? "Retrying…" : `Retry replayable (${actionableCount})`}
           </button>
-          <button
+          <button type="button"
             className="btn ghost"
             disabled={readOnly || actionBusy || actionableCount === 0}
             onClick={() => purge.run("clear pending", api.opsPurge, onMutation)}
@@ -131,7 +131,7 @@ export function OpsPage({ ops, operationCounts, onMutation, readOnly }: OpsPageP
 
         <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
           {(["all", "pending", "ok", "err"] as FilterKey[]).map((k) => (
-            <button
+            <button type="button"
               key={k}
               className="btn sm"
               onClick={() => setFilter(k)}
@@ -157,18 +157,15 @@ export function OpsPage({ ops, operationCounts, onMutation, readOnly }: OpsPageP
             </div>
           ) : (
             filtered.map((o) => (
-              <div
+              <button
+                type="button"
                 key={o.id}
-                role="button"
-                tabIndex={0}
+                className="op-row-select"
+                aria-label={`Open activity ${o.id}`}
                 onClick={() => setSelectedId(o.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") setSelectedId(o.id);
-                }}
-                style={{ cursor: "pointer" }}
               >
                 <OpRow op={o} />
-              </div>
+              </button>
             ))
           )}
         </div>
@@ -204,7 +201,7 @@ function ActivityDetail({ op, onClose }: { op: Op; onClose: () => void }) {
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-head">
         <h3>Activity detail</h3>
-        <button className="btn sm" onClick={onClose}>Close</button>
+        <button type="button" className="btn sm" onClick={onClose}>Close</button>
       </div>
       <div className="card-body">
         <div className="kv" style={{ margin: 0 }}>

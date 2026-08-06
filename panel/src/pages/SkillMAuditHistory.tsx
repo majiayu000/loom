@@ -137,14 +137,14 @@ export function SkillMAuditHistory({ live, refreshKey }: SkillMAuditHistoryProps
         </span>
         <span className="op-note">{state.error ?? "Fetched from /api/v1/ops, not the overview snapshot."}</span>
         <span />
-        <button
+        <button type="button"
           className="btn-ghost xs"
           onClick={() => setOffset((value) => Math.max(0, value - (data?.limit ?? HISTORY_PAGE_SIZE)))}
           disabled={!data || data.offset === 0}
         >
           newer
         </button>
-        <button
+        <button type="button"
           className="btn-ghost xs"
           onClick={() => setOffset((value) => value + (data?.limit ?? HISTORY_PAGE_SIZE))}
           disabled={!data?.has_more}
@@ -152,7 +152,7 @@ export function SkillMAuditHistory({ live, refreshKey }: SkillMAuditHistoryProps
           older
         </button>
       </div>
-      <div className="op-row audit-history-filters" aria-label="Audit history filters">
+      <div className="op-row audit-history-filters">
         <input
           aria-label="Audit text filter"
           value={textFilter}
@@ -211,13 +211,9 @@ function AuditHistoryLine({ op, label }: { op: RegistryOperationRecord; label: A
   const summaryChip = auditSummaryChip(op, skills);
 
   return (
-    <details open={expanded} className={`op-row op-log-row audit-history-row op-row-${rowClass}`}>
+    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} className={`op-row op-log-row audit-history-row op-row-${rowClass}`}>
       <summary
         className="op-row-main"
-        onClick={(event) => {
-          event.preventDefault();
-          setExpanded((value) => !value);
-        }}
       >
         <span className={`op-pill op-${rowClass}`}>{registryOperationStatusLabel(op)}</span>
         <span className="op-time">{historyTime(op)}</span>

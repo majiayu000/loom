@@ -279,8 +279,8 @@ test("TargetsPage keeps a newer selection when a previous target delete complete
 
     const targetTwoCard = renderer!.root.findAll(
       (node: ReactTestInstance) =>
-        node.type === "div" &&
-        typeof node.props.onClick === "function" &&
+        node.type === "button" &&
+        node.props.className === "card target-card-button" &&
         textOf(node.props.children).includes("codex"),
     )[0];
     await act(async () => {
@@ -294,7 +294,10 @@ test("TargetsPage keeps a newer selection when a previous target delete complete
     });
 
     const selectedCards = renderer!.root.findAll(
-      (node: ReactTestInstance) => node.type === "div" && node.props.style?.borderColor === "var(--accent)",
+      (node: ReactTestInstance) =>
+        node.type === "button" &&
+        node.props.className === "card target-card-button" &&
+        node.props.style?.borderColor === "var(--accent)",
     );
     expect(selectedCards.length).toBe(1);
     expect(textOf(selectedCards[0].props.children).includes("codex")).toBe(true);

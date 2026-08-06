@@ -444,11 +444,11 @@ export function LiveDataBanner({
 }: {
   error: string | null;
   loading: boolean;
-  mode: "live" | "first-run" | "offline-empty" | "offline-stale";
+  mode: "loading" | "live" | "first-run" | "offline-empty" | "offline-stale";
 }) {
   if (mode === "live" || mode === "first-run") return null;
 
-  if (loading && mode === "offline-empty") {
+  if (loading && (mode === "loading" || mode === "offline-empty")) {
     return (
       <div
         style={{

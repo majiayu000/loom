@@ -69,7 +69,7 @@ export function BindingsPage({
           </div>
         </div>
         <div className="header-actions">
-          <button
+          <button type="button"
             className="btn primary"
             onClick={() => setAddOpen((v) => !v)}
             disabled={readOnly}
@@ -113,7 +113,7 @@ export function BindingsPage({
                 />
                 Also delete all live paths
               </label>
-              <button
+              <button type="button"
                 className="btn ghost danger"
                 onClick={runCleanOrphans}
                 disabled={readOnly || cleanOrphans.busy}
@@ -325,7 +325,7 @@ function BindingDetail({
         {binding.skill} → {binding.target}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0" }}>
-        <button
+        <button type="button"
           className="btn primary"
           onClick={runProject}
           disabled={!canProject || actionBusy}
@@ -343,7 +343,7 @@ function BindingDetail({
         >
           {project.busy ? "Projecting…" : "Project now"}
         </button>
-        <button
+        <button type="button"
           className="btn ghost danger"
           onClick={runRemove}
           disabled={readOnly || actionBusy}

@@ -129,7 +129,7 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
         <div className="header-actions">
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {FILTERS.map((item) => (
-              <button key={item} className={`btn ${filter === item ? "primary" : "ghost"}`} onClick={() => setFilter(item)}>
+              <button type="button" key={item} className={`btn ${filter === item ? "primary" : "ghost"}`} onClick={() => setFilter(item)}>
                 {item}
               </button>
             ))}
@@ -171,7 +171,7 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
                 />
                 Also delete all live paths
               </label>
-              <button
+              <button type="button"
                 className="btn ghost danger"
                 onClick={cleanOrphansBulk}
                 disabled={readOnly || cleanOrphans.busy}
@@ -324,7 +324,7 @@ function ProjectionDetail({
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <button
+          <button type="button"
             className="btn"
             onClick={onCapture}
             disabled={!canCapture}
@@ -332,7 +332,7 @@ function ProjectionDetail({
           >
             Commit
           </button>
-          <button
+          <button type="button"
             className="btn primary"
             onClick={onProject}
             disabled={!canProject}

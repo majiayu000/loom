@@ -60,7 +60,7 @@ export function TargetsPage({
           </div>
         </div>
         <div className="header-actions">
-          <button
+          <button type="button"
             className="btn primary"
             onClick={() => setAddOpen((v) => !v)}
             disabled={readOnly}
@@ -98,7 +98,7 @@ export function TargetsPage({
                   you choose this action.
                 </div>
               </div>
-              <button
+              <button type="button"
                 className="btn primary"
                 onClick={() => importObserved.run("import observed skills", () => api.skillImportObserved(), onMutation)}
                 disabled={readOnly || importObserved.busy}
@@ -123,7 +123,7 @@ export function TargetsPage({
               <li>External targets stay visible as context only.</li>
             </ul>
             <div className="empty-panel-actions">
-              <button
+              <button type="button"
                 className="btn primary"
                 onClick={() => setAddOpen(true)}
                 disabled={readOnly}
@@ -141,10 +141,12 @@ export function TargetsPage({
               const observedCount = t.observedSkills ?? 0;
               const projectedCount = t.projectedSkills ?? t.skills;
               return (
-                <div
+                <button
+                  type="button"
                   key={t.id}
-                  className="card"
+                  className="card target-card-button"
                   style={{ cursor: "pointer", borderColor: isSel ? "var(--accent)" : "var(--line)" }}
+                  aria-pressed={isSel}
                   onClick={() => onSelectTarget(t.id)}
                 >
                   <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
@@ -188,7 +190,7 @@ export function TargetsPage({
                     </span>
                     <span style={{ marginLeft: "auto", color: "var(--ink-3)" }}>synced {t.lastSync}</span>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -305,7 +307,7 @@ function TargetDetail({
   return (
     <div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14 }}>
-        <button
+        <button type="button"
           className="btn ghost danger"
           onClick={runRemove}
           disabled={!canRemove || remove.busy}

@@ -126,20 +126,19 @@ export function CommandPalette({
   };
 
   return (
-    <div className="palette-backdrop" role="presentation" onMouseDown={onClose} style={paletteStyles.backdrop}>
+    <div className="palette-backdrop" role="presentation" style={paletteStyles.backdrop}>
       <div
         className="command-palette"
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        onMouseDown={(event) => event.stopPropagation()}
         style={paletteStyles.dialog}
       >
         <div className="palette-input-row" style={paletteStyles.inputRow}>
           <SearchIcon style={paletteStyles.icon} />
           <input
             ref={inputRef}
-            role="searchbox"
+            type="search"
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -156,10 +155,9 @@ export function CommandPalette({
             <div className="palette-empty" style={paletteStyles.empty}>No commands found.</div>
           ) : (
             filtered.map((command, index) => (
-              <button
+              <button type="button"
                 key={command.id}
                 className={`palette-item ${index === activeIndex ? "active" : ""}`}
-                type="button"
                 role="option"
                 aria-selected={index === activeIndex}
                 onMouseEnter={() => setActiveIndex(index)}

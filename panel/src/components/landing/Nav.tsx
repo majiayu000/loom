@@ -13,7 +13,7 @@ export function LandingNav() {
   return (
     <nav className="nav">
       <div className="container nav-inner">
-        <a href="#" className="brand">
+        <a href="/" className="brand">
           <LoomMark size={26} />
           loom
         </a>

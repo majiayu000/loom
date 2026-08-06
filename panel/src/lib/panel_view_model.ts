@@ -292,6 +292,7 @@ function statusForLiveData(live: PanelLiveData): ShellStatusViewModel {
 }
 
 function modeReadOnlyReason(mode: PanelDataMode): string {
+  if (mode === "loading") return "loading registry data";
   if (mode === "offline-stale") return "live API offline";
   if (mode === "offline-empty") return "registry offline";
   if (mode === "first-run") return "registry setup required";

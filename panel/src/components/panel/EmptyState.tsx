@@ -26,7 +26,7 @@ export function EmptyState({ title, children, icon, command, actions = [] }: Emp
       {actions.length > 0 && (
         <div className="empty-state-actions">
           {actions.map((action) => (
-            <button
+            <button type="button"
               key={action.label}
               className={`btn ${action.variant === "ghost" ? "ghost" : "primary"}`}
               onClick={action.onClick}

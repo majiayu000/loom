@@ -5,6 +5,15 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+## [0.1.6] - 2026-08-06
+
+### Added
+
+- A checksum-verifying one-command installer for supported macOS and Linux
+  release archives, with versioned bundled Skill and CLI contract data.
+- First-class production Panel flows for importing skills, creating targets and
+  bindings, reviewing projections, and pulling, pushing, or replaying sync work.
+
 ### Changed
 
 - Agent-facing CLI compatibility is now independently versioned, inventoried,
@@ -30,6 +39,14 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ### Fixed
 
+- Large Panel inventories now start in a truthful loading state, render in
+  bounded pages, preserve full-inventory discovery, and distinguish observed-only
+  skills from missing managed sources.
+- Production Panel accessibility diagnostics now fail lint, with semantic
+  controls, keyboard/focus behavior, reduced-motion support, and zero a11y
+  diagnostics in the release gate.
+- Release jobs now expose skipped crates.io and Homebrew channels and verify
+  advertised public assets before an install path is treated as ready.
 - Local-only registries no longer report successful journal rows and audit
   history as pending operations. CLI, doctor, Panel API, and Panel now expose
   the same four non-overlapping actionable, local-journal, unpushed-history,
@@ -151,6 +168,7 @@ archives, checksums, and provenance details on GitHub Releases.
 
 - Initial public release archives for Loom.
 
+[0.1.6]: https://github.com/majiayu000/loom/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/majiayu000/loom/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/majiayu000/loom/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/majiayu000/loom/compare/v0.1.2...v0.1.3

@@ -312,6 +312,15 @@ fn distribution_readiness_accepts_complete_release_fixture() {
 }
 
 #[test]
+fn readme_and_landing_advertise_the_verified_installer() {
+    let installer =
+        "curl -fsSL https://raw.githubusercontent.com/majiayu000/loom/main/scripts/install.sh | sh";
+    assert!(include_str!("../README.md").contains(installer));
+    assert!(include_str!("../panel/src/components/landing/Hero.tsx").contains(installer));
+    assert!(!include_str!("../README.md").contains("brew install majiayu000/tap/loom"));
+}
+
+#[test]
 fn distribution_readiness_rejects_missing_release_asset() {
     let fixture = TestDir::new("distribution-readiness-missing-asset");
     let readme = fixture.path().join("README.md");

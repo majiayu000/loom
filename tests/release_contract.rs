@@ -266,6 +266,8 @@ fn optional_publish_skips_are_visible_in_release_summary() {
     }
     assert!(workflow.matches("GITHUB_STEP_SUMMARY").count() >= 2);
     assert!(workflow.contains("Do not advertise"));
+    assert!(workflow.contains("- name: Smoke public installer"));
+    assert!(workflow.contains("scripts/install.sh"));
 }
 
 #[test]

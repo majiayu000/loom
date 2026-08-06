@@ -55,7 +55,7 @@ Configure repository secrets:
 6. Merge the Homebrew tap PR if the workflow opens one.
 
 Missing publishing tokens produce explicit workflow warnings and job summaries. A green release workflow therefore proves the GitHub Release, but crates.io and Homebrew must each be checked independently before those install paths are advertised.
-The `distribution-readiness` job also queries the just-published GitHub Release and fails if any supported archive or `SHA256SUMS` is absent, if the recommended installer disappears from README, or if README advertises Homebrew without a live formula.
+The `distribution-readiness` job also queries the just-published GitHub Release and fails if any supported archive or `SHA256SUMS` is absent, if the recommended installer disappears from README, or if README advertises Homebrew without a live formula. It then runs the public installer against the uploaded Linux archive and executes the installed binary while checking the bundled Skill and contract paths.
 
 ## Install Checks
 

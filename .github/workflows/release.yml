@@ -250,6 +250,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/distribution-readiness.py --tag "$GITHUB_REF_NAME"
 
+      - name: Smoke public installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_root="$(mktemp -d)"
+          trap 'rm -rf "$install_root"' EXIT
+          scripts/install.sh \
+            --version "${GITHUB_REF_NAME#v}" \
+            --target x86_64-unknown-linux-gnu \
+            --bin-dir "$install_root/bin" \
+            --data-dir "$install_root/data"
+          "$install_root/bin/loom" --version
+          test -f "$install_root/data/current/skills/loom-registry/SKILL.md"
+          test -f "$install_root/data/current/contracts/agent-command-surfaces.toml"
+
   crates-io:
     needs: verify
     runs-on: ubuntu-latest

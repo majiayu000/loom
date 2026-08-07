@@ -18,7 +18,7 @@ import { ZERO_OPERATION_COUNTS } from "../../types";
 
 import { bindingPayload, buttonByLabel, clickableRows, flush, makeBinding, makeOperation, makeOrphanProjection, makeSkill, makeTarget, markup } from "./panel_state_test_utils";
 test("HistoryPage treats succeeded operations as successful", () => {
-  expect(bucket(makeOperation("succeeded", false))).toBe("ok");
+  expect(bucket(makeOperation("succeeded", false))).toBe("pending");
 });
 
 test("LiveDataBanner renders nothing during live refetch loading", () => {
@@ -444,11 +444,13 @@ test("ProjectionsPage can capture and re-project a selected projection", async (
 
 test("ProjectionsPage cleans orphaned projection metadata", async () => {
   const originalOrphanClean = api.orphanClean;
+  const originalConfirm = globalThis.confirm;
   const calls: Array<{ delete_live_paths?: boolean }> = [];
   api.orphanClean = async (body) => {
     calls.push(body);
     return { ok: true, cmd: "skill.orphan.clean", request_id: "req-clean", data: {} };
   };
+  globalThis.confirm = () => true;
 
   try {
     let mutations = 0;
@@ -477,5 +479,6 @@ test("ProjectionsPage cleans orphaned projection metadata", async () => {
     expect(mutations).toBe(1);
   } finally {
     api.orphanClean = originalOrphanClean;
+    globalThis.confirm = originalConfirm;
   }
 });

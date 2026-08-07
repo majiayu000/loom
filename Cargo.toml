@@ -21,6 +21,10 @@ exclude = [
     "/target/",
 ]
 
+[features]
+default = ["panel"]
+panel = []
+
 [[bin]]
 name = "loom"
 path = "src/main.rs"

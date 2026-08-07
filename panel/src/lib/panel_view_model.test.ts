@@ -155,6 +155,44 @@ describe("panel view-model selectors", () => {
     });
   });
 
+  it("surfaces incomplete convergence instead of reporting a clean registry", () => {
+    const vm = selectPanelViewModel(
+      liveData({
+        convergence: {
+          registry_transport: { state: "SYNCED", evidence: {}, stale: false, errors: [] },
+          projections: { state: "unknown", items: [], stale: false, errors: [] },
+          visibility: { state: "unknown", stale: false, errors: [] },
+          complete: false,
+          incomplete_axes: ["projections", "visibility"],
+        },
+      }),
+      { page: "overview", readOnly: false },
+    );
+
+    expect(vm.shell.status).toMatchObject({
+      label: "convergence incomplete",
+      tone: "warn",
+      title: "Incomplete convergence evidence: projections, visibility.",
+    });
+  });
+
+  it("renders not_requested transport state explicitly", () => {
+    const vm = selectPanelViewModel(
+      liveData({
+        convergence: {
+          registry_transport: { state: "not_requested", evidence: {}, stale: false, errors: [] },
+          projections: { state: "converged", items: [], stale: false, errors: [] },
+          visibility: { state: "visible", stale: false, errors: [] },
+          complete: true,
+          incomplete_axes: [],
+        },
+      }),
+      { page: "overview", readOnly: false },
+    );
+
+    expect(vm.shell.status).toMatchObject({ label: "sync not requested", tone: "warn" });
+  });
+
   it("disables every mutation action while the panel is read-only", () => {
     const vm = selectPanelViewModel(
       liveData({

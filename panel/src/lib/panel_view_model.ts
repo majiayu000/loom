@@ -270,7 +270,26 @@ function statusForLiveData(live: PanelLiveData): ShellStatusViewModel {
     };
   }
 
+  if (live.convergence && !live.convergence.complete) {
+    const axes = live.convergence.incomplete_axes;
+    return {
+      label: "convergence incomplete",
+      title:
+        axes.length > 0
+          ? `Incomplete convergence evidence: ${axes.join(", ")}.`
+          : "Convergence evidence is incomplete.",
+      tone: "warn",
+    };
+  }
+
   const state = (live.convergence?.registry_transport.state ?? live.remote?.sync_state ?? "").toUpperCase();
+  if (state === "NOT_REQUESTED") {
+    return {
+      label: "sync not requested",
+      title: "Registry transport was not requested for this operation.",
+      tone: "warn",
+    };
+  }
   if (state === "DIVERGED" || state === "CONFLICTED") {
     return { label: `remote ${state.toLowerCase()}`, title: "Remote and local history differ.", tone: "err" };
   }

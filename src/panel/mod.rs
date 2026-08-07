@@ -188,15 +188,17 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     ensure_panel_dist()?;
 
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let bound_addr = listener.local_addr()?;
+
     let state = PanelState {
         ctx: Arc::new(ctx),
-        panel_origin: format!("http://{}", addr),
+        panel_origin: format!("http://{}", bound_addr),
     };
 
     let app = panel_router(state);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    eprintln!("panel listening on http://{}", addr);
+    eprintln!("panel listening on http://{}", bound_addr);
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

@@ -88,7 +88,7 @@ export interface Binding {
   target: string;
   matcher: string;
   method: ProjectionMethod;
-  policy: "auto" | "manual";
+  policy: "auto" | "manual" | "unknown";
   ruleCount?: number;
   skillCount?: number;
 }

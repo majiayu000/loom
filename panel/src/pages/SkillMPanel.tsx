@@ -887,7 +887,8 @@ function SkillMProjectForm({
 
 function TargetCard({ target }: { target: Target }) {
   const meta = agentMeta[target.agent] ?? { name: target.agent, short: target.agent.slice(0, 2).toUpperCase(), color: "var(--acc2)" };
-  return <article className="target-card" style={{ "--ac": meta.color } as CSSProperties}><div className="tc-head"><span className="tc-agent" style={{ background: meta.color }}>{meta.short}</span><div className="tc-title"><h3>{meta.name}</h3><code>{target.path}</code></div><OwnBadge ownership={target.ownership} /></div><div className="tc-meta"><span>profile <b>{target.profile}</b></span><span>{target.projectedSkills ?? 0} 个投影</span><span className="tc-ok"><Icon d="check" size={11} />来自注册表</span></div></article>;
+  const projectionCount = target.projectedSkills;
+  return <article className="target-card" style={{ "--ac": meta.color } as CSSProperties}><div className="tc-head"><span className="tc-agent" style={{ background: meta.color }}>{meta.short}</span><div className="tc-title"><h3>{meta.name}</h3><code>{target.path}</code></div><OwnBadge ownership={target.ownership} /></div><div className="tc-meta"><span>profile <b>{target.profile}</b></span><span>{typeof projectionCount === "number" ? `${projectionCount} 个投影` : "投影数未知"}</span><span className="mini-state">同步状态未验证</span></div></article>;
 }
 
 function OwnBadge({ ownership }: { ownership: string }) {

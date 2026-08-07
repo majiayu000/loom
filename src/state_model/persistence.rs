@@ -18,6 +18,8 @@ use super::{
     empty_rules_file, empty_targets_file, empty_trust_file,
 };
 
+const LEGACY_MIGRATION_MARKER: &str = ".loom-v3-migration-pending";
+
 impl RegistryStatePaths {
     /// Derive Registry paths from a bare root path.
     ///
@@ -151,9 +153,27 @@ impl RegistryStatePaths {
 
     fn migrate_legacy_state_dir(&self) -> Result<()> {
         let legacy_dir = self.state_dir.join("v3");
-        if self.registry_dir.exists() || !legacy_dir.exists() {
+        let migrated_marker = self.registry_dir.join(LEGACY_MIGRATION_MARKER);
+        if self.registry_dir.exists() {
+            if migrated_marker.exists() {
+                self.normalize_schema_versions()?;
+                fs::remove_file(&migrated_marker).with_context(|| {
+                    format!(
+                        "failed to finish legacy migration marker {}",
+                        migrated_marker.display()
+                    )
+                })?;
+                crate::fs_util::sync_parent_directory(&migrated_marker)?;
+            }
             return Ok(());
         }
+        if !legacy_dir.exists() {
+            return Ok(());
+        }
+
+        let legacy_marker = legacy_dir.join(LEGACY_MIGRATION_MARKER);
+        crate::fs_util::write_atomic(&legacy_marker, "pending\n")?;
+        crate::fs_util::sync_parent_directory(&legacy_marker)?;
 
         fs::rename(&legacy_dir, &self.registry_dir).with_context(|| {
             format!(
@@ -162,7 +182,16 @@ impl RegistryStatePaths {
                 self.registry_dir.display()
             )
         })?;
-        self.normalize_schema_versions()
+        crate::fs_util::sync_parent_directory(&self.registry_dir)?;
+        self.normalize_schema_versions()?;
+        fs::remove_file(&migrated_marker).with_context(|| {
+            format!(
+                "failed to finish legacy migration marker {}",
+                migrated_marker.display()
+            )
+        })?;
+        crate::fs_util::sync_parent_directory(&migrated_marker)?;
+        Ok(())
     }
 
     fn normalize_schema_versions(&self) -> Result<()> {
@@ -178,7 +207,9 @@ impl RegistryStatePaths {
                 continue;
             }
             let mut value: Value = read_json_file(path)?;
-            if let Some(object) = value.as_object_mut() {
+            if let Some(object) = value.as_object_mut()
+                && object.get("schema_version") != Some(&Value::from(REGISTRY_SCHEMA_VERSION))
+            {
                 object.insert(
                     "schema_version".to_string(),
                     Value::from(REGISTRY_SCHEMA_VERSION),
@@ -340,6 +371,40 @@ mod tests {
     use serde_json::json;
     use std::{fs, path::Path};
     use uuid::Uuid;
+
+    #[test]
+    fn interrupted_legacy_migration_resumes_from_durable_marker() {
+        let root = std::env::temp_dir().join(format!("loom-migration-resume-{}", Uuid::new_v4()));
+        let paths = RegistryStatePaths::from_root(&root);
+        fs::create_dir_all(&paths.registry_dir).expect("create renamed registry");
+        fs::write(
+            paths.registry_dir.join(super::LEGACY_MIGRATION_MARKER),
+            "pending\n",
+        )
+        .expect("write migration marker");
+        fs::write(
+            &paths.schema_file,
+            serde_json::to_vec(&json!({
+                "schema_version": 3,
+                "created_at": "2026-08-06T00:00:00Z",
+                "writer": "legacy"
+            }))
+            .unwrap(),
+        )
+        .expect("write legacy schema");
+
+        paths.ensure_layout().expect("resume migration");
+
+        let schema: RegistrySchemaFile = paths.load_schema().expect("load normalized schema");
+        assert_eq!(schema.schema_version, super::REGISTRY_SCHEMA_VERSION);
+        assert!(
+            !paths
+                .registry_dir
+                .join(super::LEGACY_MIGRATION_MARKER)
+                .exists()
+        );
+        fs::remove_dir_all(root).expect("remove migration fixture");
+    }
 
     #[test]
     fn builds_expected_registry_paths() {

@@ -243,7 +243,45 @@ describe("api v1 routes", () => {
     const result = await api.registryStatusWithWarnings();
 
     expect(result.warnings).toEqual(["ignored malformed operation audit row"]);
-    expect(result.data.data?.counts).toEqual({});
+    expect(result.data.counts).toEqual({});
+  });
+
+  it("rejects successful registry envelopes that omit data", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        cmd: "registry.status",
+        request_id: "req-1",
+        meta: { warnings: [] },
+      }),
+    } as unknown as Response);
+
+    await expect(api.registryStatusWithWarnings()).rejects.toEqual(
+      expect.objectContaining({ message: "GET /api/v1/registry/status envelope is missing data" }),
+    );
+  });
+
+  it("accepts an explicit no-remote sync status", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        cmd: "sync.status",
+        request_id: "req-1",
+        data: { warnings: [] },
+        meta: { warnings: [] },
+      }),
+    } as unknown as Response);
+
+    await expect(api.remoteStatusWithWarnings()).resolves.toEqual({
+      data: { warnings: [] },
+      warnings: [],
+    });
   });
 
   it("combines sync status envelope and payload warnings", async () => {

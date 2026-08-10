@@ -726,6 +726,24 @@ fn make_contract_policy_has_a_local_merge_base_fallback() {
 }
 
 #[test]
+fn panel_lint_is_required_by_local_ci_and_release_gates() {
+    let makefile = include_str!("../Makefile");
+    assert!(makefile.contains("panel-lint: panel-install"));
+    let check_target = makefile
+        .lines()
+        .find(|line| line.starts_with("check:"))
+        .expect("Makefile check target");
+    assert!(check_target.contains("panel-lint"));
+
+    let ci = include_str!("../.github/workflows/ci.yml");
+    let release = include_str!("../.github/workflows/release.yml");
+    for workflow in [ci, release] {
+        assert!(workflow.contains("- name: Panel Lint (Bun)"));
+        assert!(workflow.contains("run: cd panel && bun run lint"));
+    }
+}
+
+#[test]
 fn agent_usage_plan_apply_example_fails_closed_on_incomplete_plan_identity() {
     let guide = include_str!("../docs/AGENT_USAGE.md");
     assert!(guide.contains(".data.requires_digest_confirmation == true"));

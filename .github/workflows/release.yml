@@ -74,6 +74,9 @@ jobs:
       - name: Panel Typecheck (Bun)
         run: cd panel && bun run typecheck
 
+      - name: Panel Lint (Bun)
+        run: cd panel && bun run lint
+
       - name: Panel Tests (Bun)
         run: cd panel && bun run test
 

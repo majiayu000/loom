@@ -9,7 +9,7 @@ else
 LOOM_PERF_RUSTFLAGS ?= -Cllvm-args=-enable-machine-outliner=always
 endif
 
-.PHONY: fmt fmt-check test contract-policy lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
+.PHONY: fmt fmt-check test contract-policy lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck panel-lint e2e perf-smoke check ci install-hooks
 
 fmt:
 	cargo fmt --all
@@ -57,6 +57,9 @@ panel-test: panel-install
 panel-typecheck: panel-install
 	cd $(PANEL_DIR) && bun run typecheck
 
+panel-lint: panel-install
+	cd $(PANEL_DIR) && bun run lint
+
 e2e:
 	./scripts/e2e-agent-flow.sh
 
@@ -64,6 +67,6 @@ perf-smoke: panel-build
 	RUSTFLAGS="$(LOOM_PERF_RUSTFLAGS) $${RUSTFLAGS:-}" cargo build --release --locked
 	./scripts/perf-smoke.sh
 
-check: fmt-check lint module-ceiling module-ceiling-test test contract-policy panel-typecheck panel-test panel-build e2e perf-smoke
+check: fmt-check lint module-ceiling module-ceiling-test test contract-policy panel-typecheck panel-lint panel-test panel-build e2e perf-smoke
 
 ci: check

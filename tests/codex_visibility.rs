@@ -521,6 +521,64 @@ fn agent_reconcile_refuses_to_plan_writes_through_redirected_managed_root() {
 }
 
 #[test]
+fn codex_reconcile_apply_refuses_legacy_duplicate_managed_root_owners() {
+    let root = TestDir::new("codex-reconcile-duplicate-managed-root");
+    let home = TestDir::new("codex-reconcile-duplicate-managed-root-home");
+    write_good_skill(root.path(), "demo");
+    let projected = write_agent_visibility_state(
+        root.path(),
+        &home.path().join(".agents/skills"),
+        "demo",
+        "claude",
+        "user",
+        json!({"kind": "name", "value": "default"}),
+    );
+
+    let targets_path = root.path().join("state/registry/targets.json");
+    let mut targets: Value =
+        serde_json::from_str(&fs::read_to_string(&targets_path).expect("read targets state"))
+            .expect("parse targets state");
+    let mut duplicate = targets["targets"][0].clone();
+    duplicate["target_id"] = Value::String("target_codex_legacy_alias".to_string());
+    duplicate["agent"] = Value::String("codex".to_string());
+    targets["targets"]
+        .as_array_mut()
+        .expect("targets array")
+        .push(duplicate);
+    write_json(&targets_path, targets);
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "codex",
+            "reconcile",
+            "--apply",
+            "--target",
+            "target_codex_legacy_alias",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "reconcile apply must fail closed for duplicate managed roots"
+    );
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("POLICY_BLOCKED".to_string())
+    );
+    let unsafe_action = &env["error"]["details"]["unsafe_actions"][0];
+    assert_eq!(
+        unsafe_action["details"]["conflicting_target_id"],
+        Value::String("target_claude_user".to_string())
+    );
+    assert!(
+        projected.exists(),
+        "blocked reconcile must preserve the other target's projection"
+    );
+}
+
+#[test]
 fn skill_visibility_returns_structured_unsupported_for_adapter_without_metadata() {
     let root = TestDir::new("visibility-unsupported");
     let home = TestDir::new("visibility-unsupported-home");

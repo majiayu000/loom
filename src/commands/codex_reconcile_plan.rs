@@ -17,7 +17,7 @@ use super::codex_visibility::{
     CODEX_AGENT, CodexReconcileAction, CodexReconcilePlan, CodexReconcileRequest, RUNTIME_ENTRIES,
     normalize_existing_or_raw, path_exists_or_symlink, projection_path_is_safe_symlink,
 };
-use super::target_safety::inspect_target_root;
+use super::target_safety::{inspect_target_root, managed_target_alias};
 
 pub(crate) fn plan_codex_reconcile(
     ctx: &AppContext,
@@ -86,6 +86,37 @@ fn plan_target(
         ));
     }
     if target.ownership == crate::core::vocab::Ownership::Managed {
+        if let Some(alias) = managed_target_alias(
+            &snapshot.targets.targets,
+            &target_path,
+            Some(&target.target_id),
+        ) {
+            actions.push(action(
+                "manual_review",
+                None,
+                Some(target.path.clone()),
+                false,
+                false,
+                "managed target shares a physical root with another managed target",
+                json!({
+                    "target_id": target.target_id,
+                    "registered_path": target.path,
+                    "conflicting_target_id": alias.target_id,
+                    "conflicting_agent": alias.agent
+                }),
+            ));
+            return CodexReconcilePlan {
+                agent: request.agent.clone(),
+                binding_id: request.binding_id.clone(),
+                target_id: target.target_id.clone(),
+                target_path: target.path.clone(),
+                dry_run: request.dry_run,
+                safe_to_apply: false,
+                actions,
+                warnings,
+                restart_required: false,
+            };
+        }
         let inspection = inspect_target_root(&target_path);
         if !inspection.stable {
             actions.push(action(

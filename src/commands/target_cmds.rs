@@ -16,6 +16,7 @@ use super::helpers::{
     target_ownership_as_str, unique_target_id_for_agent,
 };
 use super::registry_txn::{RegistryTxnCommit, RegistryTxnState, RegistryWriteTxn};
+use super::target_safety::{ensure_managed_target_root_is_unique, target_paths_equivalent};
 use super::{App, CommandFailure};
 
 impl App {
@@ -130,7 +131,8 @@ impl App {
             .targets
             .iter()
             .find(|target| {
-                target.agent == agent && target_path_matches(&target.path, &normalized_target_path)
+                target.agent == agent
+                    && target_paths_equivalent(&target.path, &normalized_target_path)
             })
             .cloned()
         {
@@ -143,11 +145,22 @@ impl App {
                     ),
                 ));
             }
+            if ownership == TargetOwnership::Managed {
+                ensure_managed_target_root_is_unique(
+                    &targets.targets,
+                    &normalized_target_path,
+                    Some(&existing.target_id),
+                )?;
+            }
             let adapters = load_agent_adapters(&self.ctx)?;
             return Ok((
                 json!({"target": decorate_target_for_output(&existing, &adapters), "noop": true}),
                 Meta::default(),
             ));
+        }
+
+        if ownership == TargetOwnership::Managed {
+            ensure_managed_target_root_is_unique(&targets.targets, &normalized_target_path, None)?;
         }
 
         let target_id = unique_target_id_for_agent(agent, &normalized_path, &targets);
@@ -238,7 +251,7 @@ impl App {
         let adapters = load_agent_adapters(&self.ctx)?;
 
         let Some(index) = targets.targets.iter().position(|target| {
-            target.agent == agent && target_path_matches(&target.path, &normalized_target_path)
+            target.agent == agent && target_paths_equivalent(&target.path, &normalized_target_path)
         }) else {
             drop(_workspace);
             return self.cmd_target_add_raw(
@@ -249,6 +262,12 @@ impl App {
                 request_id,
             );
         };
+
+        ensure_managed_target_root_is_unique(
+            &targets.targets,
+            &normalized_target_path,
+            Some(&targets.targets[index].target_id),
+        )?;
 
         if targets.targets[index].ownership == target_ownership_as_str(TargetOwnership::Managed) {
             let existing = targets.targets[index].clone();
@@ -382,12 +401,4 @@ impl App {
             meta,
         ))
     }
-}
-
-fn target_path_matches(stored_path: &str, normalized_target_path: &Path) -> bool {
-    let stored = PathBuf::from(stored_path);
-    stored.as_path() == normalized_target_path
-        || stored
-            .canonicalize()
-            .is_ok_and(|canonical| canonical == normalized_target_path)
 }

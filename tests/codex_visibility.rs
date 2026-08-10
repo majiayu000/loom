@@ -111,6 +111,9 @@ fn write_agent_visibility_state(
     fs::create_dir_all(target_dir).expect("create agent target");
     let projection = target_dir.join(skill);
     symlink_skill(&root.join("skills").join(skill), &projection);
+    let registered_target_dir = target_dir
+        .canonicalize()
+        .expect("canonicalize registered agent target");
     let target_id = format!("target_{agent}_{suffix}");
     let binding_id = format!("bind_{agent}_{suffix}");
 
@@ -130,7 +133,7 @@ fn write_agent_visibility_state(
             "targets": [{
                 "target_id": target_id,
                 "agent": agent,
-                "path": target_dir,
+                "path": registered_target_dir,
                 "ownership": "managed",
                 "capabilities": {"symlink": true, "copy": true, "watch": true},
                 "created_at": "2026-07-06T00:00:00Z"
@@ -461,6 +464,59 @@ fn agent_reconcile_claude_dry_run_reports_missing_projection_without_mutation() 
             .expect("read projections after"),
         projections_before,
         "dry-run must not mutate registry projections"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn agent_reconcile_refuses_to_plan_writes_through_redirected_managed_root() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDir::new("claude-reconcile-redirected-root");
+    let home = TestDir::new("claude-reconcile-redirected-root-home");
+    write_good_skill(root.path(), "demo");
+    let projected = write_claude_visibility_state(root.path(), home.path(), "demo");
+    fs::remove_file(&projected).expect("remove projection");
+
+    let registered_path = home.path().join(".claude/skills");
+    let redirected_path = home.path().join(".mirasim/skills");
+    fs::create_dir_all(redirected_path.parent().expect("redirect parent"))
+        .expect("create redirect parent");
+    fs::rename(&registered_path, &redirected_path).expect("move registered root");
+    symlink(&redirected_path, &registered_path).expect("redirect registered root");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["agent", "reconcile", "--agent", "claude", "--dry-run"],
+    );
+
+    assert!(
+        output.status.success(),
+        "reconcile should return a plan: {env}"
+    );
+    assert_eq!(env["data"]["plans"][0]["safe_to_apply"], Value::Bool(false));
+    let actions = env["data"]["plans"][0]["actions"]
+        .as_array()
+        .expect("reconcile actions");
+    assert_eq!(
+        actions.len(),
+        1,
+        "redirected root should stop normal planning"
+    );
+    assert_eq!(
+        actions[0]["category"],
+        Value::String("manual_review".into())
+    );
+    assert_eq!(
+        actions[0]["details"]["root_kind"],
+        Value::String("symlink".into())
+    );
+    assert!(
+        !actions
+            .iter()
+            .any(|action| action["category"] == Value::String("create_projection".into())),
+        "reconcile must not propose writes through the redirected root"
     );
 }
 

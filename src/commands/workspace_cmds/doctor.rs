@@ -10,6 +10,7 @@ use crate::state::{AppContext, home_dir};
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 
 use super::super::helpers::{map_git, map_registry_state};
+use super::super::target_safety::{inspect_target_root, managed_target_alias};
 use super::super::{App, CommandFailure};
 
 impl App {
@@ -444,6 +445,55 @@ fn build_registry_integrity_checks(ctx: &AppContext, snapshot: &RegistrySnapshot
                 "ownership": target.ownership
             }),
         ));
+
+        if target.ownership == crate::core::vocab::Ownership::Managed {
+            let inspection = inspect_target_root(Path::new(&target.path));
+            checks.push(doctor_check(
+                "targets",
+                &format!("managed_target_root_identity:{}", target.target_id),
+                inspection.stable,
+                "error",
+                if inspection.stable {
+                    "managed target root matches its registered physical directory"
+                } else {
+                    "managed target root is missing, redirected, or not a concrete directory"
+                },
+                "review the target root, then restore it or remove and re-register the target explicitly",
+                json!({
+                    "target_id": target.target_id,
+                    "agent": target.agent,
+                    "registered_path": target.path,
+                    "root_kind": inspection.kind,
+                    "resolved_path": inspection.resolved_path.map(|path| path.display().to_string()),
+                    "inspection_error": inspection.error
+                }),
+            ));
+
+            let alias = managed_target_alias(
+                &snapshot.targets.targets,
+                Path::new(&target.path),
+                Some(&target.target_id),
+            );
+            checks.push(doctor_check(
+                "targets",
+                &format!("managed_target_unique_physical_root:{}", target.target_id),
+                alias.is_none(),
+                "error",
+                if alias.is_none() {
+                    "managed target has a unique physical root"
+                } else {
+                    "managed target shares a physical root with another managed target"
+                },
+                "keep only one managed target owner for this physical directory",
+                json!({
+                    "target_id": target.target_id,
+                    "agent": target.agent,
+                    "registered_path": target.path,
+                    "conflicting_target_id": alias.map(|target| target.target_id.clone()),
+                    "conflicting_agent": alias.map(|target| target.agent.clone())
+                }),
+            ));
+        }
     }
 
     for binding in &snapshot.bindings.bindings {

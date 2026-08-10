@@ -51,6 +51,86 @@ fn workspace_doctor_reports_missing_target_path_with_next_action() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_doctor_reports_redirected_managed_target_root() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDir::new("doctor-redirected-managed-target");
+    let target_path = root.path().join("live/claude-skills");
+    let (target_output, target_env) = target_add(root.path(), "claude", &target_path, "managed");
+    assert!(target_output.status.success(), "target add should succeed");
+    let target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+
+    let redirected_path = root.path().join("live/mirasim-skills");
+    fs::rename(&target_path, &redirected_path).expect("move original target root");
+    symlink(&redirected_path, &target_path).expect("redirect registered target root");
+
+    let (output, env) = run_loom(root.path(), &["workspace", "doctor"]);
+
+    assert!(output.status.success(), "doctor should return a report");
+    assert_eq!(env["data"]["healthy"], Value::Bool(false));
+    let check = find_check(&env, &format!("managed_target_root_identity:{target_id}"));
+    assert_eq!(check["ok"], Value::Bool(false));
+    assert_eq!(
+        check["details"]["root_kind"],
+        Value::String("symlink".into())
+    );
+    assert_eq!(
+        check["details"]["resolved_path"],
+        Value::String(
+            redirected_path
+                .canonicalize()
+                .expect("canonical redirected target")
+                .display()
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn workspace_doctor_reports_legacy_duplicate_managed_root_owners() {
+    let root = TestDir::new("doctor-duplicate-managed-target-root");
+    let target_path = root.path().join("live/shared-skills");
+    let (target_output, target_env) = target_add(root.path(), "claude", &target_path, "managed");
+    assert!(target_output.status.success(), "target add should succeed");
+    let target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+
+    let targets_path = root.path().join("state/registry/targets.json");
+    let mut targets: Value =
+        serde_json::from_str(&fs::read_to_string(&targets_path).expect("read targets state"))
+            .expect("parse targets state");
+    let mut duplicate = targets["targets"][0].clone();
+    duplicate["target_id"] = Value::String("target_codex_legacy_alias".to_string());
+    duplicate["agent"] = Value::String("codex".to_string());
+    targets["targets"]
+        .as_array_mut()
+        .expect("targets array")
+        .push(duplicate);
+    write_file(
+        &targets_path,
+        &serde_json::to_string_pretty(&targets).expect("serialize targets state"),
+    );
+
+    let (output, env) = run_loom(root.path(), &["workspace", "doctor"]);
+
+    assert!(output.status.success(), "doctor should return a report");
+    assert_eq!(env["data"]["healthy"], Value::Bool(false));
+    let check = find_check(
+        &env,
+        &format!("managed_target_unique_physical_root:{target_id}"),
+    );
+    assert_eq!(check["ok"], Value::Bool(false));
+    assert_eq!(
+        check["details"]["conflicting_target_id"],
+        Value::String("target_codex_legacy_alias".to_string())
+    );
+}
+
 #[test]
 fn workspace_doctor_reports_binding_target_agent_mismatch() {
     let root = TestDir::new("doctor-binding-agent-mismatch");

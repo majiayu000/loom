@@ -20,6 +20,10 @@ use super::super::helpers::{
     map_arg, map_io, map_registry_state, slugify, target_capabilities, target_ownership_as_str,
     unique_target_id_for_agent, validate_projection_method, validate_skill_name,
 };
+use super::super::target_safety::{
+    ensure_managed_target_root_is_stable, ensure_managed_target_root_is_unique,
+    normalize_existing_or_missing, target_paths_equivalent,
+};
 
 const DEFAULT_PROFILE: &str = "default";
 pub(super) const DEFAULT_POLICY_PROFILE: &str = "safe-capture";
@@ -107,6 +111,14 @@ pub(super) fn resolve_activation(
             ),
         ));
     }
+    if !target_is_new {
+        ensure_managed_target_root_is_unique(
+            &snapshot.targets.targets,
+            Path::new(&target.path),
+            Some(&target.target_id),
+        )?;
+        ensure_managed_target_root_is_stable(&target)?;
+    }
     validate_projection_method(&target, selection.method)?;
     let (binding, binding_is_new) = resolve_binding(snapshot, &selection, &target);
     let materialized_path = PathBuf::from(&target.path).join(&selection.skill);
@@ -135,6 +147,12 @@ pub(super) fn resolve_deactivation(
         Err(err) if matches!(err.code, ErrorCode::TargetNotFound) => return Ok(None),
         Err(err) => return Err(err),
     };
+    ensure_managed_target_root_is_unique(
+        &snapshot.targets.targets,
+        Path::new(&target.path),
+        Some(&target.target_id),
+    )?;
+    ensure_managed_target_root_is_stable(&target)?;
     let Some(binding) = find_matching_binding(snapshot, &selection, &target).cloned() else {
         return Ok(None);
     };
@@ -175,7 +193,7 @@ fn resolve_target(
     let path = default_target_path(ctx, selection)?;
     let normalized = normalize_existing_or_raw(&path);
     if let Some(existing) = snapshot.targets.targets.iter().find(|target| {
-        target.agent == selection.agent && target_path_matches(&target.path, &normalized)
+        target.agent == selection.agent && target_paths_equivalent(&target.path, &normalized)
     }) {
         return Ok((existing.clone(), false));
     }
@@ -189,6 +207,7 @@ fn resolve_target(
             ),
         ));
     }
+    ensure_managed_target_root_is_unique(&snapshot.targets.targets, &normalized, None)?;
     let normalized_path = normalized.to_string_lossy().into_owned();
     Ok((
         RegistryProjectionTarget {
@@ -423,11 +442,7 @@ pub(super) fn normalize_agent(agent: &str) -> std::result::Result<String, Comman
 }
 
 pub(super) fn normalize_existing_or_raw(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-fn target_path_matches(stored: &str, expected: &Path) -> bool {
-    normalize_existing_or_raw(Path::new(stored)) == normalize_existing_or_raw(expected)
+    normalize_existing_or_missing(path)
 }
 
 fn unique_activation_binding_id(

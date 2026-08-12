@@ -106,7 +106,7 @@ describe("api adapters enum handling", () => {
     expect(adaptRegistryOperation(operation({ method: "teleport" })).method).toBe("unknown");
   });
 
-  it("surfaces unknown binding policies instead of coercing them to auto", () => {
+  it("preserves backend binding policy profiles verbatim", () => {
     const binding = adaptBinding(
       {
         binding_id: "binding-unknown-policy",
@@ -120,7 +120,7 @@ describe("api adapters enum handling", () => {
       [],
     );
 
-    expect(binding.policy).toBe("unknown");
+    expect(binding.policy).toBe("future-policy");
   });
 
   it("labels multi-rule bindings without fabricating a single projectable skill", () => {

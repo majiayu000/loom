@@ -1,8 +1,7 @@
 use super::*;
 use crate::cli::{AgentKind, ProjectionMethod};
 use crate::panel::handlers::{
-    OpsQuery, TelemetryReportQuery, registry_capture, registry_orphan_clean,
-    registry_skill_add,
+    OpsQuery, TelemetryReportQuery, registry_capture, registry_orphan_clean, registry_skill_add,
     registry_skill_trash_add, registry_skill_trash_purge, registry_skill_trash_restore,
     registry_skill_use, remote_set, v1_info, v1_overview, v1_pending, v1_registry_ops,
     v1_registry_targets, v1_skill_diagnose, v1_skill_inspect, v1_skill_trash, v1_skills,

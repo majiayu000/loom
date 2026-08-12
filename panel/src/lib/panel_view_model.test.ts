@@ -176,6 +176,51 @@ describe("panel view-model selectors", () => {
     });
   });
 
+  it("surfaces a transport conflict before incomplete convergence evidence", () => {
+    const vm = selectPanelViewModel(
+      liveData({
+        convergence: {
+          registry_transport: { state: "CONFLICTED", evidence: {}, stale: false, errors: [] },
+          projections: { state: "unknown", items: [], stale: false, errors: [] },
+          visibility: { state: "unknown", stale: false, errors: [] },
+          complete: false,
+          incomplete_axes: ["projections", "visibility"],
+        },
+      }),
+      { page: "overview", readOnly: false },
+    );
+
+    expect(vm.shell.status).toMatchObject({ label: "remote conflicted", tone: "err" });
+  });
+
+  it.each([
+    {
+      state: "ERROR" as const,
+      errors: [],
+      title: "Registry transport reported an error.",
+    },
+    {
+      state: "SYNCED" as const,
+      errors: [{ code: "transport_probe_failed", message: "remote probe failed" }],
+      title: "Registry transport errors: transport_probe_failed: remote probe failed",
+    },
+  ])("surfaces transport errors before incomplete convergence evidence", ({ state, errors, title }) => {
+    const vm = selectPanelViewModel(
+      liveData({
+        convergence: {
+          registry_transport: { state, evidence: {}, stale: false, errors },
+          projections: { state: "unknown", items: [], stale: false, errors: [] },
+          visibility: { state: "unknown", stale: false, errors: [] },
+          complete: false,
+          incomplete_axes: ["registry_transport", "projections", "visibility"],
+        },
+      }),
+      { page: "overview", readOnly: false },
+    );
+
+    expect(vm.shell.status).toMatchObject({ label: "remote error", tone: "err", title });
+  });
+
   it("renders not_requested transport state explicitly", () => {
     const vm = selectPanelViewModel(
       liveData({

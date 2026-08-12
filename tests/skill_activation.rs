@@ -55,7 +55,14 @@ fn skill_activate_dry_run_does_not_initialize_registry_or_target() {
     assert_eq!(env["data"]["plan"]["dry_run"], Value::Bool(true));
     assert_eq!(
         env["data"]["plan"]["target_path"],
-        Value::String(home.path().join(".agents/skills").display().to_string())
+        Value::String(
+            home.path()
+                .canonicalize()
+                .expect("canonical home path")
+                .join(".agents/skills")
+                .display()
+                .to_string()
+        )
     );
     assert!(
         !root.path().join("state/registry").exists(),
@@ -64,6 +71,51 @@ fn skill_activate_dry_run_does_not_initialize_registry_or_target() {
     assert!(
         !home.path().join(".agents/skills/demo").exists(),
         "dry-run must not create target projection"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_activate_refuses_redirected_registered_managed_target() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDir::new("skill-activate-redirected-target");
+    let home = TestDir::new("skill-activate-redirected-target-home");
+    write_good_skill(root.path(), "demo");
+    let (first_output, first_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "activate", "demo", "--agent", "codex"],
+    );
+    assert!(
+        first_output.status.success(),
+        "first activation failed: {first_env}"
+    );
+
+    let registered_path = home.path().join(".agents/skills");
+    let redirected_path = home.path().join(".mirasim/skills");
+    fs::create_dir_all(redirected_path.parent().expect("redirect parent"))
+        .expect("create redirect parent");
+    fs::rename(&registered_path, &redirected_path).expect("move registered target");
+    symlink(&redirected_path, &registered_path).expect("redirect registered target");
+
+    let (second_output, second_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "activate", "demo", "--agent", "codex"],
+    );
+
+    assert!(
+        !second_output.status.success(),
+        "activation must fail closed after target root redirection"
+    );
+    assert_eq!(
+        second_env["error"]["code"],
+        Value::String("PROJECTION_CONFLICT".to_string())
+    );
+    assert_eq!(
+        second_env["error"]["details"]["root_kind"],
+        Value::String("symlink".to_string())
     );
 }
 
@@ -499,7 +551,14 @@ fn skill_activate_lists_repairs_and_deactivates_user_symlink() {
     assert_eq!(activate_env["data"]["noop"], Value::Bool(false));
     assert_eq!(
         activate_env["data"]["target"]["path"],
-        Value::String(home.path().join(".agents/skills").display().to_string())
+        Value::String(
+            home.path()
+                .canonicalize()
+                .expect("canonical home path")
+                .join(".agents/skills")
+                .display()
+                .to_string()
+        )
     );
     assert_eq!(
         activate_env["data"]["binding"]["binding_id"],

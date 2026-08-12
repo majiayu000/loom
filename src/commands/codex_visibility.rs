@@ -16,6 +16,7 @@ use crate::types::ErrorCode;
 use super::CommandFailure;
 use super::codex_config::{CodexConfigLoad, load_codex_config};
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
+use super::target_safety::normalize_existing_or_missing;
 
 mod adapter;
 mod gemini;
@@ -178,7 +179,7 @@ pub(crate) fn build_agent_visibility_report(
 }
 
 pub(crate) fn normalize_existing_or_raw(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    normalize_existing_or_missing(path)
 }
 
 pub(crate) fn projection_path_is_safe_symlink(path: &Path, skill_src: &Path) -> bool {

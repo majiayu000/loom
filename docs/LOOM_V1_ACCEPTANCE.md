@@ -40,8 +40,8 @@ Required local/CI gate:
 make ci
 ```
 
-`make ci` runs formatting, clippy, Rust tests, Panel typecheck, Panel tests,
-Panel production build, the agent E2E flow, and `make perf-smoke`.
+`make ci` runs formatting, clippy, Rust tests, Panel typecheck, Panel lint,
+Panel tests, Panel production build, the agent E2E flow, and `make perf-smoke`.
 
 Performance smoke currently enforces:
 

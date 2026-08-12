@@ -34,6 +34,7 @@ Configure repository secrets:
    ```bash
    cd panel && bun install --frozen-lockfile
    cd panel && bun run typecheck
+   cd panel && bun run lint
    cd panel && bun run test
    cd panel && bun run build
    make fmt-check

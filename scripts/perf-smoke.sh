@@ -11,7 +11,7 @@ if [[ ! -x "$bin" ]]; then
   RUSTFLAGS="$perf_rustflags ${RUSTFLAGS:-}" cargo build --release --locked
 fi
 
-# Hard ceiling: 6264 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 6272 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -97,7 +97,9 @@ fi
 # evidence while keeping cold CLI startup guarded below. The production Panel
 # import, paginated inventory, control-plane mutations, and accessibility gate
 # add a small embedded-asset tranche covered by the final 4 KiB budget step.
-max_bin_bytes=$((6264 * 1024))
+# Managed-target alias reconciliation adds the final 8 KiB tranche while
+# keeping the release binary under a fixed, reviewable ceiling.
+max_bin_bytes=$((6272 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2
@@ -226,9 +228,10 @@ for rel in sorted(payload_paths):
     if not path.is_file():
         raise SystemExit(f"panel payload asset is missing: {rel}")
     total += len(gzip.compress(path.read_bytes(), compresslevel=9, mtime=0))
-# Soft target: 100 KiB. Hard ceiling: 104 KiB (~4% buffer for chunk-
-# split jitter after #169 React 19 upgrade landed at ~100.06 KiB on main).
-limit = 104 * 1024
+# The manifest-based gate includes the shared JSX runtime that the earlier
+# filename filter omitted. Green main measures 113,136 bytes under this full
+# first-load definition; keep a fixed 112 KiB ceiling with about 1.3% headroom.
+limit = 112 * 1024
 soft = 100 * 1024
 if total > limit:
     raise SystemExit(f"panel gzip payload is {total} bytes; limit is {limit}")

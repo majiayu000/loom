@@ -437,6 +437,59 @@ fn target_add_is_idempotent_for_same_agent_and_path() {
 }
 
 #[test]
+fn target_add_rejects_cross_agent_managed_physical_root_alias() {
+    let root = TestDir::new("registry-target-add-cross-agent-managed-alias");
+    let target_path = root.path().join("live/shared-skills");
+    let (first_output, first_env) = target_add(root.path(), "claude", &target_path, "managed");
+    assert!(first_output.status.success(), "first add should succeed");
+
+    let (second_output, second_env) = target_add(root.path(), "codex", &target_path, "managed");
+
+    assert!(
+        !second_output.status.success(),
+        "a second managed owner for the same physical root must be rejected"
+    );
+    assert_eq!(
+        second_env["error"]["code"],
+        Value::String("PROJECTION_CONFLICT".to_string())
+    );
+    assert_eq!(
+        second_env["error"]["details"]["conflicting_target_id"],
+        first_env["data"]["target"]["target_id"]
+    );
+    assert_eq!(
+        registry_array_len(root.path(), "targets.json", "targets"),
+        1,
+        "failed registration must not add a second target"
+    );
+}
+
+#[test]
+fn target_add_allows_cross_agent_observed_physical_root_alias() {
+    let root = TestDir::new("registry-target-add-cross-agent-observed-alias");
+    let target_path = root.path().join("live/shared-observed-skills");
+    fs::create_dir_all(&target_path).expect("create observed target");
+
+    assert!(
+        target_add(root.path(), "claude", &target_path, "observed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        target_add(root.path(), "codex", &target_path, "observed")
+            .0
+            .status
+            .success(),
+        "read-only observations may intentionally share a physical root"
+    );
+    assert_eq!(
+        registry_array_len(root.path(), "targets.json", "targets"),
+        2
+    );
+}
+
+#[test]
 fn target_add_is_idempotent_for_equivalent_directory_path() {
     let root = TestDir::new("registry-target-add-equivalent-path");
     let target_path = root.path().join("live/codex-workbench");

@@ -60,6 +60,7 @@ mod skillset_cmds;
 mod skillset_release;
 mod sync_cmds;
 mod target_cmds;
+mod target_safety;
 mod telemetry;
 mod trash_cmds;
 mod use_cmds;

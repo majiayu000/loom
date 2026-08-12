@@ -557,12 +557,20 @@ fn valid_skill_path_component(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::PathBuf;
 
     use super::skill_names_with_home;
 
+    fn synthetic_home() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\home\test")
+        } else {
+            PathBuf::from("/home/test")
+        }
+    }
+
     fn names(command: &str) -> Vec<String> {
-        skill_names_with_home(&[command.to_string()], Some(Path::new("/home/test")))
+        skill_names_with_home(&[command.to_string()], Some(&synthetic_home()))
     }
 
     #[test]
@@ -584,13 +592,14 @@ mod tests {
             (r#"cat "$HOME/.codex/skills/double/SKILL.md""#, "double"),
             (r#"cat "$HOME"/.codex/skills/joined/SKILL.md"#, "joined"),
             ("cat ~/.codex/skills/tilde/SKILL.md", "tilde"),
-            (
-                "cat '/home/test/.codex/skills/absolute/SKILL.md'",
-                "absolute",
-            ),
         ] {
             assert_eq!(names(command), [expected], "{command}");
         }
+        let absolute = format!(
+            "cat '{}/.codex/skills/absolute/SKILL.md'",
+            synthetic_home().display()
+        );
+        assert_eq!(names(&absolute), ["absolute"], "{absolute}");
     }
 
     #[test]

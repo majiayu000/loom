@@ -185,7 +185,7 @@ export function adaptBinding(b: RegistryBinding, rules: RegistryRule[]): Binding
     target: b.default_target_id,
     matcher: `${b.workspace_matcher.kind}:${b.workspace_matcher.value}`,
     method: rule ? toMethod(rule.method) : "unknown",
-    policy: b.policy_profile === "manual" ? "manual" : "auto",
+    policy: b.policy_profile,
     ruleCount: bindingRules.length,
     skillCount,
   };

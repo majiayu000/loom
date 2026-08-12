@@ -88,7 +88,8 @@ export interface Binding {
   target: string;
   matcher: string;
   method: ProjectionMethod;
-  policy: "auto" | "manual";
+  /** Backend policy profile. Valid custom and future profiles are preserved verbatim. */
+  policy: string;
   ruleCount?: number;
   skillCount?: number;
 }

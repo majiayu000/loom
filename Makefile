@@ -9,7 +9,7 @@ else
 LOOM_PERF_RUSTFLAGS ?= -Cllvm-args=-enable-machine-outliner=always
 endif
 
-.PHONY: fmt fmt-check test contract-policy lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck panel-lint e2e perf-smoke check ci install-hooks
+.PHONY: fmt fmt-check test-fast test contract-policy lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck panel-lint e2e perf-smoke check ci install-hooks
 
 fmt:
 	cargo fmt --all
@@ -20,6 +20,9 @@ fmt-check:
 install-hooks:
 	git config core.hooksPath .githooks
 	@echo "pre-commit hook installed (core.hooksPath=.githooks). Disable with 'git config --unset core.hooksPath'."
+
+test-fast:
+	cargo nextest run
 
 test:
 	./scripts/test-with-contract-trace.sh

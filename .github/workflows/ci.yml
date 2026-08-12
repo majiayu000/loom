@@ -101,16 +101,75 @@ jobs:
 
       - name: Panel Tests (Bun)
         if: matrix.os == 'ubuntu-latest'
-        run: cd panel && bun run test
+        run: cd panel && bun run test:coverage
 
       - name: Panel Build (Bun)
         if: matrix.os == 'ubuntu-latest'
         run: cd panel && bun run build
 
       - name: Agent E2E
-        if: matrix.os == 'ubuntu-latest'
         run: make e2e
 
       - name: Performance Smoke
         if: matrix.os == 'ubuntu-latest'
         run: make perf-smoke
+
+      - name: Build release binary for packaged contract
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo build --release --locked
+
+      - name: Reproducible archive regression
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 scripts/test-create-reproducible-tar.py
+
+      - name: Packaged release contract
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          contract_root="$(mktemp -d)"
+          bundle_root="$(mktemp -d)"
+          trap 'rm -rf "$contract_root" "$bundle_root"' EXIT
+          contract_version="$(
+            target/release/loom --json --root "$contract_root" workspace status \
+              | python3 -c 'import json,sys; value=json.load(sys.stdin).get("cli_contract_version"); isinstance(value,str) and value or sys.exit("binary returned no CLI contract version"); print(value)'
+          )"
+          bundle="$bundle_root/skillloom-${version}-x86_64-unknown-linux-gnu"
+          python3 scripts/release-contract.py publish \
+            --binary target/release/loom \
+            --skill-dir skills/loom-registry \
+            --inventory docs/agent-command-surfaces.toml \
+            --output-dir "$bundle" \
+            --release-version "$version" \
+            --contract-version "$contract_version" \
+            --target x86_64-unknown-linux-gnu \
+            --extra README.md \
+            --extra LICENSE
+          python3 scripts/release-contract.py verify --bundle "$bundle"
+          LOOM_PACKAGED_CONTRACT_BUNDLE="$bundle" \
+            LOOM_PACKAGED_BINARY="$bundle/loom" \
+            cargo test --test release_contract packaged_surface_fixture_matrix -- --ignored --exact
+
+  windows-check:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Compile all Windows targets and features
+        run: cargo check --locked --all-targets --all-features
+
+      - name: Run Windows library tests
+        run: cargo test --locked --lib

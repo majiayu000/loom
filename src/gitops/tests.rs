@@ -310,6 +310,12 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
     );
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn prepared_index_post_rename_crashes_converge_without_stale_private_state() {
     for point in [

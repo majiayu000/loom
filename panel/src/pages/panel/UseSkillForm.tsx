@@ -22,6 +22,7 @@ export function UseSkillForm({
   const [workspace, setWorkspace] = useState("");
   const [profile, setProfile] = useState("default");
   const [method, setMethod] = useState<ProjectionMethod>("symlink");
+  const [adopt, setAdopt] = useState(false);
   const [planSummary, setPlanSummary] = useState("");
   const useSkill = useMutation();
   const disabled = readOnly || useSkill.busy || agents.length === 0;
@@ -42,6 +43,7 @@ export function UseSkillForm({
           workspace: workspace.trim() || undefined,
           profile: profile.trim() || "default",
           method,
+          adopt,
           apply,
         }),
       (result) => {
@@ -106,6 +108,15 @@ export function UseSkillForm({
             {useSkill.busy ? "running..." : "Apply"}
           </button>
         </div>
+        <label className="row-flex" style={{ fontSize: 12, color: "var(--ink-2)" }}>
+          <input
+            type="checkbox"
+            checked={adopt}
+            onChange={(event) => setAdopt(event.currentTarget.checked)}
+            disabled={readOnly || useSkill.busy}
+          />
+          Adopt an existing observed skill when identities match
+        </label>
       </div>
       {planSummary && <div className="mono dim" style={{ fontSize: 11, marginTop: 8 }}>{planSummary}</div>}
       <MutationBanner state={useSkill} spacing="top" />

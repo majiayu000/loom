@@ -129,17 +129,17 @@ describe("Ops, History, and Sync pages", () => {
 
     render(<HistoryPage live={true} mode="live" mutationVersion={0} />);
 
-    expect(await screen.findByText(/skill.writer skill projection done/i)).toBeInTheDocument();
+    expect(await screen.findByText(/skill.writer skill projection pending/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Skill filter"), { target: { value: "writer" } });
-    expect(screen.getByText(/skill.writer skill projection done/i)).toBeInTheDocument();
+    expect(screen.getByText(/skill.writer skill projection pending/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Request/audit/op id filter"), { target: { value: "req-1" } });
-    expect(screen.getByText(/skill.writer skill projection done/i)).toBeInTheDocument();
+    expect(screen.getByText(/skill.writer skill projection pending/i)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Request/audit/op id filter"), { target: { value: "missing-id" } });
     expect(screen.getByText("No activity matches the current filter.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Clear operation filters"));
-    fireEvent.click(screen.getByText(/skill.writer skill projection done/i));
+    fireEvent.click(screen.getByText(/skill.writer skill projection pending/i));
 
     expect(await screen.findByText("Audit detail")).toBeInTheDocument();
     expect(screen.getByText("op-1")).toBeInTheDocument();
@@ -164,7 +164,7 @@ describe("Ops, History, and Sync pages", () => {
     vi.spyOn(api, "opsHistoryDiagnose").mockResolvedValue(diagnosePayload());
 
     render(<HistoryPage live={true} mode="live" mutationVersion={0} />);
-    fireEvent.click(await screen.findByText(/skill.writer skill projection done/i));
+    fireEvent.click(await screen.findByText(/skill.writer skill projection pending/i));
 
     expect(screen.getByText(/^note:x{77}\.\.\.$/)).toBeInTheDocument();
     expect(screen.queryByText(`note:${"x".repeat(120)}`)).not.toBeInTheDocument();

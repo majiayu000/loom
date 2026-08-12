@@ -257,6 +257,7 @@ describe("SkillsPage — use flow", () => {
         workspace: "/repo/a",
         profile: "default",
         method: "symlink",
+        adopt: false,
         apply: false,
       });
     });
@@ -277,6 +278,7 @@ describe("SkillsPage — use flow", () => {
         workspace: undefined,
         profile: "default",
         method: "symlink",
+        adopt: false,
         apply: true,
       });
       expect(onMutation).toHaveBeenCalledTimes(1);

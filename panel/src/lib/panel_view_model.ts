@@ -166,7 +166,6 @@ const KNOWN_METHODS = new Set(["symlink", "copy", "materialize"]);
 const KNOWN_OWNERSHIP = new Set(["managed", "observed", "external"]);
 const KNOWN_SOURCE_STATUS = new Set(["present", "missing", "non-compliant"]);
 const KNOWN_OPERATION_STATUS = new Set(["ok", "pending", "err"]);
-const KNOWN_POLICIES = new Set(["auto", "manual"]);
 const READ_ONLY_REASON = "registry offline";
 
 const PAGE_LABELS: Record<PanelPageKey, string> = {
@@ -271,8 +270,37 @@ function statusForLiveData(live: PanelLiveData): ShellStatusViewModel {
   }
 
   const state = (live.convergence?.registry_transport.state ?? live.remote?.sync_state ?? "").toUpperCase();
+  const transportErrors = live.convergence?.registry_transport.errors ?? [];
+  if (state === "ERROR" || transportErrors.length > 0) {
+    const details = transportErrors.map((error) => `${error.code}: ${error.message}`).join("; ");
+    return {
+      label: "remote error",
+      title: details ? `Registry transport errors: ${details}` : "Registry transport reported an error.",
+      tone: "err",
+    };
+  }
   if (state === "DIVERGED" || state === "CONFLICTED") {
     return { label: `remote ${state.toLowerCase()}`, title: "Remote and local history differ.", tone: "err" };
+  }
+
+  if (live.convergence && !live.convergence.complete) {
+    const axes = live.convergence.incomplete_axes;
+    return {
+      label: "convergence incomplete",
+      title:
+        axes.length > 0
+          ? `Incomplete convergence evidence: ${axes.join(", ")}.`
+          : "Convergence evidence is incomplete.",
+      tone: "warn",
+    };
+  }
+
+  if (state === "NOT_REQUESTED") {
+    return {
+      label: "sync not requested",
+      title: "Registry transport was not requested for this operation.",
+      tone: "warn",
+    };
   }
   if (state === "LOCAL_ONLY" && live.queuedWriteCount === 0) {
     return {
@@ -526,7 +554,7 @@ export function selectBindingViewModel(binding: Binding): BindingViewModel {
     target: textField(binding.target, "binding target is unavailable"),
     matcher: textField(binding.matcher, "workspace matcher is unavailable"),
     method: methodField(binding.method),
-    policy: enumField(binding.policy, KNOWN_POLICIES, "binding policy is unavailable"),
+    policy: textField(binding.policy, "binding policy is unavailable"),
   };
 }
 

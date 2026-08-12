@@ -11,7 +11,7 @@ if [[ ! -x "$bin" ]]; then
   RUSTFLAGS="$perf_rustflags ${RUSTFLAGS:-}" cargo build --release --locked
 fi
 
-# Hard ceiling: 6264 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 6296 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -97,7 +97,10 @@ fi
 # evidence while keeping cold CLI startup guarded below. The production Panel
 # import, paginated inventory, control-plane mutations, and accessibility gate
 # add a small embedded-asset tranche covered by the final 4 KiB budget step.
-max_bin_bytes=$((6264 * 1024))
+# Managed-target alias reconciliation adds the final 8 KiB tranche while
+# keeping the release binary under a fixed, reviewable ceiling. Durable
+# convergence recovery and telemetry ingestion add the final 24 KiB tranche.
+max_bin_bytes=$((6296 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2
@@ -195,16 +198,41 @@ dist = pathlib.Path("panel/dist")
 if not dist.is_dir():
     raise SystemExit("panel/dist is missing; run `make panel-build` before perf-smoke")
 
+manifest_path = dist / ".vite" / "manifest.json"
+if not manifest_path.is_file():
+    raise SystemExit("panel Vite manifest is missing; the payload gate cannot resolve imported chunks")
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+entry_key = "index.html"
+if entry_key not in manifest or not manifest[entry_key].get("isEntry"):
+    raise SystemExit("panel entry is missing from the Vite manifest")
+
+payload_paths = {"index.html"}
+visited = set()
+
+def collect_manifest_chunk(key):
+    if key in visited:
+        return
+    visited.add(key)
+    chunk = manifest.get(key)
+    if not isinstance(chunk, dict) or not isinstance(chunk.get("file"), str):
+        raise SystemExit(f"invalid Vite manifest chunk: {key}")
+    payload_paths.add(chunk["file"])
+    for css in chunk.get("css", []):
+        payload_paths.add(css)
+    for imported in [*chunk.get("imports", []), *chunk.get("dynamicImports", [])]:
+        collect_manifest_chunk(imported)
+
+collect_manifest_chunk(entry_key)
 total = 0
-for path in dist.rglob("*"):
-    rel = path.relative_to(dist).as_posix()
+for rel in sorted(payload_paths):
+    path = dist / rel
     if not path.is_file():
-        continue
-    if rel == "index.html" or rel.endswith(".css") or rel.startswith("assets/base-") or rel.startswith("assets/panel-"):
-        total += len(gzip.compress(path.read_bytes(), compresslevel=9))
-# Soft target: 100 KiB. Hard ceiling: 104 KiB (~4% buffer for chunk-
-# split jitter after #169 React 19 upgrade landed at ~100.06 KiB on main).
-limit = 104 * 1024
+        raise SystemExit(f"panel payload asset is missing: {rel}")
+    total += len(gzip.compress(path.read_bytes(), compresslevel=9, mtime=0))
+# The manifest-based gate includes the shared JSX runtime that the earlier
+# filename filter omitted. Green main measures 113,136 bytes under this full
+# first-load definition; keep a fixed 112 KiB ceiling with about 1.3% headroom.
+limit = 112 * 1024
 soft = 100 * 1024
 if total > limit:
     raise SystemExit(f"panel gzip payload is {total} bytes; limit is {limit}")

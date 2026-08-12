@@ -137,7 +137,14 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
         return Promise.resolve(
           failedResponse
             ? failedResponse
-            : jsonResponse({ ok: true, data: { counts: {}, projections: [], rules: [], targets: [], bindings: [] } }),
+            : jsonResponse({
+                ok: true,
+                cmd: "registry.status",
+                request_id: "req-registry",
+                data: { counts: {}, projections: [], rules: [], targets: [], bindings: [] },
+                error: null,
+                meta: { warnings: [] },
+              }),
         );
       case "/api/v1/sync/status":
         return Promise.resolve(

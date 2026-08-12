@@ -1,13 +1,13 @@
 use super::*;
 use crate::cli::{AgentKind, ProjectionMethod};
 use crate::panel::handlers::{
-    OpsQuery, TelemetryReportQuery, registry_orphan_clean, registry_skill_add,
+    OpsQuery, TelemetryReportQuery, registry_capture, registry_orphan_clean, registry_skill_add,
     registry_skill_trash_add, registry_skill_trash_purge, registry_skill_trash_restore,
     registry_skill_use, remote_set, v1_info, v1_overview, v1_pending, v1_registry_ops,
     v1_registry_targets, v1_skill_diagnose, v1_skill_inspect, v1_skill_trash, v1_skills,
     v1_telemetry_report, v1_workspace_status,
 };
-use crate::panel::{SkillAddRequest, TrashRestoreRequest, UseRequest};
+use crate::panel::{CaptureRequest, SkillAddRequest, TrashRestoreRequest, UseRequest};
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOperationRecord,
     RegistryProjectionInstance, RegistryProjectionsFile, RegistryRulesFile,
@@ -20,6 +20,33 @@ use axum::{
 use chrono::Duration as ChrDuration;
 use serde_json::{Value, json};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+#[tokio::test]
+async fn registry_capture_rejects_missing_skill_at_the_api_boundary() {
+    let (root, state) = make_test_state();
+    let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000);
+    let mut headers = HeaderMap::new();
+    headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
+
+    let (status, Json(payload)) = registry_capture(
+        ConnectInfo(peer),
+        headers,
+        State(state),
+        Json(CaptureRequest {
+            skill: None,
+            binding: None,
+            instance: Some("projection-1".to_string()),
+            message: None,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(payload["error"]["code"], json!("ARG_INVALID"));
+    assert_eq!(payload["error"]["message"], json!("skill is required"));
+
+    cleanup_root(root);
+}
 
 #[tokio::test]
 async fn v1_telemetry_report_returns_cli_read_model_without_audit_write() {

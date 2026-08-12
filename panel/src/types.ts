@@ -54,6 +54,7 @@ export type RemotePayload = {
 };
 
 export type RegistryTransportState =
+  | "not_requested"
   | "SYNCED"
   | "PENDING_PUSH"
   | "DIVERGED"
@@ -176,3 +177,5 @@ export type RegistryPayload = {
     next_actions?: { cmd: string; reason: string }[];
   };
 };
+
+export type RegistryStatusData = NonNullable<RegistryPayload["data"]>;

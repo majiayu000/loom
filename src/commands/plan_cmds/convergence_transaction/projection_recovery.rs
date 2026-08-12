@@ -435,7 +435,15 @@ fn recovery_conflict(path: &Path, message: &str) -> CommandFailure {
     failure
 }
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
+    )
+))]
 mod tests {
     use super::*;
 

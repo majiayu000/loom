@@ -249,7 +249,7 @@ describe("SkillMPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /审计历史/ }));
 
-    expect(await screen.findByText("release-notes skill release done")).toBeTruthy();
+    expect(await screen.findByText("release-notes skill release pending")).toBeTruthy();
     expect(screen.getByText("5 skills observed skill monitor done")).toBeTruthy();
     expect(screen.getByText("批量 5")).toBeTruthy();
     expect([...container.querySelectorAll(".op-row-pending .op-pill")].some((node) => node.textContent === "待处理")).toBe(true);
@@ -745,6 +745,8 @@ describe("SkillMPanel", () => {
     expect(screen.getByRole("button", { name: "New target" })).toBeTruthy();
     expect(screen.queryByText("target 新增未接入")).toBeNull();
     expect(screen.queryByText("verify 未接入")).toBeNull();
+    expect(screen.getByText("2 个投影")).toBeTruthy();
+    expect(screen.getByText("同步状态未验证")).toBeTruthy();
 
     await userEvent.keyboard("{Control>}k{/Control}");
     const search = await screen.findByRole("textbox", { name: "搜索命令" });

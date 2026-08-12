@@ -145,7 +145,7 @@ loom skill project my-skill --binding "$BINDING_ID" --method symlink
 loom panel        # -> http://localhost:43117
 ```
 
-`loom panel` now serves a frontend bundled into the Rust binary at build time, so it works even when `--root` points at a separate registry directory. If panel assets are unavailable in your build, reinstall from a checkout with `bun` available so Loom can package the frontend during compile.
+`loom panel` serves a frontend bundled into the Rust binary at build time, so it works even when `--root` points at a separate registry directory. The default `panel` feature rebuilds assets with the `packageManager`-pinned Bun version and fails closed when fresh assets cannot be produced, preventing environment-dependent binaries. For an explicit CLI-only build, use `cargo build --no-default-features`.
 
 Release archives are the preferred install path because their binaries are built with the Panel frontend already bundled and smoke-tested. To verify a downloaded archive, use the release `SHA256SUMS` file as shown above; if you use GitHub CLI, you can also verify provenance with `gh attestation verify skillloom-${VERSION}-${TARGET}.tar.gz --repo majiayu000/loom`.
 
@@ -516,6 +516,7 @@ Rust, Panel, e2e, release, and performance checks.
 ```bash
 make fmt-check
 make lint
+make test-fast # fail-fast local feedback
 make test
 make e2e
 make ci       # repository-wide gate

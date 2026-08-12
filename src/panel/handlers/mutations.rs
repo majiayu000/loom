@@ -508,8 +508,20 @@ pub(in crate::panel) async fn registry_capture(
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.commit") {
         return response;
     }
+    let Some(skill) = req.skill.filter(|skill| !skill.trim().is_empty()) else {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(error_envelope(
+                "skill.commit",
+                &request_id,
+                "ARG_INVALID",
+                "skill is required",
+            )),
+        );
+    };
     let input = CommitProjectionInput {
-        skill: req.skill.unwrap_or_default(),
+        skill,
         binding: req.binding,
         instance: req.instance,
         message: req.message,

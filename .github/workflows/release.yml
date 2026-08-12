@@ -65,8 +65,18 @@ jobs:
       - name: Lint
         run: make lint
 
+      - name: Module Ceiling
+        run: make module-ceiling module-ceiling-test
+
       - name: Test
         run: make test
+
+      - name: TS Bindings Drift Check
+        run: |
+          if ! git diff --exit-code panel/src/generated/; then
+            echo "::error::ts-rs generated bindings are out of date. Run 'cargo test' locally and commit panel/src/generated/ changes."
+            exit 1
+          fi
 
       - name: Panel Install (Bun)
         run: cd panel && bun install --frozen-lockfile
@@ -78,7 +88,7 @@ jobs:
         run: cd panel && bun run lint
 
       - name: Panel Tests (Bun)
-        run: cd panel && bun run test
+        run: cd panel && bun run test:coverage
 
       - name: Panel Build (Bun)
         run: cd panel && bun run build
@@ -152,7 +162,11 @@ jobs:
             --target "${{ matrix.target }}" \
             --extra README.md \
             --extra LICENSE
-          tar -C dist -czf "dist/$archive" "skillloom-${version}-${{ matrix.target }}"
+          source_date_epoch="$(git show -s --format=%ct HEAD)"
+          python3 scripts/create-reproducible-tar.py \
+            --source "$staging" \
+            --output "dist/$archive" \
+            --mtime "$source_date_epoch"
           (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
 
       - name: Smoke packaged binary
@@ -186,15 +200,31 @@ jobs:
           LOOM_PACKAGED_CONTRACT_BUNDLE="$bundle" \
             LOOM_PACKAGED_BINARY="$bin" \
             cargo test --test release_contract packaged_surface_fixture_matrix -- --ignored --exact
-          "$bin" --root "$smoke_root" panel --port 0 >/tmp/loom-panel-smoke.log 2>&1 &
+          panel_log="$(mktemp)"
+          "$bin" --root "$smoke_root" panel --port 0 >"$panel_log" 2>&1 &
           panel_pid="$!"
-          sleep 1
-          if ! kill -0 "$panel_pid" 2>/dev/null; then
-            cat /tmp/loom-panel-smoke.log
-            wait "$panel_pid"
-          fi
+          trap 'kill "$panel_pid" 2>/dev/null || true; wait "$panel_pid" 2>/dev/null || true' EXIT
+          panel_url=""
+          for _ in $(seq 1 50); do
+            panel_url="$(sed -n 's/^panel listening on \(http:\/\/[^[:space:]]*\)$/\1/p' "$panel_log" | tail -1)"
+            if [ -n "$panel_url" ]; then break; fi
+            if ! kill -0 "$panel_pid" 2>/dev/null; then
+              cat "$panel_log"
+              wait "$panel_pid"
+            fi
+            sleep 0.1
+          done
+          test -n "$panel_url"
+          index_html="$(curl --compressed --fail --silent --show-error "$panel_url/")"
+          printf '%s' "$index_html" | grep -F '<div id="root"></div>' >/dev/null
+          curl --fail --silent --show-error "$panel_url/api/v1/health" \
+            | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["ok"] is True'
+          asset_path="$(printf '%s' "$index_html" | sed -n 's/.*src="\([^"]*\.js\)".*/\1/p' | head -1)"
+          test -n "$asset_path"
+          curl --compressed --fail --silent --show-error --output /dev/null "$panel_url$asset_path"
           kill "$panel_pid"
           wait "$panel_pid" 2>/dev/null || true
+          trap - EXIT
 
       - name: Attest release archive
         uses: actions/attest@v4

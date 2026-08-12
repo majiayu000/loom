@@ -6,7 +6,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod directory_handle;
 mod index_lock_capture;
@@ -262,6 +262,14 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     write_atomic_bytes(path, contents.as_bytes())
 }
 
+struct OwnedTempPath(PathBuf);
+
+impl Drop for OwnedTempPath {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 /// Write bytes through a temp file and atomically replace the destination.
 pub fn write_atomic_bytes(path: &Path, contents: &[u8]) -> io::Result<()> {
     maybe_fault_inject("write_atomic")?;
@@ -278,6 +286,7 @@ pub fn write_atomic_bytes(path: &Path, contents: &[u8]) -> io::Result<()> {
         path.file_name().unwrap_or_default().to_string_lossy(),
         uuid::Uuid::new_v4()
     ));
+    let _temp_guard = OwnedTempPath(tmp_path.clone());
 
     {
         let mut file = OpenOptions::new()
@@ -584,6 +593,19 @@ mod tests {
         assert!(!src.exists(), "src should be gone after rename");
         assert_eq!(fs::read(&dst).unwrap(), b"new content");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn owned_temp_path_removes_unpublished_file_on_drop() {
+        let dir = temp_dir("temp-guard");
+        let temp = dir.join(".state.tmp-test");
+        fs::write(&temp, b"partial").unwrap();
+        {
+            let _guard = OwnedTempPath(temp.clone());
+            assert!(temp.exists());
+        }
+        assert!(!temp.exists());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

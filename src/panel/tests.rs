@@ -53,7 +53,7 @@ fn panel_headers() -> HeaderMap {
 }
 
 fn make_test_state() -> (std::path::PathBuf, PanelState) {
-    let root = std::env::temp_dir().join(format!("loom-panel-test-{}", Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("lp-{}", Uuid::new_v4().simple()));
     fs::create_dir_all(&root).expect("create panel test root");
     let ctx = AppContext::new(Some(root.clone())).expect("build app context");
     let state = PanelState {

@@ -17,8 +17,8 @@ function operation(overrides: Partial<RegistryOperationRecord> = {}): RegistryOp
 }
 
 describe("adaptRegistryOperation", () => {
-  it("treats succeeded registry rows as complete even before sync ack", () => {
-    expect(adaptRegistryOperation(operation()).status).toBe("ok");
+  it("keeps succeeded registry rows pending until sync acknowledgment", () => {
+    expect(adaptRegistryOperation(operation()).status).toBe("pending");
   });
 
   it("preserves pending-endpoint provenance for succeeded actionable rows", () => {
@@ -104,6 +104,23 @@ describe("api adapters enum handling", () => {
 
     expect(binding.method).toBe("unknown");
     expect(adaptRegistryOperation(operation({ method: "teleport" })).method).toBe("unknown");
+  });
+
+  it("preserves backend binding policy profiles verbatim", () => {
+    const binding = adaptBinding(
+      {
+        binding_id: "binding-unknown-policy",
+        agent: "claude",
+        profile_id: "default",
+        workspace_matcher: { kind: "path_prefix", value: "/repo" },
+        default_target_id: "target-1",
+        policy_profile: "future-policy",
+        active: true,
+      },
+      [],
+    );
+
+    expect(binding.policy).toBe("future-policy");
   });
 
   it("labels multi-rule bindings without fabricating a single projectable skill", () => {

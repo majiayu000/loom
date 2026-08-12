@@ -91,9 +91,40 @@ describe("ProjectionsPage orphan cleanup", () => {
       expect(clean).toHaveBeenCalledWith({ delete_live_paths: true });
     });
   });
+
+  it("requires confirmation before cleaning metadata while preserving live paths", async () => {
+    const orphan = projection({ instance_id: "inst-orphan", binding_id: undefined, health: "orphaned" });
+    const clean = vi.spyOn(api, "orphanClean").mockResolvedValue({
+      ok: true,
+      cmd: "skill.orphan.clean",
+      request_id: "req-clean",
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <ProjectionsPage projections={[orphan]} targets={[target]} bindings={[binding]} readOnly={false} onMutation={() => {}} />,
+    );
+    const submit = screen.getByRole("button", { name: "Clean orphan metadata" });
+    fireEvent.click(submit);
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Live projection directories will be preserved"));
+    expect(clean).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    fireEvent.click(submit);
+    await waitFor(() => expect(clean).toHaveBeenCalledWith({ delete_live_paths: false }));
+  });
 });
 
 describe("ProjectionsPage filters", () => {
+  it("exposes filter state and a keyboard-operable projection selector", () => {
+    render(
+      <ProjectionsPage projections={[projection()]} targets={[target]} bindings={[binding]} readOnly={false} onMutation={() => {}} />,
+    );
+
+    expect(screen.getByRole("button", { name: "all" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "healthy" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "inst-visible" })).toHaveAttribute("aria-pressed", "true");
+  });
   it("keeps detail actions constrained to the active filter", async () => {
     const visible = projection({ instance_id: "inst-visible", materialized_path: "/tmp/visible" });
     const hidden = projection({

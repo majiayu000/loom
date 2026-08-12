@@ -84,6 +84,12 @@ fn equal_content_partial_restore_uses_ownership_identity() {
     assert_eq!(error.code, ErrorCode::DependencyConflict);
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn equal_content_backup_copy_restore_uses_retained_exchange_evidence() {
     let root = TestRoot(

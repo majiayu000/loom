@@ -18,6 +18,7 @@ use super::super::provenance::{
     ArtifactDescriptor, SkillSourceRecord, SourceDescriptor, skill_tree_digest,
 };
 use super::super::{App, CommandFailure, SkillLintMode, lint_skill_source};
+use super::preview_limits::enforce_preview_resource_limits;
 use super::store::{
     find_license, is_executable, is_script_extension, provider_not_found, resolve_provider,
     validate_provider_id,
@@ -421,6 +422,7 @@ pub(super) fn local_preview(
             format!("skill source '{}' is not a directory", path.display()),
         ));
     }
+    enforce_preview_resource_limits(path)?;
     let name = expected_name.map(ToString::to_string).unwrap_or_else(|| {
         path.file_name()
             .and_then(|v| v.to_str())

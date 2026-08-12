@@ -227,15 +227,10 @@ fn is_lock_raw_stale(lock_path: &Path, raw: &str) -> Result<bool> {
         // hostname, so they also take the conservative branch.
         let host = current_hostname();
         if !metadata.host.is_empty() && metadata.host == host {
-            // Holder definitely gone — reap immediately. Any other outcome
-            // (alive *or* indeterminate) falls through to the time-based
-            // check below so a crashed process that left a stale PID
-            // record still gets reaped after LOCK_STALE_AFTER. We
-            // deliberately do NOT treat indeterminate probes as "dead" —
-            // that previously deleted live locks on Windows and in
-            // environments without `kill` on PATH.
-            if let Some(false) = pid_status(metadata.pid) {
-                return Ok(true);
+            match pid_status(metadata.pid) {
+                Some(true) => return Ok(false),
+                Some(false) => return Ok(true),
+                None => {}
             }
         }
         let age = Utc::now().signed_duration_since(metadata.created_at);
@@ -339,6 +334,27 @@ mod tests {
     #[test]
     fn pid_status_reports_self_alive() {
         assert_eq!(pid_status(std::process::id()), Some(true));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_same_host_lock_never_expires_by_age() {
+        let dir = std::env::temp_dir().join(format!(
+            "loom-live-old-lock-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let lock_path = dir.join("test.lock");
+        let live = LockMetadata {
+            pid: std::process::id(),
+            owner_id: "live-owner".to_string(),
+            host: current_hostname(),
+            created_at: Utc::now() - chrono::Duration::hours(2),
+        };
+        fs::write(&lock_path, serde_json::to_string(&live).unwrap()).unwrap();
+
+        assert!(!is_lock_stale(&lock_path).expect("live lock probe"));
+        let _ = fs::remove_dir_all(dir);
     }
 
     /// Contract: non-Unix builds have no cheap probe, so `pid_status` returns

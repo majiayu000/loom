@@ -377,6 +377,13 @@ mod tests {
 
     use super::{extract_nested_exec_commands, skill_entrypoint_names};
 
+    fn test_home() -> PathBuf {
+        env::var_os("HOME")
+            .or_else(|| env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .expect("test requires a home directory")
+    }
+
     fn payload(name: &str, command: &str) -> Value {
         json!({
             "type":"function_call",
@@ -399,13 +406,16 @@ mod tests {
 
     #[test]
     fn returns_distinct_skill_names_in_path_order() {
-        let home = env::var("HOME").expect("test requires HOME");
+        let home = test_home();
         let value = payload(
             "exec_command",
             &format!(
-                "cat {home}/.codex/skills/first/SKILL.md \
-                 {home}/.agents/skills/second/SKILL.md \
-                 {home}/.codex/skills/first/SKILL.md"
+                "cat '{}/.codex/skills/first/SKILL.md' \
+                 '{}/.agents/skills/second/SKILL.md' \
+                 '{}/.codex/skills/first/SKILL.md'",
+                home.display(),
+                home.display(),
+                home.display()
             ),
         );
         assert_eq!(skill_entrypoint_names(&value).unwrap(), ["first", "second"]);
@@ -469,18 +479,20 @@ mod tests {
 
     #[test]
     fn exec_accepts_utf8_strings() {
-        let command = "cat \"/Users/测试/.codex/skills/demo/SKILL.md\"";
+        let home = if cfg!(windows) {
+            PathBuf::from(r"C:\Users\测试")
+        } else {
+            PathBuf::from("/Users/测试")
+        };
+        let command = format!("cat \"{}/.codex/skills/demo/SKILL.md\"", home.display());
         let source = format!(
             "// @exec: {{\"yield_time_ms\":30000}}\nconst r = await tools.exec_command({{cmd:{}, note:\"中文\"}});",
-            serde_json::to_string(command).unwrap()
+            serde_json::to_string(&command).unwrap()
         );
         let commands = extract_nested_exec_commands(&source).unwrap();
         assert_eq!(commands, [command]);
         assert_eq!(
-            super::shell::skill_names_with_home(
-                &commands,
-                Some(std::path::Path::new("/Users/测试"))
-            ),
+            super::shell::skill_names_with_home(&commands, Some(&home)),
             ["demo"]
         );
     }
@@ -541,7 +553,7 @@ mod tests {
 
     #[test]
     fn trusted_paths_are_component_aware() {
-        let home = PathBuf::from(env::var_os("HOME").expect("test requires HOME"));
+        let home = test_home();
         let home = home.to_string_lossy();
         let plugin =
             format!("{home}/.codex/plugins/cache/vendor/plugin/1.0/skills/plugin-skill/SKILL.md");

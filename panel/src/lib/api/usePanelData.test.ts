@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convergenceWithLegacyFallback, dedupePanelOps } from "./usePanelData";
+import { convergenceWithLegacyFallback, dedupePanelOps, shouldPollPanelData } from "./usePanelData";
 import { ZERO_OPERATION_COUNTS } from "../../types";
 import type { Op } from "../types";
 
@@ -15,6 +15,13 @@ function op(overrides: Partial<Op>): Op {
     ...overrides,
   };
 }
+
+describe("panel polling", () => {
+  it("pauses interval refreshes while the document is hidden", () => {
+    expect(shouldPollPanelData("hidden")).toBe(false);
+    expect(shouldPollPanelData("visible")).toBe(true);
+  });
+});
 
 describe("dedupePanelOps", () => {
   it("keeps operation backlog rows first and removes matching activity rows", () => {

@@ -103,7 +103,20 @@ impl PreparedProjection {
         self.scope
             .take()
             .map(Ok)
-            .unwrap_or_else(|| PreparedProjectionScope::open(parts).map_err(map_io))
+            .unwrap_or_else(|| {
+                PreparedProjectionScope::open(parts).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::Unsupported {
+                        CommandFailure::new(
+                            ErrorCode::ProjectionMethodUnsupported,
+                            format!(
+                                "handle-relative projection activation is unavailable on this platform: {error}"
+                            ),
+                        )
+                    } else {
+                        map_io(error)
+                    }
+                })
+            })
     }
 
     fn take_parts(&mut self) -> PreparedProjectionArtifact {

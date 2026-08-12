@@ -21,7 +21,7 @@ describe("SkillConvergencePanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Plan convergence" }));
     expect(plan).toHaveBeenCalledWith("demo", expect.objectContaining({ push_remote: false }));
     expect(apply).not.toHaveBeenCalled();
-    expect(screen.getByText("plan_id: plan-1")).toBeTruthy();
+    expect(await screen.findByText("plan_id: plan-1")).toBeTruthy();
     expect(screen.getByText(/"action": "refresh"/)).toBeTruthy();
     expect(screen.getByText(/"code": "review-fixture"/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Apply reviewed plan" })).toBeDisabled();

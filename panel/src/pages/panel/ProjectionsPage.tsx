@@ -102,14 +102,11 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
 
   const cleanOrphansBulk = () => {
     if (readOnly || orphanProjections.length === 0 || cleanOrphans.busy) return;
-    if (
-      deleteLivePaths &&
-      !window.confirm(
-        `Delete live paths for ${orphanProjections.length} orphaned projection${
-          orphanProjections.length === 1 ? "" : "s"
-        }? This removes live projection directories as well as registry metadata.`,
-      )
-    ) {
+    const noun = `orphaned projection${orphanProjections.length === 1 ? "" : "s"}`;
+    const impact = deleteLivePaths
+      ? `Delete live paths for ${orphanProjections.length} ${noun}? This removes live projection directories as well as registry metadata.`
+      : `Clean registry metadata for ${orphanProjections.length} ${noun}? Live projection directories will be preserved.`;
+    if (!window.confirm(impact)) {
       return;
     }
     cleanOrphans.run(
@@ -129,7 +126,13 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
         <div className="header-actions">
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {FILTERS.map((item) => (
-              <button type="button" key={item} className={`btn ${filter === item ? "primary" : "ghost"}`} onClick={() => setFilter(item)}>
+<button
+                type="button"
+                key={item}
+                className={`btn ${filter === item ? "primary" : "ghost"}`}
+                aria-pressed={filter === item}
+                onClick={() => setFilter(item)}
+              >
                 {item}
               </button>
             ))}
@@ -238,7 +241,14 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
                       onClick={() => setSelectedId(projection.instance_id)}
                     >
                       <td className="mono dim" data-label="Instance">
-                        {projection.instance_id}
+                        <button
+                          type="button"
+                          aria-pressed={selected?.instance_id === projection.instance_id}
+                          onClick={() => setSelectedId(projection.instance_id)}
+                          style={{ border: 0, padding: 0, background: "transparent", color: "inherit", font: "inherit", cursor: "pointer" }}
+                        >
+                          {projection.instance_id}
+                        </button>
                       </td>
                       <td className="name" data-label="Skill">
                         {projection.skill_id}

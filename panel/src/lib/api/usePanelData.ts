@@ -56,6 +56,10 @@ const EMPTY_COUNTS: RegistryCounts = {};
 
 const POLL_MS = 10_000;
 
+export function shouldPollPanelData(visibilityState: DocumentVisibilityState): boolean {
+  return visibilityState === "visible";
+}
+
 type LiveState = Omit<PanelLiveData, "refetch">;
 
 const INITIAL_STATE: LiveState = {
@@ -261,7 +265,7 @@ export function usePanelData(): PanelLiveData {
       ]);
       if (controller.signal.aborted || generation !== generationRef.current) return;
 
-      const registryData = registry.data.data ?? {};
+      const registryData = registry.data;
       const projections = registryData.projections ?? [];
       const rules = registryData.rules ?? [];
       const registryTargets = registryData.targets ?? [];
@@ -286,7 +290,7 @@ export function usePanelData(): PanelLiveData {
       if (pending.data.count !== operationCounts.actionable_operations) {
         throw new Error("pending operations count does not match operation_counts.actionable_operations");
       }
-      const activityOps: Op[] = (activity.data.data?.operations ?? []).map((op) => adaptRegistryOperation(op));
+      const activityOps: Op[] = activity.data.operations.map((op) => adaptRegistryOperation(op));
       const ops = dedupePanelOps(pendingOps, activityOps).slice(0, 30);
       const warnings = uniqueWarnings([
         ...baseWarnings,
@@ -337,9 +341,14 @@ export function usePanelData(): PanelLiveData {
   useEffect(() => {
     setState((cur) => markLoading(cur));
     runFetch();
-    const id = window.setInterval(runFetch, POLL_MS);
+    const pollWhenVisible = () => {
+      if (shouldPollPanelData(document.visibilityState)) runFetch();
+    };
+    const id = window.setInterval(pollWhenVisible, POLL_MS);
+    document.addEventListener("visibilitychange", pollWhenVisible);
     return () => {
       window.clearInterval(id);
+      document.removeEventListener("visibilitychange", pollWhenVisible);
       controllerRef.current?.abort();
       controllerRef.current = null;
     };

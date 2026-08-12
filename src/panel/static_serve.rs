@@ -44,7 +44,7 @@ pub(super) fn ensure_panel_dist() -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!(
-            "panel frontend assets are unavailable in this build; rebuild with Bun installed or run from a checkout that has panel/dist"
+            "panel frontend assets are unavailable because this is an explicit CLI-only build; rebuild with the default 'panel' feature and Bun installed"
         ))
     }
 }

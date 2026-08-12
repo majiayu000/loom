@@ -2,6 +2,8 @@
 mod install;
 #[path = "locator.rs"]
 mod locator;
+#[path = "preview_limits.rs"]
+mod preview_limits;
 #[path = "store.rs"]
 mod store;
 

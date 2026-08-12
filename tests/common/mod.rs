@@ -19,6 +19,7 @@ impl TestDir {
     pub fn new(prefix: &str) -> Self {
         let path = std::env::temp_dir().join(format!("loom-{}-{}", prefix, Uuid::new_v4()));
         fs::create_dir_all(&path).expect("create temp dir");
+        let path = fs::canonicalize(&path).expect("canonicalize temp dir");
         Self { path }
     }
 

@@ -23,6 +23,11 @@ use super::skill_cmds::shared::unstage_registry_state;
 use super::{App, CommandFailure};
 use walkdir::WalkDir;
 
+#[path = "watch_stability.rs"]
+mod watch_stability;
+
+use watch_stability::collect_stable_watch_plan;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct WatchPlan {
     skills: Vec<WatchSkillPlan>,
@@ -156,9 +161,13 @@ impl App {
             return watch_dry_run_result(plan, args);
         }
 
-        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_repo_ready()?;
-        ensure_no_unresolved_conflicts(&self.ctx)?;
+        // Repository initialization is serialized, but the debounce samples
+        // intentionally run without monopolizing the workspace lock.
+        {
+            let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+            self.ensure_write_repo_ready()?;
+            ensure_no_unresolved_conflicts(&self.ctx)?;
+        }
 
         let plan = collect_stable_watch_plan(&self.ctx, args)?;
         if plan.is_empty() {
@@ -171,6 +180,15 @@ impl App {
                     "noop": true,
                 }),
                 Meta::default(),
+            ));
+        }
+
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        ensure_no_unresolved_conflicts(&self.ctx)?;
+        if collect_watch_plan(&self.ctx, args)? != plan {
+            return Err(CommandFailure::new(
+                ErrorCode::CaptureConflict,
+                "skill files changed after autosave debounce; retry after edits settle",
             ));
         }
 
@@ -494,33 +512,6 @@ fn uninitialized_watch_roots(
     }
     roots.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(roots)
-}
-
-fn collect_stable_watch_plan(
-    ctx: &AppContext,
-    args: &WatchArgs,
-) -> std::result::Result<WatchPlan, CommandFailure> {
-    let first = collect_watch_plan(ctx, args)?;
-    if first.is_empty() || args.debounce_ms == 0 {
-        return Ok(first);
-    }
-
-    thread::sleep(Duration::from_millis(args.debounce_ms));
-    let second = collect_watch_plan(ctx, args)?;
-    if first == second {
-        return Ok(second);
-    }
-
-    thread::sleep(Duration::from_millis(args.debounce_ms));
-    let third = collect_watch_plan(ctx, args)?;
-    if second == third {
-        return Ok(third);
-    }
-
-    Err(CommandFailure::new(
-        ErrorCode::CaptureConflict,
-        "skill files changed during autosave debounce; retry after edits settle",
-    ))
 }
 
 fn collect_watch_plan(

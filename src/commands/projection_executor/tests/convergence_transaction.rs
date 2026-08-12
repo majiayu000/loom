@@ -128,6 +128,12 @@ fn rollback_preserves_concurrent_backup_change_and_is_retryable() {
     assert!(retained.join("details.txt").is_file());
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn created_rollback_preserves_concurrent_live_change_and_is_retryable() {
     let fixture = convergence_projection_fixture();
@@ -161,6 +167,12 @@ fn created_rollback_preserves_concurrent_live_change_and_is_retryable() {
     assert!(!projection_path.exists());
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn created_rollback_preserves_concurrent_empty_directory_and_is_retryable() {
     let fixture = convergence_projection_fixture();

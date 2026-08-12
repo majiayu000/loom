@@ -465,6 +465,12 @@ fn validated_staging_claim_retains_a_foreign_replacement() {
     );
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn convergence_activation_preserves_destination_created_after_prepare() {
     let fixture = convergence_projection_fixture();
@@ -501,6 +507,12 @@ fn convergence_activation_preserves_destination_created_after_prepare() {
     assert!(claim.join("details.txt").is_file());
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn convergence_prepared_projection_owns_activation_identity() {
     let fixture = convergence_projection_fixture();

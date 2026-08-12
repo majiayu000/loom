@@ -404,6 +404,10 @@ pub(super) async fn registry_skill_diff(
             .await
     {
         let _ = child.kill().await;
+        let _ = child.wait().await;
+        if let Some(handle) = stderr_handle {
+            let _ = handle.await;
+        }
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             registry_error(CMD, "GIT_DIFF_FAILED", format!("reading git output: {e}")),
@@ -412,6 +416,10 @@ pub(super) async fn registry_skill_diff(
 
     if stdout_buf.len() > MAX_DIFF_BYTES {
         let _ = child.kill().await;
+        let _ = child.wait().await;
+        if let Some(handle) = stderr_handle {
+            let _ = handle.await;
+        }
         return (
             StatusCode::BAD_REQUEST,
             registry_error(

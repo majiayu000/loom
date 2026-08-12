@@ -7,12 +7,12 @@
 
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 #[cfg(any(
     target_os = "macos",
@@ -21,12 +21,33 @@ use serde::de::DeserializeOwned;
     target_os = "android"
 ))]
 use crate::fs_util::exchange_paths_atomic;
-use crate::fs_util::{append_jsonl_raw, write_atomic};
+use crate::fs_util::{append_jsonl_raw, sync_parent_directory, write_atomic};
 
 const CAS_JOURNAL_MAGIC: &[u8; 8] = b"LOOMCAS1";
+const BATCH_JOURNAL_FILE: &str = ".loom-registry-batch-journal.json";
+
+#[derive(Deserialize, Serialize)]
+struct BatchJournal {
+    version: u8,
+    entries: Vec<BatchJournalEntry>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct BatchJournalEntry {
+    target: String,
+    contents: String,
+}
 
 struct JsonFileLock {
     _file: fs::File,
+}
+
+struct BatchTempFile(PathBuf);
+
+impl Drop for BatchTempFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 impl JsonFileLock {
@@ -98,6 +119,7 @@ where
             .context("cannot write json file without parent")?,
     )?;
     let _lock = JsonFileLock::acquire(path)?;
+    recover_json_batch(path)?;
     recover_json_cas(path)?;
     Ok(write_atomic(path, &raw)?)
 }
@@ -119,6 +141,7 @@ where
         .context("cannot replace json file without parent")?;
     fs::create_dir_all(parent)?;
     let _lock = JsonFileLock::acquire(path)?;
+    recover_json_batch(path)?;
     recover_json_cas(path)?;
     let current = fs::read(path)?;
     let current_value = serde_json::from_slice::<serde_json::Value>(&current)?;
@@ -221,17 +244,8 @@ fn finish_cas_recovery(path: &Path, journal: &Path, evidence: &Path) -> std::io:
     sync_parent(path)
 }
 
-#[cfg(unix)]
 fn sync_parent(path: &Path) -> std::io::Result<()> {
-    fs::File::open(path.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "JSON path has no parent")
-    })?)?
-    .sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_parent(_path: &Path) -> std::io::Result<()> {
-    Ok(())
+    sync_parent_directory(path)
 }
 
 #[cfg(any(
@@ -313,6 +327,15 @@ fn compare_exchange_json_candidate(path: &Path, candidate: &Path) -> std::io::Re
 }
 
 #[cfg(windows)]
+fn read_optional_evidence(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(raw) => Ok(Some(raw)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
 fn recover_json_cas_platform(
     path: &Path,
     journal: &Path,
@@ -322,8 +345,8 @@ fn recover_json_cas_platform(
     let candidate = path.with_extension("loom-cas-candidate");
     let backup = path.with_extension("loom-cas-backup");
     let live = fs::read(path)?;
-    let staged = fs::read(&candidate).ok();
-    let displaced = fs::read(&backup).ok();
+    let staged = read_optional_evidence(&candidate)?;
+    let displaced = read_optional_evidence(&backup)?;
     match (live.as_slice(), staged.as_deref(), displaced.as_deref()) {
         (live, Some(staged), None) if live == expected && staged == replacement => {
             record_cas_decision(path, journal, expected, replacement, CasRecovery::Aborted)
@@ -359,14 +382,14 @@ fn finish_cas_decision(
     } else {
         (&candidate, replacement)
     };
-    match fs::read(evidence) {
-        Ok(raw) if raw != owned => {
+    match read_optional_evidence(evidence)? {
+        Some(raw) if raw != owned => {
             return Err(std::io::Error::other("unknown JSON CAS evidence retained"));
         }
         _ => {}
     }
     let unexpected = if state == 1 { &candidate } else { &backup };
-    if unexpected.exists() {
+    if unexpected.try_exists()? {
         return Err(std::io::Error::other(
             "unexpected JSON CAS evidence retained",
         ));
@@ -495,11 +518,14 @@ pub(super) fn write_atomic_batch(files: &[(&Path, &str)]) -> Result<()> {
     } else {
         None
     };
+    if let Some((path, _)) = files.first() {
+        recover_json_batch(path)?;
+    }
     for (path, _) in files {
         recover_json_cas(path)?;
     }
 
-    let mut staged: Vec<(PathBuf, &Path)> = Vec::with_capacity(files.len());
+    let mut staged: Vec<(BatchTempFile, &Path)> = Vec::with_capacity(files.len());
 
     // Phase 1: write all temp files
     for &(target, contents) in files {
@@ -519,21 +545,99 @@ pub(super) fn write_atomic_batch(files: &[(&Path, &str)]) -> Result<()> {
             .with_context(|| format!("failed to create temp file {}", tmp_path.display()))?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
-        staged.push((tmp_path, target));
+        staged.push((BatchTempFile(tmp_path), target));
     }
 
-    // Phase 2: rename all (minimal crash window)
+    let journal_path = files
+        .first()
+        .and_then(|(path, _)| batch_journal_path(path))
+        .context("batch journal requires at least one file")?;
+    let registry_dir = journal_path
+        .parent()
+        .context("batch journal has no registry directory")?;
+    let entries = files
+        .iter()
+        .map(|(target, contents)| {
+            let relative = target.strip_prefix(registry_dir).with_context(|| {
+                format!("batch target is outside registry: {}", target.display())
+            })?;
+            validate_batch_relative_path(relative)?;
+            Ok(BatchJournalEntry {
+                target: relative.to_string_lossy().into_owned(),
+                contents: (*contents).to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let journal = serde_json::to_string(&BatchJournal {
+        version: 1,
+        entries,
+    })?;
+    write_atomic(&journal_path, &(journal + "\n"))?;
+    sync_parent_directory(&journal_path)?;
+
+    // Phase 2: rename all. The durable journal lets the next lock holder
+    // finish every replacement if the process stops between renames.
     for (tmp, target) in &staged {
-        if let Err(err) = crate::fs_util::rename_atomic(tmp, target) {
-            for (remaining, _) in &staged {
-                let _ = fs::remove_file(remaining);
-            }
+        if let Err(err) = crate::fs_util::rename_atomic(&tmp.0, target) {
             return Err(err)
                 .with_context(|| format!("batch rename failed for {}", target.display()));
         }
     }
 
+    fs::remove_file(&journal_path)?;
+    sync_parent_directory(&journal_path)?;
+
     drop(lock);
+    Ok(())
+}
+
+fn batch_journal_path(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == "registry"))
+        .map(|registry_dir| registry_dir.join(BATCH_JOURNAL_FILE))
+}
+
+fn validate_batch_relative_path(path: &Path) -> Result<()> {
+    if !matches!(
+        path.to_str(),
+        Some("bindings.json" | "rules.json" | "projections.json")
+    ) {
+        return Err(anyhow!("invalid registry batch target: {}", path.display()));
+    }
+    Ok(())
+}
+
+fn recover_json_batch(path: &Path) -> Result<()> {
+    let Some(journal_path) = batch_journal_path(path) else {
+        return Ok(());
+    };
+    let raw = match fs::read_to_string(&journal_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let journal: BatchJournal = serde_json::from_str(&raw).with_context(|| {
+        format!(
+            "failed to parse registry batch journal {}",
+            journal_path.display()
+        )
+    })?;
+    if journal.version != 1 || journal.entries.is_empty() {
+        return Err(anyhow!(
+            "invalid registry batch journal {}",
+            journal_path.display()
+        ));
+    }
+    let registry_dir = journal_path
+        .parent()
+        .context("batch journal has no registry directory")?;
+    for entry in journal.entries {
+        let relative = Path::new(&entry.target);
+        validate_batch_relative_path(relative)?;
+        write_atomic(&registry_dir.join(relative), &entry.contents)?;
+    }
+    fs::remove_file(&journal_path)?;
+    sync_parent_directory(&journal_path)?;
     Ok(())
 }
 
@@ -543,6 +647,9 @@ where
 {
     let raw = serde_json::to_string(value)
         .with_context(|| format!("failed to encode registry jsonl line {}", path.display()))?;
+    let _lock = JsonFileLock::acquire(path)?;
+    recover_json_batch(path)?;
+    repair_torn_jsonl_tail(path)?;
     append_jsonl_raw(path, &raw)
         .with_context(|| format!("failed to append registry jsonl file {}", path.display()))
 }
@@ -560,6 +667,8 @@ where
         );
         raw.push('\n');
     }
+    let _lock = JsonFileLock::acquire(path)?;
+    recover_json_batch(path)?;
     Ok(write_atomic(path, &raw)?)
 }
 
@@ -568,6 +677,7 @@ where
     T: DeserializeOwned,
 {
     let _lock = JsonFileLock::acquire(path)?;
+    recover_json_batch(path)?;
     recover_json_cas(path)?;
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read registry json file {}", path.display()))?;
@@ -579,219 +689,75 @@ pub(super) fn read_json_lines<T>(path: &Path) -> Result<Vec<T>>
 where
     T: DeserializeOwned,
 {
-    let file = fs::File::open(path)
-        .with_context(|| format!("failed to open registry jsonl file {}", path.display()))?;
-    if file
-        .metadata()
-        .with_context(|| format!("failed to stat registry jsonl file {}", path.display()))?
-        .len()
-        == 0
-    {
+    let _lock = JsonFileLock::acquire(path)?;
+    recover_json_batch(path)?;
+    let raw = fs::read(path)
+        .with_context(|| format!("failed to read registry jsonl file {}", path.display()))?;
+    if raw.is_empty() {
         return Ok(Vec::new());
     }
-    let reader = BufReader::new(file);
     let mut items = Vec::new();
-    for (index, line) in reader.lines().enumerate() {
-        let line = line.with_context(|| {
-            format!("failed to read line {} from {}", index + 1, path.display())
-        })?;
+    let terminated = raw.ends_with(b"\n");
+    let lines = raw.split(|byte| *byte == b'\n').collect::<Vec<_>>();
+    for (index, line) in lines.iter().enumerate() {
+        let is_torn_tail = index + 1 == lines.len() && !terminated;
+        let line = match std::str::from_utf8(line) {
+            Ok(line) => line,
+            Err(_) if is_torn_tail => break,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "registry jsonl line {} is not UTF-8 in {}",
+                        index + 1,
+                        path.display()
+                    )
+                });
+            }
+        };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let item = serde_json::from_str(trimmed).with_context(|| {
-            format!(
-                "failed to parse line {} from registry jsonl file {}",
-                index + 1,
-                path.display()
-            )
-        })?;
-        items.push(item);
+        match serde_json::from_str(trimmed) {
+            Ok(item) => items.push(item),
+            Err(_) if is_torn_tail => break,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to parse line {} from registry jsonl file {}",
+                        index + 1,
+                        path.display()
+                    )
+                });
+            }
+        }
     }
     Ok(items)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::{Value, json};
-
-    #[test]
-    fn json_compare_exchange_installs_only_over_the_reviewed_value() {
-        let root = std::env::temp_dir().join(format!("loom-json-cas-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).expect("create CAS fixture");
-        let path = root.join("state.json");
-        let reviewed = json!({"value": "reviewed"});
-        let replacement = json!({"value": "replacement"});
-        let external = json!({"value": "external"});
-        write_json_file(&path, &reviewed).expect("write reviewed value");
-
-        assert!(compare_exchange_json_file(&path, &reviewed, &replacement).expect("matching CAS"));
-        assert_eq!(read_json_file::<Value>(&path).unwrap(), replacement);
-
-        let candidate = path.with_extension("loom-cas-candidate");
-        let journal = path.with_extension("loom-cas-journal");
-        assert!(
-            compare_exchange_json_file(&path, &replacement, &replacement)
-                .expect("semantic no-op CAS")
-        );
-        assert_eq!(read_json_file::<Value>(&path).unwrap(), replacement);
-        assert!(!candidate.exists());
-        assert!(!journal.exists());
-
-        fs::write(&candidate, b"untracked\n").expect("write stray CAS candidate");
-        assert!(
-            compare_exchange_json_file(&path, &replacement, &replacement).is_err(),
-            "semantic no-op must not hide untracked CAS evidence"
-        );
-        assert!(candidate.exists());
-        fs::remove_file(&candidate).expect("remove stray candidate");
-
-        write_json_file(&path, &external).expect("write external value");
-        assert!(
-            !compare_exchange_json_file(&path, &reviewed, &replacement).expect("mismatching CAS")
-        );
-        assert_eq!(read_json_file::<Value>(&path).unwrap(), external);
-        fs::remove_dir_all(root).expect("remove CAS fixture");
+fn repair_torn_jsonl_tail(path: &Path) -> Result<()> {
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if raw.is_empty() || raw.ends_with(b"\n") {
+        return Ok(());
     }
-
-    #[cfg(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "android"
-    ))]
-    #[test]
-    fn cas_recovery_handles_each_unix_crash_boundary() {
-        let root =
-            std::env::temp_dir().join(format!("loom-json-cas-restore-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).expect("create CAS restore fixture");
-        let path = root.join("state.json");
-        let expected = serialize_json_file(&json!({"value": "reviewed"})).unwrap();
-        let replacement = serialize_json_file(&json!({"value": "replacement"})).unwrap();
-        let external = serialize_json_file(&json!({"value": "external"})).unwrap();
-        let candidate = path.with_extension("loom-cas-candidate");
-        let journal = path.with_extension("loom-cas-journal");
-
-        let stage = |live: &str, staged: Option<&str>| {
-            fs::write(&path, live).unwrap();
-            fs::write(
-                &journal,
-                encode_cas_journal(0, expected.as_bytes(), replacement.as_bytes()),
-            )
-            .unwrap();
-            if let Some(staged) = staged {
-                fs::write(&candidate, staged).unwrap();
-            }
-        };
-
-        stage(&expected, Some(&replacement));
-        assert_eq!(
-            read_json_file::<Value>(&path).unwrap(),
-            json!({"value": "reviewed"})
-        );
-        assert!(!journal.exists() && !candidate.exists());
-
-        stage(&replacement, Some(&expected));
-        assert_eq!(
-            read_json_file::<Value>(&path).unwrap(),
-            json!({"value": "replacement"})
-        );
-        assert!(!journal.exists() && !candidate.exists());
-
-        stage(&replacement, Some(&external));
-        let retained_journal = fs::read(&journal).unwrap();
-        let error = read_json_file::<Value>(&path).expect_err("unknown candidate must fail closed");
-        assert!(error.to_string().contains("ambiguous JSON CAS retained"));
-        assert_eq!(fs::read(&path).unwrap(), replacement.as_bytes());
-        assert_eq!(fs::read(&candidate).unwrap(), external.as_bytes());
-        assert_eq!(fs::read(&journal).unwrap(), retained_journal);
-        assert!(read_json_file::<Value>(&path).is_err());
-        assert_eq!(fs::read(&path).unwrap(), replacement.as_bytes());
-        assert_eq!(fs::read(&candidate).unwrap(), external.as_bytes());
-        assert_eq!(fs::read(&journal).unwrap(), retained_journal);
-
-        fs::remove_file(&candidate).unwrap();
-        fs::remove_file(&journal).unwrap();
-
-        stage(&external, Some(&expected));
-        let error =
-            read_json_file::<Value>(&path).expect_err("ambiguous evidence must fail closed");
-        assert!(error.to_string().contains("ambiguous JSON CAS retained"));
-        assert_eq!(fs::read(&path).unwrap(), external.as_bytes());
-        assert_eq!(fs::read(&candidate).unwrap(), expected.as_bytes());
-        assert!(journal.exists());
-
-        fs::remove_file(&candidate).unwrap();
-        fs::write(
-            &journal,
-            encode_cas_journal(1, expected.as_bytes(), replacement.as_bytes()),
-        )
-        .unwrap();
-        fs::write(&path, &replacement).unwrap();
-        assert!(read_json_file::<Value>(&path).is_ok());
-        assert!(!journal.exists());
-
-        fs::write(
-            &journal,
-            encode_cas_journal(2, expected.as_bytes(), replacement.as_bytes()),
-        )
-        .unwrap();
-        fs::write(&path, &external).unwrap();
-        assert!(read_json_file::<Value>(&path).is_ok());
-        assert!(!journal.exists());
-        fs::remove_dir_all(root).expect("remove CAS restore fixture");
+    let tail_start = raw
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    let tail = &raw[tail_start..];
+    let keep_tail = serde_json::from_slice::<serde_json::Value>(tail).is_ok();
+    let mut repaired = raw[..if keep_tail { raw.len() } else { tail_start }].to_vec();
+    if keep_tail {
+        repaired.push(b'\n');
     }
-
-    #[cfg(windows)]
-    #[test]
-    fn cas_recovery_retains_untrusted_windows_backup() {
-        let root =
-            std::env::temp_dir().join(format!("loom-json-cas-restore-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).expect("create CAS restore fixture");
-        let path = root.join("state.json");
-        let expected = serialize_json_file(&json!({"value": "reviewed"})).unwrap();
-        let replacement = serialize_json_file(&json!({"value": "replacement"})).unwrap();
-        let external = serialize_json_file(&json!({"value": "external"})).unwrap();
-        let candidate = path.with_extension("loom-cas-candidate");
-        let backup = path.with_extension("loom-cas-backup");
-        let journal = path.with_extension("loom-cas-journal");
-
-        fs::write(&path, &replacement).unwrap();
-        fs::write(&backup, &external).unwrap();
-        fs::write(
-            &journal,
-            encode_cas_journal(0, expected.as_bytes(), replacement.as_bytes()),
-        )
-        .unwrap();
-        let retained_journal = fs::read(&journal).unwrap();
-
-        for _ in 0..2 {
-            let error =
-                read_json_file::<Value>(&path).expect_err("untrusted backup must fail closed");
-            assert!(error.to_string().contains("ambiguous JSON CAS retained"));
-            assert_eq!(fs::read(&path).unwrap(), replacement.as_bytes());
-            assert!(!candidate.exists());
-            assert_eq!(fs::read(&backup).unwrap(), external.as_bytes());
-            assert_eq!(fs::read(&journal).unwrap(), retained_journal);
-        }
-
-        fs::remove_dir_all(root).expect("remove CAS restore fixture");
-    }
-
-    #[test]
-    fn corrupt_cas_journal_is_retained_and_blocks_reads() {
-        let root = std::env::temp_dir().join(format!("loom-json-cas-bad-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("state.json");
-        fs::write(&path, "{}\n").unwrap();
-        let journal = path.with_extension("loom-cas-journal");
-        fs::write(&journal, b"partial").unwrap();
-
-        let error = read_json_file::<Value>(&path).expect_err("corrupt journal must fail closed");
-        assert!(error.to_string().contains("invalid JSON CAS journal"));
-        assert_eq!(fs::read(&path).unwrap(), b"{}\n");
-        assert_eq!(fs::read(&journal).unwrap(), b"partial");
-        fs::remove_dir_all(root).unwrap();
-    }
+    crate::fs_util::write_atomic_bytes(path, &repaired)?;
+    Ok(())
 }
+
+#[cfg(test)]
+#[path = "json_io_tests.rs"]
+mod tests;

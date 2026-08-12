@@ -19,11 +19,11 @@ const FRONTEND_INPUT_FILES: &[&str] = &[
 ];
 
 const FRONTEND_INPUT_DIRS: &[&str] = &["public", "src"];
+const EXPECTED_BUN_VERSION: &str = "1.3.14";
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let panel_dir = manifest_dir.join("panel");
-    let source_dist = panel_dir.join("dist");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("out dir"));
     let embedded_dist = out_dir.join("panel-dist");
 
@@ -36,28 +36,36 @@ fn main() {
     println!("cargo:rerun-if-changed=panel/src");
     println!("cargo:rerun-if-changed=panel/vite.config.ts");
     println!("cargo:rerun-if-changed=panel/tsconfig.json");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_PANEL");
 
     if embedded_dist.exists() {
         fs::remove_dir_all(&embedded_dist).expect("remove previous embedded panel dir");
     }
     fs::create_dir_all(&embedded_dist).expect("create embedded panel dir");
 
-    if panel_dist_is_fresh(&panel_dir, &source_dist) {
-        compress_dir_recursive(&source_dist, &embedded_dist);
-        println!("cargo:rustc-env=LOOM_PANEL_EMBED_STATUS=ready");
-    } else if let Some(built_dist) = maybe_build_panel_in_out_dir(&panel_dir, &out_dir) {
+    if env::var_os("CARGO_FEATURE_PANEL").is_none() {
+        println!("cargo:rustc-env=LOOM_PANEL_EMBED_STATUS=disabled");
+        return;
+    }
+
+    if let Some(built_dist) = maybe_build_panel_in_out_dir(&panel_dir, &out_dir) {
         compress_dir_recursive(&built_dist, &embedded_dist);
         println!("cargo:rustc-env=LOOM_PANEL_EMBED_STATUS=ready");
     } else {
-        println!(
-            "cargo:warning=panel frontend assets missing or stale; 'loom panel' will be unavailable unless 'bun run build' succeeds during build"
+        panic!(
+            "the default 'panel' feature requires Bun {EXPECTED_BUN_VERSION} and a successful fresh Panel build; install the pinned Bun version, or explicitly build the CLI-only variant with '--no-default-features'"
         );
-        println!("cargo:rustc-env=LOOM_PANEL_EMBED_STATUS=missing");
     }
 }
 
 fn maybe_build_panel_in_out_dir(panel_dir: &Path, out_dir: &Path) -> Option<PathBuf> {
     let bun = if cfg!(windows) { "bun.exe" } else { "bun" };
+    let bun_version = Command::new(bun).arg("--version").output().ok()?;
+    if !bun_version.status.success()
+        || String::from_utf8_lossy(&bun_version.stdout).trim() != EXPECTED_BUN_VERSION
+    {
+        return None;
+    }
     let build_dir = out_dir.join("panel-build");
     if build_dir.exists() {
         fs::remove_dir_all(&build_dir).ok()?;

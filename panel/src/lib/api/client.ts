@@ -6,6 +6,7 @@ import type {
   ConvergenceStatusPayload,
   RemotePayload,
   RegistryPayload,
+  RegistryStatusData,
 } from "../../types";
 export type { RegistryOperationRecord } from "../../types";
 import type { RegistryBinding } from "../../generated/RegistryBinding";
@@ -27,6 +28,8 @@ export interface OpsPayload {
   };
   error?: { code?: string; message?: string };
 }
+
+export type OpsData = NonNullable<OpsPayload["data"]>;
 
 export interface OpsHistoryDiagnosePayload {
   ok: boolean;
@@ -225,7 +228,7 @@ function parseRemoteStatusResponse(path: string, body: unknown): RemoteStatusRes
         : `GET ${path} returned error-shaped payload`;
     throw new ApiError(path, 200, message, errorNextActions(body.error.next_actions));
   }
-  if (!isRecord(body.remote)) {
+  if ("remote" in body && body.remote !== undefined && body.remote !== null && !isRecord(body.remote)) {
     throw new ApiError(path, 200, `GET ${path} returned malformed remote status payload`);
   }
   return body as RemoteStatusResponse;
@@ -281,11 +284,6 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 
 async function getJsonData<T>(path: string, signal?: AbortSignal): Promise<T> {
   return unwrapReadData<T>(path, await getJson<unknown>(path, signal));
-}
-
-async function getJsonWithWarnings<T>(path: string, signal?: AbortSignal): Promise<ReadResult<T>> {
-  const body = await getJson<unknown>(path, signal);
-  return { data: body as T, warnings: uniqueWarnings([...envelopeWarnings(body), ...payloadWarnings(body)]) };
 }
 
 async function getJsonDataWithWarnings<T>(path: string, signal?: AbortSignal): Promise<ReadResult<T>> {
@@ -360,6 +358,7 @@ export interface UseSkillBody {
   profile?: string;
   method?: "symlink" | "copy" | "materialize";
   target_root?: string;
+  adopt?: boolean;
   apply?: boolean;
 }
 
@@ -678,7 +677,7 @@ export const api = {
     getJsonDataWithWarnings<SkillsPayload>("/api/v1/skills", signal),
   registryStatus: (signal?: AbortSignal) => getJson<RegistryPayload>("/api/v1/registry/status", signal),
   registryStatusWithWarnings: (signal?: AbortSignal) =>
-    getJsonWithWarnings<RegistryPayload>("/api/v1/registry/status", signal),
+    getJsonDataWithWarnings<RegistryStatusData>("/api/v1/registry/status", signal),
   workspaceDoctor: (signal?: AbortSignal) =>
     getJsonData<DoctorPayload>("/api/v1/workspace/doctor", signal),
   telemetryReport: (signal?: AbortSignal) =>
@@ -699,7 +698,7 @@ export const api = {
     if (typeof options?.limit === "number") params.set("limit", String(options.limit));
     if (typeof options?.offset === "number") params.set("offset", String(options.offset));
     const qs = params.size > 0 ? `?${params.toString()}` : "";
-    return getJsonWithWarnings<OpsPayload>(`/api/v1/ops${qs}`, signal);
+    return getJsonDataWithWarnings<OpsData>(`/api/v1/ops${qs}`, signal);
   },
   bindingShow: (id: string, signal?: AbortSignal) =>
     getJson<BindingShowPayload>(`/api/v1/bindings/${encodeURIComponent(id)}`, signal),

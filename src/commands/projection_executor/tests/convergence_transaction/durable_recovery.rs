@@ -185,6 +185,12 @@ fn persisted_exchanged_rollback_pending_survives_swap_and_delete() {
     assert!(!projection_path.join("details.txt").exists());
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn persisted_created_rollback_pending_survives_rename_and_delete() {
     let fixture = convergence_projection_fixture();
@@ -215,6 +221,12 @@ fn persisted_created_rollback_pending_survives_rename_and_delete() {
     assert!(!projection_path.exists());
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn created_finalize_rejects_replaced_live_projection() {
     let fixture = convergence_projection_fixture();
@@ -275,6 +287,12 @@ fn prepared_existing_activation_recovers_after_exchange_before_artifact() {
     assert!(!projection_path.join("details.txt").exists());
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn prepared_created_activation_recovers_after_rename_before_artifact() {
     let fixture = convergence_projection_fixture();
@@ -301,6 +319,12 @@ fn prepared_created_activation_recovers_after_rename_before_artifact() {
     assert!(!projection_path.exists());
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn prepared_activation_rejects_replaced_target_after_mutation() {
     let fixture = convergence_projection_fixture();

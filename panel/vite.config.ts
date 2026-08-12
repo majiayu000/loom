@@ -19,6 +19,7 @@ export default defineConfig({
     },
   },
   build: {
+    manifest: true,
     cssCodeSplit: true,
     modulePreload: false,
     target: "esnext",
@@ -33,5 +34,13 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    coverage: {
+      thresholds: {
+        statements: 75,
+        branches: 70,
+        functions: 72,
+        lines: 80,
+      },
+    },
   },
 });

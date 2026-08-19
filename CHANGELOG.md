@@ -5,6 +5,38 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+## [0.1.7] - 2026-08-19
+
+### Added
+
+- The Panel can now adopt existing skills from the use flow and exposes safer,
+  accessible projection filtering and orphan cleanup controls.
+- Release archives are reproducible, exercise the packaged Panel before
+  publication, and verify the public installer after the GitHub release is live.
+
+### Changed
+
+- State persistence now uses stricter compare-and-swap checks, durable batch
+  journals, serialized JSONL writes, torn-tail repair, and crash recovery for
+  schema renames.
+- CI now verifies Windows library tests, macOS end-to-end behavior, Panel
+  coverage, embedded assets, and packaged release contracts.
+- Default source builds now require Bun 1.3.14 to rebuild the embedded Panel;
+  CLI-only builds must opt out with `--no-default-features`.
+- Updated `thiserror`, `clap`, `@testing-library/user-event`, Biome, and Vite.
+
+### Fixed
+
+- Live same-host locks on Unix are no longer reaped by age.
+- Managed targets now reject missing, redirected, symlinked, or multiply-owned
+  roots during activation, deactivation, and reconciliation; `workspace doctor`
+  reports the corresponding remediation checks.
+- Panel APIs now enforce preview resource limits, report ephemeral ports
+  correctly, pause polling while hidden, and preserve truthful unknown and
+  actionable states.
+- Cross-platform tests now normalize macOS private-path aliases and avoid
+  platform-specific release size assumptions.
+
 ## [0.1.6] - 2026-08-06
 
 ### Changed
@@ -161,6 +193,7 @@ archives, checksums, and provenance details on GitHub Releases.
 
 - Initial public release archives for Loom.
 
+[0.1.7]: https://github.com/majiayu000/loom/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/majiayu000/loom/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/majiayu000/loom/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/majiayu000/loom/compare/v0.1.3...v0.1.4

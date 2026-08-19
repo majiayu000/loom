@@ -5,6 +5,14 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+## [0.1.8] - 2026-08-20
+
+### Changed
+
+- Updated `uuid` to 1.24.1, Biome to 2.5.8,
+  `@testing-library/jest-dom` to 7.0.1, and
+  `@testing-library/user-event` to 14.6.4.
+
 ## [0.1.7] - 2026-08-19
 
 ### Added
@@ -193,6 +201,7 @@ archives, checksums, and provenance details on GitHub Releases.
 
 - Initial public release archives for Loom.
 
+[0.1.8]: https://github.com/majiayu000/loom/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/majiayu000/loom/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/majiayu000/loom/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/majiayu000/loom/compare/v0.1.4...v0.1.5

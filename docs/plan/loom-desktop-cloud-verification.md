@@ -20,9 +20,9 @@
 | Cloud | 临时独立 PostgreSQL，5 项测试通过；包括迁移、邀请、租户隔离、并发发布、不可变内容、条件推荐、真实签名 JWT 与密钥轮换。`cloud-tests.log` |
 | Auth hook | 临时数据库模拟 Supabase Auth 表与角色，验证已确认邮箱、未确认邮箱、邮箱不匹配和函数执行权限。`hook-check.log`。不等于真实托管 OTP 验收 |
 | Native | 10 项测试通过；包括路径/参数边界、包摘要、链接和 FIFO 拒绝、非 UTF-8 名称拒绝。`desktop-tests.log` |
-| Frontend | 团队流程测试、TypeScript 检查与生产构建；最终输出见 `frontend-tests.log`、`frontend-typecheck.log`、`frontend-build.log` |
+| Frontend | 全量前端 217 项测试通过，团队部分 24 项；TypeScript 检查、lint 与生产构建通过。全库 lint 有 200 条既有警告，团队新增目录单独检查无警告。`frontend-final.log` |
 | Browser | 登录页与详情页在桌面和窄屏检查；详情使用明确标注的测试数据，不能当作真实云端账户联调证据 |
-| Engine | 首装、同源更新、多目标更新、本地修改拒绝和中断恢复由团队引擎集成测试验证，最终测试输出随线程记录收集 |
+| Engine | 团队安装 11 项、命令契约 32 项；inspect 23、provenance 12、workspace init 18、convergence 160、input review 16、org policy 3、provider 2 项回归通过；新增 archive/snapshot/cleanup 检查通过。工作线程 lint、fmt、模块上限通过，35 条既有接近阈值提示。整合输出 `engine-final.log`，工作线程分组日志 `worker-engine-*.log` |
 
 原生文件读取审查发现的链接/FIFO 竞态和有损文件名问题已修复，并经只读复核关闭。云端审查发现的条件更新 header、JWT nbf 和密钥刷新问题已修复。一次非 UTF-8 文件测试受到 APFS 文件名限制而失败，改为直接测试实际收集入口使用的 UTF-8 边界，保留拒绝断言。
 
@@ -35,3 +35,5 @@
 尚未验收：真实托管 OTP/Keychain 全链路、干净机器安装、Windows、各 Agent 的真实新会话加载、备份恢复演练、限流部署及三团队内测。归档技能仅允许预览恢复已有同来源安装，原生检查本机身份并要求冻结计划代表更新；首次安装被拒绝。手动选择历史版本会建立固定版本计划。源码编译及模拟浏览器数据不替代上述验收。
 
 认证、凭证和进程调用在公开发布前仍需人工审阅。新增 CI 工作流尚未推送，不能宣称远端 CI 已通过。
+
+整合构建发现 `build.rs` 未复制新增 `team.html`，已补齐复制及重新构建触发。当前主目录有 Git 忽略的旧 `skills/loom/SKILL.md`，使严格命令 inventory 检查发现未登记的本机命令面；保留此用户本地文件，最终契约验收使用 `/tmp/loom-team-final-20260908` 干净 checkout，不修改检查规则。

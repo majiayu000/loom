@@ -14,6 +14,7 @@ const FRONTEND_INPUT_FILES: &[&str] = &[
     "package-lock.json",
     "index.html",
     "landing.html",
+    "team.html",
     "vite.config.ts",
     "tsconfig.json",
 ];
@@ -32,6 +33,7 @@ fn main() {
     println!("cargo:rerun-if-changed=panel/package-lock.json");
     println!("cargo:rerun-if-changed=panel/index.html");
     println!("cargo:rerun-if-changed=panel/landing.html");
+    println!("cargo:rerun-if-changed=panel/team.html");
     println!("cargo:rerun-if-changed=panel/public");
     println!("cargo:rerun-if-changed=panel/src");
     println!("cargo:rerun-if-changed=panel/vite.config.ts");

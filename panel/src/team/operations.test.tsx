@@ -47,6 +47,85 @@ const run = async (fn: () => Promise<void>) => {
   }
 };
 describe("native team workflows", () => {
+  it("imports an explicitly chosen directory only after preview confirmation and refreshes inventory", async () => {
+    let reads = 0;
+    vi.mocked(client.native).mockImplementation(async (command) => {
+      if (command === "local_skills")
+        return {
+          ok: true,
+          data: {
+            registry_available: true,
+            skills: [
+              {
+                skill_id: "my-review",
+                source_status: ++reads === 1 ? "missing" : "present",
+                description: "Local review",
+              },
+            ],
+          },
+        };
+      if (command === "choose_directory") return "/tmp/existing-skill";
+      if (command === "preview_install")
+        return {
+          ok: true,
+          data: {
+            dry_run: true,
+            skill: "my-review",
+            would_write: { skill_dir: "skills/my-review" },
+          },
+        };
+      return { ok: true, data: {} };
+    });
+    render(<LocalSkills run={run} />);
+    fireEvent.change(
+      screen.getByLabelText("Registry 目录（留空使用 Loom 默认目录）"),
+      { target: { value: "/tmp/registry" } },
+    );
+    fireEvent.click(screen.getByText("读取本机技能"));
+    expect(await screen.findByText(/尚未导入当前仓库/)).toBeInTheDocument();
+    expect(screen.getByText("预览目录导入")).toBeDisabled();
+    fireEvent.click(screen.getByText("选择技能目录"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("已有技能目录")).toHaveValue(
+        "/tmp/existing-skill",
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("导入后的本机名称"), {
+      target: { value: "my-review" },
+    });
+    fireEvent.click(screen.getByText("预览目录导入"));
+    expect(await screen.findByText("确认导入目录")).toBeEnabled();
+    expect(client.native).toHaveBeenCalledWith("preview_install", {
+      root: "/tmp/registry",
+      source: "/tmp/existing-skill",
+      name: "my-review",
+    });
+    expect(client.native).not.toHaveBeenCalledWith(
+      "apply_install",
+      expect.anything(),
+    );
+    fireEvent.click(screen.getByText("确认导入目录"));
+    expect(
+      await screen.findByText("已导入 my-review 到当前仓库。"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(reads).toBe(2));
+    expect(client.native).toHaveBeenCalledWith("apply_install", {
+      root: "/tmp/registry",
+      source: "/tmp/existing-skill",
+      name: "my-review",
+    });
+    expect(screen.queryByText(/尚未导入当前仓库/)).not.toBeInTheDocument();
+    expect(
+      vi.mocked(client.native).mock.calls.map(([command]) => command),
+    ).toEqual([
+      "local_skills",
+      "choose_directory",
+      "preview_install",
+      "apply_install",
+      "local_skills",
+    ]);
+  });
+
   it("labels archived recovery and never claims a blocked first install succeeded", async () => {
     vi.mocked(client.native).mockResolvedValue({
       ok: false,

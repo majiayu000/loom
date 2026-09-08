@@ -348,7 +348,11 @@ export function TeamApp() {
                   保存连接设置
                 </button>
               </details>
-              <small>网页登录状态仅保留在当前页面，刷新后需重新登录。</small>
+              <small>
+                {isDesktop()
+                  ? "登录信息由本机系统凭证库保存。"
+                  : "网页登录状态仅保留在当前页面，刷新后需重新登录。"}
+              </small>
             </form>
           </section>
         ) : !team ? (

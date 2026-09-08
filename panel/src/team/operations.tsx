@@ -416,6 +416,12 @@ export function LocalSkills({ run }: { run: Runner }) {
   const [inspection, setInspection] = useState<Record<string, unknown> | null>(
     null,
   );
+  const [source, setSource] = useState("");
+  const [name, setName] = useState("");
+  const [importPlan, setImportPlan] = useState<Record<string, unknown> | null>(
+    null,
+  );
+  const [importNotice, setImportNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const act = (fn: () => Promise<void>) =>
     run(async () => {
@@ -453,6 +459,8 @@ export function LocalSkills({ run }: { run: Runner }) {
               value={root}
               onChange={(e) => {
                 setRoot(e.target.value);
+                setImportPlan(null);
+                setImportNotice("");
                 setResult(null);
                 setSelected(null);
                 setInspection(null);
@@ -484,6 +492,110 @@ export function LocalSkills({ run }: { run: Runner }) {
           >
             初始化 Registry
           </button>
+          <section className="activation">
+            <h2>导入已有技能目录</h2>
+            <p className="subtle">
+              选择包含 SKILL.md
+              的完整目录，导入当前仓库。导入后由你决定是否激活到项目。
+            </p>
+            <label>
+              已有技能目录
+              <input value={source} readOnly placeholder="选择要导入的目录" />
+            </label>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  const path = await native<string | null>("choose_directory");
+                  if (path) {
+                    setSource(path);
+                    setImportPlan(null);
+                    setImportNotice("");
+                  }
+                })
+              }
+            >
+              选择技能目录
+            </button>
+            <label>
+              导入后的本机名称
+              <input
+                required
+                value={name}
+                disabled={busy}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setImportPlan(null);
+                  setImportNotice("");
+                }}
+                placeholder="例如：code-review"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={busy || !source || !name.trim()}
+              onClick={() =>
+                void act(async () => {
+                  setImportPlan(null);
+                  setImportNotice("");
+                  setImportPlan(
+                    requireSuccess(
+                      await native<Envelope>("preview_install", {
+                        root: root || null,
+                        source,
+                        name,
+                      }),
+                    ),
+                  );
+                })
+              }
+            >
+              预览目录导入
+            </button>
+            {importPlan && (
+              <div className="team-notice">
+                <h3>目录导入预览</h3>
+                <p>本机名称：{name}</p>
+                <p>来源：{source}</p>
+                <p>目标仓库：{root || "Loom 默认 registry"}</p>
+                <p>
+                  写入位置：
+                  {String(
+                    (
+                      importPlan.would_write as
+                        | { skill_dir?: string }
+                        | undefined
+                    )?.skill_dir ?? "请查看预览详情",
+                  )}
+                </p>
+                <p>执行时引擎会重新检查目录和写入条件。</p>
+                <Evidence value={importPlan} />
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(async () => {
+                      requireSuccess(
+                        await native<Envelope>("apply_install", {
+                          root: root || null,
+                          source,
+                          name,
+                        }),
+                      );
+                      setImportPlan(null);
+                      setImportNotice(`已导入 ${name} 到当前仓库。`);
+                      await read();
+                    })
+                  }
+                >
+                  确认导入目录
+                </button>
+              </div>
+            )}
+            {importNotice && <p role="status">{importNotice}</p>}
+          </section>
           {result && (
             <>
               <p>
@@ -514,7 +626,10 @@ export function LocalSkills({ run }: { run: Runner }) {
                   <h3>{s.skill_id}</h3>
                   <p>{s.description}</p>
                   <small>
-                    {s.source_status} · {s.source_path}
+                    {s.source_status === "missing"
+                      ? "尚未导入当前仓库"
+                      : s.source_status}{" "}
+                    · {s.source_path}
                   </small>
                 </button>
               ))}
@@ -525,12 +640,18 @@ export function LocalSkills({ run }: { run: Runner }) {
               <h2>{selected.skill_id}</h2>
               <p>{selected.description}</p>
               {inspection && <Evidence value={inspection} />}
-              <Activation
-                key={`${root}:${selected.skill_id}`}
-                root={root}
-                skill={selected.skill_id}
-                run={run}
-              />
+              {selected.source_status === "missing" ? (
+                <p>
+                  尚未导入当前仓库。请使用“导入已有技能目录”，选择目录并确认导入。
+                </p>
+              ) : (
+                <Activation
+                  key={`${root}:${selected.skill_id}`}
+                  root={root}
+                  skill={selected.skill_id}
+                  run={run}
+                />
+              )}
             </section>
           )}
         </div>

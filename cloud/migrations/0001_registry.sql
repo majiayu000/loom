@@ -1,0 +1,12 @@
+CREATE TABLE teams (id uuid PRIMARY KEY, name text NOT NULL, owner_user_id text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE memberships (team_id uuid NOT NULL REFERENCES teams(id), user_id text NOT NULL, joined_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(team_id,user_id));
+ALTER TABLE teams ADD CONSTRAINT owner_membership FOREIGN KEY(id,owner_user_id) REFERENCES memberships(team_id,user_id) DEFERRABLE INITIALLY DEFERRED;
+CREATE TABLE invitations (id uuid PRIMARY KEY, team_id uuid NOT NULL REFERENCES teams(id), email text NOT NULL, token_hash text UNIQUE NOT NULL, expires_at timestamptz NOT NULL, accepted_at timestamptz, revoked_at timestamptz, created_by text NOT NULL);
+CREATE TABLE skills (id uuid PRIMARY KEY, team_id uuid NOT NULL REFERENCES teams(id), slug text NOT NULL, title text NOT NULL, description text NOT NULL, example text NOT NULL, maintainer_id text NOT NULL, archived_at timestamptz, recommended_version_id uuid, revision bigint NOT NULL DEFAULT 1, updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(team_id,slug), UNIQUE(team_id,id), FOREIGN KEY(team_id,maintainer_id) REFERENCES memberships(team_id,user_id));
+CREATE TABLE skill_versions (id uuid PRIMARY KEY, team_id uuid NOT NULL, skill_id uuid NOT NULL, version text NOT NULL, artifact_key text UNIQUE NOT NULL, sha256 text NOT NULL, size_bytes bigint NOT NULL, file_manifest jsonb NOT NULL, release_notes text NOT NULL, published_by text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(skill_id,version), UNIQUE(team_id,skill_id,id), FOREIGN KEY(team_id,skill_id) REFERENCES skills(team_id,id));
+ALTER TABLE skills ADD CONSTRAINT recommendation_same_skill FOREIGN KEY(team_id,id,recommended_version_id) REFERENCES skill_versions(team_id,skill_id,id) DEFERRABLE INITIALLY DEFERRED;
+CREATE TABLE team_events (id uuid PRIMARY KEY, team_id uuid NOT NULL REFERENCES teams(id), actor_id text NOT NULL, action text NOT NULL, subject_id uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE idempotency_requests (actor_id text NOT NULL, team_id uuid NOT NULL, operation text NOT NULL, key text NOT NULL, request_digest text NOT NULL, result jsonb NOT NULL, expires_at timestamptz NOT NULL DEFAULT now()+interval '24 hours', PRIMARY KEY(actor_id,team_id,operation,key));
+CREATE INDEX skills_directory ON skills(team_id,updated_at DESC,id DESC);
+CREATE INDEX versions_history ON skill_versions(skill_id,created_at DESC,id DESC);
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;

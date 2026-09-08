@@ -27,6 +27,7 @@ export default defineConfig({
       input: {
         panel: resolve(import.meta.dirname, "index.html"),
         landing: resolve(import.meta.dirname, "landing.html"),
+        team: resolve(import.meta.dirname, "team.html"),
       },
     },
   },

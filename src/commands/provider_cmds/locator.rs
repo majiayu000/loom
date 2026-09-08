@@ -613,6 +613,8 @@ pub(super) fn local_source_descriptor(
         requested_ref: locator.requested_ref.clone(),
         resolved_commit: None,
         tree_sha: None,
+        team: None,
+        team_tree_digest: None,
     })
 }
 
@@ -634,6 +636,8 @@ fn github_source_descriptor(
         requested_ref: locator.requested_ref.clone(),
         resolved_commit: locator.requested_ref.clone(),
         tree_sha: None,
+        team: None,
+        team_tree_digest: None,
     })
 }
 

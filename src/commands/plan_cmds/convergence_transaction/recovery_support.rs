@@ -89,17 +89,25 @@ pub(super) fn recover_journal(
         }
         TransactionPhase::CommittingSource => {
             let paths = RegistryStatePaths::from_app_context(&app.ctx);
-            if super::recovery_evidence::retire_uncommitted_source_after_external_head(
-                app,
-                &paths,
-                plan,
-                journal_path,
-                &mut journal,
-            )? {
-                return Ok(None);
+            if plan.source.team.is_some()
+                && gitops::head(&app.ctx).map_err(map_git)? != journal.previous_head
+            {
+                // A team source commit includes provenance paths. Prove that exact
+                // commit before the source-only external-HEAD retirement path.
+                prove_source_boundary(app, plan, &mut journal)?;
+            } else {
+                if super::recovery_evidence::retire_uncommitted_source_after_external_head(
+                    app,
+                    &paths,
+                    plan,
+                    journal_path,
+                    &mut journal,
+                )? {
+                    return Ok(None);
+                }
+                super::source_commit::recover_source_index_lock_if_owned(app, plan, &journal)?;
+                prove_source_boundary(app, plan, &mut journal)?;
             }
-            super::source_commit::recover_source_index_lock_if_owned(app, plan, &journal)?;
-            prove_source_boundary(app, plan, &mut journal)?;
         }
         TransactionPhase::RollingBack => {
             let paths = RegistryStatePaths::from_app_context(&app.ctx);
@@ -397,7 +405,7 @@ pub(super) fn validate_journal(
                 && journal.source_owner_proof.is_none()
                 && journal.source_activated_fingerprint.is_none()
         }
-        ConvergenceInputDirection::Projection => {
+        ConvergenceInputDirection::Projection | ConvergenceInputDirection::Team => {
             journal.source_staging.as_deref().is_some_and(|staging| {
                 Path::new(staging).parent().is_some_and(|owner| {
                     generated_owned_path_matches(
@@ -413,11 +421,15 @@ pub(super) fn validate_journal(
                 .source_owner_proof
                 .as_deref()
                 .is_some_and(|proof| owner_proof_is_valid(&plan.plan_id, proof))
-                && backup_matches(
-                    journal.source_backup.as_ref(),
-                    &app.ctx.skill_path(&plan.skill),
-                    &Path::new(&journal.artifact_root).join("source"),
-                )
+                && (if plan.source.team.is_some() && plan.source.tree_digest == "absent" {
+                    journal.source_backup.is_none()
+                } else {
+                    backup_matches(
+                        journal.source_backup.as_ref(),
+                        &app.ctx.skill_path(&plan.skill),
+                        &Path::new(&journal.artifact_root).join("source"),
+                    )
+                })
                 && (journal.phase == TransactionPhase::Preparing
                     || super::ownership::is_pre_mutation_retained(journal)
                     || journal
@@ -625,6 +637,11 @@ fn prove_source_boundary(
         ));
     }
     if head == journal.previous_head {
+        // Team metadata is always part of the source commit, including initial install
+        // whose untracked files are invisible to git diff.
+        if plan.source.team.is_some() {
+            return Ok(());
+        }
         let rel = format!("skills/{}", plan.skill);
         let unstaged = gitops::run_git_allow_failure(&app.ctx, &["diff", "--quiet", "--", &rel])
             .map_err(map_git)?;
@@ -645,6 +662,8 @@ fn prove_source_boundary(
             |path| {
                 path == format!("skills/{}", plan.skill)
                     || path.starts_with(&format!("skills/{}/", plan.skill))
+                    || (plan.source.team.is_some()
+                        && crate::commands::team_package::METADATA_PATHS.contains(&path))
             },
         )?;
         journal.source_head = Some(head.clone());

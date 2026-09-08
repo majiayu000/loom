@@ -314,12 +314,18 @@ pub(super) fn rollback_journal(
     ) {
         return errors;
     }
-    if journal.source_backup.is_some()
+    if (journal.source_backup.is_some() || plan.source.team.is_some())
         && let Err(err) = restore_source_from_evidence(app, plan, journal)
     {
         push_rollback_error(&mut errors, "restore_source_path", err.message);
     }
     if rollback_fault(&mut errors, "convergence_interrupt_after_source_restore") {
+        return errors;
+    }
+    if let Some(team) = &plan.source.team
+        && let Err(err) = team.write_metadata(&app.ctx.root, true)
+    {
+        push_rollback_error(&mut errors, "restore_team_metadata", err.to_string());
         return errors;
     }
     if let Err(err) = restore_head_if_owned(app, journal) {

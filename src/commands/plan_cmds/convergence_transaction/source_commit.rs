@@ -10,13 +10,22 @@ pub(super) fn commit_convergence_source(
 ) -> std::result::Result<Option<String>, CommandFailure> {
     journal.phase = TransactionPhase::CommittingSource;
     save_journal(journal_path, journal)?;
+    if let Some(team) = &plan.source.team {
+        team.write_metadata(&app.ctx.root, false).map_err(map_io)?;
+        maybe_skill_fault("convergence_interrupt_after_team_metadata")?;
+    }
     let relative = format!("skills/{}", plan.skill);
+    let mut source_paths = vec![relative.as_str()];
+    if plan.source.team.is_some() {
+        source_paths.extend(crate::commands::team_package::METADATA_PATHS);
+    }
+
     let prepared_index = Path::new(&journal.artifact_root).join("source-index");
     let changed = gitops::prepare_index_for_paths_force(
         &app.ctx,
         Path::new(&journal.index_backup),
         &prepared_index,
-        &[&relative],
+        &source_paths,
     )
     .map_err(map_git)?;
     journal.source_staged_index_digest = Some(file_digest(&prepared_index)?);
@@ -38,13 +47,16 @@ pub(super) fn commit_convergence_source(
             &app.ctx,
             &prepared_index,
             &commit_index,
-            &[&relative],
+            &source_paths,
             &journal.previous_head,
             &message,
         )
         .map_err(map_git)?;
         verify_commit(app, &commit, &journal.previous_head, &message, |path| {
-            path == relative || path.starts_with(&format!("{relative}/"))
+            path == relative
+                || path.starts_with(&format!("{relative}/"))
+                || (plan.source.team.is_some()
+                    && crate::commands::team_package::METADATA_PATHS.contains(&path))
         })?;
         let committed = committed_skill_digest(app, &commit, &plan.skill)?;
         if committed != plan.input.selected_input_tree_digest {
@@ -63,7 +75,7 @@ pub(super) fn commit_convergence_source(
                 return Err(failure);
             }
             if gitops::head(&app.ctx).map_err(map_git)? != journal.previous_head
-                && plan.source.direction == ConvergenceInputDirection::Projection
+                && plan.source.direction != ConvergenceInputDirection::Source
             {
                 return Err(restore_source_after_external_head(
                     app, plan, journal, failure,
@@ -85,7 +97,7 @@ pub(super) fn commit_convergence_source(
             let observed = gitops::head(&app.ctx).map_err(map_git)?;
             let error = restore_index_after_failed_commit(app, journal, &staged, error);
             if observed != journal.previous_head
-                && plan.source.direction == ConvergenceInputDirection::Projection
+                && plan.source.direction != ConvergenceInputDirection::Source
             {
                 return Err(restore_source_after_external_head(
                     app, plan, journal, error,
@@ -207,6 +219,10 @@ pub(super) fn validate_live_source(
     app: &App,
     plan: &SkillConvergencePlan,
 ) -> std::result::Result<(), CommandFailure> {
+    if let Some(team) = &plan.source.team {
+        team.validate_metadata(&app.ctx.root, true)
+            .map_err(map_io)?;
+    }
     let live = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
     if live == plan.input.selected_input_tree_digest {
         Ok(())

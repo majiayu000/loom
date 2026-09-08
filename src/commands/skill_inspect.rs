@@ -44,6 +44,7 @@ struct SpecStatus {
 #[derive(Debug, Serialize)]
 struct ProvenanceStatus {
     source: Option<String>,
+    team: Option<super::team_package::TeamArtifactManifest>,
     pinned_ref: Option<String>,
     verified: Option<bool>,
     drift: Option<bool>,
@@ -222,6 +223,9 @@ fn build_provenance_status(
     });
     Ok(ProvenanceStatus {
         source: record.as_ref().map(|record| record.source.locator.clone()),
+        team: record
+            .as_ref()
+            .and_then(|record| record.source.team.clone()),
         pinned_ref,
         verified: digest.as_ref().map(|status| status.matches),
         drift: digest.as_ref().map(|status| !status.matches),

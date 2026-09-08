@@ -39,7 +39,11 @@ pub(super) fn validate_convergence_request_scope(
     cursor: usize,
 ) -> std::result::Result<(), CommandFailure> {
     let request = request_input
-        .and_then(|input| input.pointer("/command/Plan/command/Converge"))
+        .and_then(|input| {
+            input
+                .pointer("/command/Plan/command/Converge")
+                .or_else(|| input.pointer("/command/Plan/command/TeamInstall"))
+        })
         .and_then(Value::as_object)
         .ok_or_else(|| request_evidence_failure(cursor, "missing original request evidence"))?;
     let sealed = serde_json::from_value::<ConvergenceRequestScope>(plan["request_scope"].clone())
@@ -92,6 +96,7 @@ fn request_scope_matches_plan(scope: &ConvergenceRequestScope, plan: &Value) -> 
             == Some(match scope.direction {
                 ConvergenceInputDirection::Source => "source",
                 ConvergenceInputDirection::Projection => "projection",
+                ConvergenceInputDirection::Team => "team",
             })
         && optional("/source/input_instance") == scope.instance.as_deref()
         && optional("/selectors/input_instance") == scope.instance.as_deref()

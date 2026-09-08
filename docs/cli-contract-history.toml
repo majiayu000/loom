@@ -71,3 +71,9 @@ version = "1.10.0"
 skill_range = ">=1.9.0,<2.0.0"
 change = "share the merged ops activity read model between the panel registry ops endpoint and ops list --activity"
 migration_note = "Clients may consume the merged registry/audit activity feed via ops list --activity with limit/offset pagination; existing 1.x commands and fields remain compatible."
+
+[[contract]]
+version = "1.11.0"
+skill_range = ">=1.9.0,<2.0.0"
+change = "add authenticated team artifact plan input with durable install and update provenance"
+migration_note = "Team clients require 1.11.0 for plan team-install and consume provenance.team from skill inspect; submit the reviewed digest to the existing apply command. Existing 1.x commands remain available."

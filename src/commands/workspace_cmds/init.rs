@@ -6,8 +6,8 @@ use crate::envelope::Meta;
 use crate::state::home_dir;
 use crate::types::ErrorCode;
 
-use super::super::helpers::{commit_registry_state, map_lock};
-use super::super::projections::maybe_autosync_or_queue;
+use super::super::helpers::{commit_registry_state, map_git, map_io, map_lock};
+use super::super::projections::{maybe_autosync_or_queue, record_registry_operation};
 use super::super::{App, CommandFailure};
 
 impl App {
@@ -88,10 +88,30 @@ impl App {
             }
         }
 
-        let commit = commit_registry_state(&self.ctx, "workspace: initialize registry state")?;
+        let mut commit = commit_registry_state(&self.ctx, "workspace: initialize registry state")?;
         let mut meta = Meta::default();
         meta.warnings.extend(scan_warnings);
-        if let Some(commit) = &commit {
+        if let Some(initial_commit) = commit.clone() {
+            let paths = crate::state_model::RegistryStatePaths::from_app_context(&self.ctx);
+            let op_id = record_registry_operation(
+                &paths,
+                "workspace.init",
+                json!({"request_id": request_id, "details": {"commit": initial_commit, "scanned": args.scan_existing}}),
+                json!({}),
+            ).map_err(map_io)?;
+            meta.op_id = Some(op_id);
+            // Persist the operation checkpoint before returning or pushing. The
+            // autosync helper sees op_id and does not append an uncommitted record.
+            commit = crate::gitops::commit_paths_if_changed(
+                &self.ctx,
+                &[
+                    "state/registry/ops/operations.jsonl",
+                    "state/registry/ops/checkpoint.json",
+                ],
+                "workspace: record initialization operation",
+            )
+            .map_err(map_git)?
+            .or(commit);
             maybe_autosync_or_queue(
                 &self.ctx,
                 "workspace.init",

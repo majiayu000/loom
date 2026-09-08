@@ -48,6 +48,7 @@ struct PreflightRequest<'a> {
     real_eval: bool,
     mode: &'a str,
     candidate_path: Option<&'a Path>,
+    team: Option<&'a crate::commands::team_package::TeamInput>,
 }
 
 impl SkillPreflightReport {
@@ -98,6 +99,7 @@ impl App {
             real_eval: args.real_eval,
             mode: "improve",
             candidate_path: None,
+            team: None,
         })?;
         Ok((report.into_value(), Meta::default()))
     }
@@ -116,6 +118,7 @@ impl App {
             real_eval: false,
             mode: "regression",
             candidate_path: None,
+            team: None,
         })?;
         if report.has_regressions {
             return Err(preflight_blocked(
@@ -139,6 +142,7 @@ impl App {
             real_eval: false,
             mode: "save_preflight",
             candidate_path: None,
+            team: None,
         })?;
         if !report.mutation_allowed {
             return Err(preflight_blocked("skill commit preflight failed", report));
@@ -173,6 +177,7 @@ impl App {
             real_eval: false,
             mode: "release_preflight",
             candidate_path: None,
+            team: None,
         })?;
         if !report.mutation_allowed || report.has_regressions {
             return Err(preflight_blocked("skill release preflight failed", report));
@@ -180,6 +185,7 @@ impl App {
         Ok(report)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn convergence_preflight_evidence(
         &self,
         skill: &str,
@@ -188,6 +194,7 @@ impl App {
         direction: ConvergenceInputDirection,
         input_tree_digest: &str,
         candidate_path: Option<&Path>,
+        team: Option<&crate::commands::team_package::TeamInput>,
     ) -> std::result::Result<ConvergencePreflightEvidence, CommandFailure> {
         let report = self.skill_preflight_report(PreflightRequest {
             skill,
@@ -198,6 +205,7 @@ impl App {
             real_eval: false,
             mode: "convergence_plan",
             candidate_path,
+            team,
         })?;
         let checks =
             serde_json::from_value::<BTreeMap<String, String>>(report.value["checks"].clone())
@@ -225,7 +233,9 @@ impl App {
         request: PreflightRequest<'_>,
     ) -> std::result::Result<SkillPreflightReport, CommandFailure> {
         if request.target == "working-tree" {
-            ensure_skill_exists(&self.ctx, request.skill)?;
+            if request.candidate_path.is_none() {
+                ensure_skill_exists(&self.ctx, request.skill)?;
+            }
         } else {
             ensure_skill_in_ref(&self.ctx, request.skill, request.baseline)?;
             ensure_skill_in_ref(&self.ctx, request.skill, request.target)?;
@@ -251,6 +261,10 @@ impl App {
             .as_ref()
             .map(|target| &target.ctx)
             .unwrap_or(&self.ctx);
+        if let (Some(team), Some(_)) = (request.team, materialized.as_ref()) {
+            crate::commands::team_package::write_candidate_metadata(check_ctx, team)
+                .map_err(map_io)?;
+        }
         let skill_path = check_ctx.skill_path(request.skill);
         let mut checks = BTreeMap::new();
         let mut regressions = Vec::new();
@@ -613,6 +627,7 @@ pub(crate) fn prepare_convergence_skill_input(
     candidate_path: Option<&Path>,
     candidate_method: Option<&str>,
     expected_digest: &str,
+    team: Option<&crate::commands::team_package::TeamInput>,
 ) -> std::result::Result<PreparedConvergenceInput, CommandFailure> {
     let materialized = candidate_path
         .map(|path| {
@@ -645,6 +660,10 @@ pub(crate) fn prepare_convergence_skill_input(
             });
             return Err(failure);
         }
+    }
+    if let (Some(team), Some(_)) = (team, materialized.as_ref()) {
+        crate::commands::team_package::write_candidate_metadata(policy_ctx, team)
+            .map_err(map_io)?;
     }
     let policy = evaluate_skill_policy(policy_ctx, skill, "safe-capture")?;
     Ok(PreparedConvergenceInput {

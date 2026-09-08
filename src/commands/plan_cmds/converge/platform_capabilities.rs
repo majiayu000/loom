@@ -61,7 +61,7 @@ fn resolve_with(
             evidence: json!({ "required_operation": "handle_relative_directory_operations" }),
         });
     }
-    if *direction == ConvergenceInputDirection::Projection && !capabilities.exchange {
+    if *direction != ConvergenceInputDirection::Source && !capabilities.exchange {
         conflicts.push(ConvergenceInputConflict {
             code: "PLATFORM_ATOMIC_SOURCE_EXCHANGE_UNSUPPORTED".to_string(),
             message: "this platform cannot atomically replace the canonical source from a projection input"

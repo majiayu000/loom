@@ -26,6 +26,8 @@ const SOURCES_REL: &str = "state/registry/sources.json";
 const LOCK_REL: &str = "loom.lock";
 
 mod outdated;
+mod team;
+pub(crate) use team::planned_record_files;
 #[cfg(test)]
 mod provenance_tests;
 
@@ -51,7 +53,7 @@ pub(crate) struct SkillSourceRecord {
     pub importer_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SourceDescriptor {
     pub provider: String,
     pub locator: String,
@@ -66,6 +68,10 @@ pub(crate) struct SourceDescriptor {
     pub resolved_commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<super::team_package::TeamArtifactManifest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_tree_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +104,10 @@ struct LoomLockSkill {
     commit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tree_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    team: Option<super::team_package::TeamArtifactManifest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    team_tree_digest: Option<String>,
     digest: String,
     agents: Vec<String>,
     scope: String,
@@ -149,13 +159,18 @@ impl App {
             .as_ref()
             .and_then(|entry| entry.get("digest"))
             .and_then(Value::as_str);
-        let matches_record = current_digest == record.artifact.digest;
+        let matches_record = current_digest
+            == record
+                .source
+                .team_tree_digest
+                .as_deref()
+                .unwrap_or(&record.artifact.digest);
         let matches_lock = lock_digest == Some(current_digest.as_str());
         Ok((
             json!({
                 "skill": args.skill,
                 "matches": matches_record && matches_lock,
-                "recorded_digest": record.artifact.digest,
+                "recorded_digest": record.source.team_tree_digest.as_deref().unwrap_or(&record.artifact.digest),
                 "current_digest": current_digest,
                 "lock_digest": lock_digest,
                 "lock_present": lock.is_some(),
@@ -240,6 +255,8 @@ pub(crate) fn resolve_add_source(
                 requested_ref: args.source_ref.clone(),
                 resolved_commit: Some(commit),
                 tree_sha: Some(tree),
+                team: None,
+                team_tree_digest: None,
             },
         );
     }
@@ -260,6 +277,8 @@ pub(crate) fn resolve_add_source(
                 requested_ref: None,
                 resolved_commit: None,
                 tree_sha: None,
+                team: None,
+                team_tree_digest: None,
             },
         });
     }
@@ -286,6 +305,8 @@ pub(crate) fn resolve_add_source(
             requested_ref: args.source_ref.clone(),
             resolved_commit: Some(commit),
             tree_sha: Some(tree),
+            team: None,
+            team_tree_digest: None,
         },
     )
 }
@@ -347,10 +368,15 @@ pub(crate) fn provenance_digest_status(
         .and_then(|entry| entry.get("digest"))
         .and_then(Value::as_str)
         .map(str::to_string);
-    let matches_record = current_digest == record.artifact.digest;
+    let recorded_digest = record
+        .source
+        .team_tree_digest
+        .clone()
+        .unwrap_or(record.artifact.digest);
+    let matches_record = current_digest == recorded_digest;
     let matches_lock = lock_digest.as_deref() == Some(current_digest.as_str());
     Ok(Some(ProvenanceDigestStatus {
-        recorded_digest: record.artifact.digest,
+        recorded_digest,
         current_digest,
         lock_digest,
         lock_present: lock.is_some(),
@@ -447,6 +473,8 @@ fn lock_skill_for_record(ctx: &AppContext, record: &SkillSourceRecord) -> Result
         requested_ref: record.source.requested_ref.clone(),
         commit: record.source.resolved_commit.clone(),
         tree_sha: record.source.tree_sha.clone(),
+        team: record.source.team.clone(),
+        team_tree_digest: record.source.team_tree_digest.clone(),
         digest: record.artifact.digest.clone(),
         agents: projected_agents(ctx, &record.skill_id)?,
         scope: "project".to_string(),

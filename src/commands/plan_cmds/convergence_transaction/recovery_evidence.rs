@@ -10,6 +10,24 @@ pub(super) fn reprove_source_boundary(
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
+    if let Some(team) = &plan.source.team {
+        team.validate_metadata(&app.ctx.root, true)
+            .map_err(map_io)?;
+        if let Some(commit) = journal.source_commit.as_deref() {
+            for (rel, expected) in crate::commands::team_package::METADATA_PATHS
+                .into_iter()
+                .zip([&team.new_sources, &team.new_lock])
+            {
+                let raw = gitops::run_git(&app.ctx, &["show", &format!("{commit}:{rel}")])
+                    .map_err(map_git)?;
+                if raw.trim_end() != expected.trim_end() {
+                    return Err(corrupt(
+                        "committed team metadata differs from reviewed input",
+                    ));
+                }
+            }
+        }
+    }
     let source_head = journal
         .source_head
         .as_deref()
@@ -26,6 +44,8 @@ pub(super) fn reprove_source_boundary(
             |path| {
                 path == format!("skills/{}", plan.skill)
                     || path.starts_with(&format!("skills/{}/", plan.skill))
+                    || (plan.source.team.is_some()
+                        && crate::commands::team_package::METADATA_PATHS.contains(&path))
             },
         )?;
         let committed_digest = committed_skill_digest(app, commit, &plan.skill)?;
@@ -362,9 +382,9 @@ pub(super) fn rollback_uncommitted_source_only(
             ));
         }
     }
-    if plan.source.direction == ConvergenceInputDirection::Projection {
+    if plan.source.direction != ConvergenceInputDirection::Source {
         let source = app.ctx.skill_path(&plan.skill);
-        let live_digest = skill_tree_digest(&source).map_err(map_io)?;
+        let live_digest = crate::commands::team_package::source_digest(&source).map_err(map_io)?;
         if live_digest != plan.source.tree_digest {
             if live_digest != plan.input.selected_input_tree_digest {
                 return Err(recovery_stale(
@@ -373,6 +393,9 @@ pub(super) fn rollback_uncommitted_source_only(
             }
             restore_source_from_evidence(app, plan, journal)?;
         }
+    }
+    if let Some(team) = &plan.source.team {
+        team.write_metadata(&app.ctx.root, true).map_err(map_io)?;
     }
     if journal.phase == TransactionPhase::CommittingSource && live_index != original_index {
         if head != journal.previous_head {
@@ -454,7 +477,9 @@ pub(super) fn validate_rolling_back_state(
             "HEAD is neither old nor transaction-new while rolling back",
         ));
     }
-    let source_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
+    let source_digest =
+        crate::commands::team_package::source_digest(&app.ctx.skill_path(&plan.skill))
+            .map_err(map_io)?;
     if source_digest != plan.source.tree_digest
         && source_digest != plan.input.selected_input_tree_digest
     {

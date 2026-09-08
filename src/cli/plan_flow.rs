@@ -12,6 +12,9 @@ pub enum PlanCommand {
 
     #[command(about = "Create a durable skill-use plan")]
     Use(PlanUseArgs),
+
+    /// Preview an authenticated team artifact install or same-source update.
+    TeamInstall(PlanTeamInstallArgs),
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -107,4 +110,29 @@ pub struct ApplyArgs {
     /// Plan approvals; repeat or comma-separate.
     #[arg(long = "approve", value_delimiter = ',')]
     pub approvals: Vec<String>,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct PlanTeamInstallArgs {
+    pub skill: String,
+    #[arg(long)]
+    pub archive: PathBuf,
+    #[arg(long)]
+    pub manifest: PathBuf,
+}
+impl PlanTeamInstallArgs {
+    pub(crate) fn convergence_args(&self) -> PlanConvergeArgs {
+        PlanConvergeArgs {
+            skill: self.skill.clone(),
+            from_source: false,
+            from_projection: false,
+            instance: None,
+            agent: None,
+            workspace: None,
+            profile: None,
+            require_runtime: false,
+            accept_restart_required: false,
+            push_remote: false,
+        }
+    }
 }

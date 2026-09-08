@@ -146,7 +146,7 @@ pub(super) fn apply_convergence(
     let generation = uuid::Uuid::new_v4().hyphenated().to_string();
     let artifact_dir = tx_dir.join(format!("{}-artifacts-{generation}", plan.plan_id));
     let durable_index = artifact_dir.join("index");
-    let source_backup = (plan.source.direction == ConvergenceInputDirection::Projection)
+    let source_backup = (plan.source.direction != ConvergenceInputDirection::Source)
         .then(|| {
             declared_backup(
                 &app.ctx.skill_path(&plan.skill),
@@ -155,17 +155,16 @@ pub(super) fn apply_convergence(
         })
         .transpose()?
         .flatten();
-    let source_staging =
-        (plan.source.direction == ConvergenceInputDirection::Projection).then(|| {
-            app.ctx
-                .skills_dir
-                .join(format!(
-                    ".loom-convergence-source-stage-{}-{generation}.owner/stage",
-                    plan.plan_id,
-                ))
-                .display()
-                .to_string()
-        });
+    let source_staging = (plan.source.direction != ConvergenceInputDirection::Source).then(|| {
+        app.ctx
+            .skills_dir
+            .join(format!(
+                ".loom-convergence-source-stage-{}-{generation}.owner/stage",
+                plan.plan_id,
+            ))
+            .display()
+            .to_string()
+    });
     let source_owner_proof = source_staging
         .as_ref()
         .map(|_| new_owner_proof(&plan.plan_id));
@@ -353,9 +352,7 @@ fn execute_local_transaction(
     journal: &mut TransactionJournal,
     target_scopes: &[preparation::ProjectionTargetScope],
 ) -> std::result::Result<Value, CommandFailure> {
-    if journal.source_head.is_none()
-        && plan.source.direction == ConvergenceInputDirection::Projection
-    {
+    if journal.source_head.is_none() && plan.source.direction != ConvergenceInputDirection::Source {
         journal.phase = TransactionPhase::ReplacingSource;
         save_journal(journal_path, journal)?;
         replace_source_from_projection(app, plan, journal)?;
@@ -618,7 +615,7 @@ fn replace_source_from_projection(
             CommandFailure::new(ErrorCode::StateCorrupt, "source staging path is absent")
         })?;
     let reviewed = &plan.source.tree_digest;
-    if skill_tree_digest(&source).map_err(map_io)? != *reviewed {
+    if crate::commands::team_package::source_digest(&source).map_err(map_io)? != *reviewed {
         return Err(stale(
             "source changed immediately before projection replacement",
             "source_changed_before_exchange",
@@ -630,6 +627,10 @@ fn replace_source_from_projection(
         "HEAD changed before projection source replacement",
     )?;
     validate_source_staging_fingerprint(&source, journal)?;
+    if reviewed == "absent" && plan.source.team.is_some() {
+        rename_no_replace_atomic(&staging, &source).map_err(map_io)?;
+        return validate_activated_source_fingerprint(&source, journal);
+    }
     exchange_paths_atomic(&staging, &source).map_err(map_io)?;
     if skill_tree_digest(&staging).map_err(map_io)? != *reviewed {
         let mut failure = stale(
@@ -744,6 +745,9 @@ fn selected_source_path(
 ) -> std::result::Result<PathBuf, CommandFailure> {
     if plan.source.direction == ConvergenceInputDirection::Source {
         return Ok(app.ctx.skill_path(&plan.skill));
+    }
+    if let Some(team) = &plan.source.team {
+        return Ok(PathBuf::from(&team.input_path));
     }
     let instance = plan.source.input_instance.as_deref().ok_or_else(|| {
         CommandFailure::new(

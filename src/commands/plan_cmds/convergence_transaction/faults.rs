@@ -2,7 +2,9 @@ pub(super) fn interruption_fault_active() -> bool {
     matches!(
         std::env::var("LOOM_FAULT_INJECT").ok().as_deref(),
         Some(
-            "convergence_interrupt_after_source_commit"
+            "convergence_interrupt_after_team_sources"
+                | "convergence_interrupt_after_team_metadata"
+                | "convergence_interrupt_after_source_commit"
                 | "convergence_interrupt_after_source_cas"
                 | "convergence_interrupt_committing_source"
                 | "convergence_interrupt_committing_registry"

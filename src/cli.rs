@@ -63,7 +63,7 @@ pub use mcp::{
 pub use package::{
     PackageBuildArgs, PackageCommand, PackageFormatArg, PackagePlanArgs, PackageVerifyArgs,
 };
-pub use plan_flow::{ApplyArgs, PlanCommand, PlanConvergeArgs, PlanUseArgs};
+pub use plan_flow::{ApplyArgs, PlanCommand, PlanConvergeArgs, PlanTeamInstallArgs, PlanUseArgs};
 pub use policy::{
     ApprovalCommand, ApprovalDecisionArgs, ApprovalListArgs, ApprovalRequestArgs,
     OrgPolicyCheckArgs, OrgPolicyCommand, OrgPolicyInitArgs, PolicyCommand, RoleGrantArgs,

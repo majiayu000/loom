@@ -285,6 +285,8 @@ fn github_install_source(
             requested_ref: locator.requested_ref.clone(),
             resolved_commit: Some(commit),
             tree_sha: Some(tree),
+            team: None,
+            team_tree_digest: None,
         },
     )
 }

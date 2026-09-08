@@ -8,6 +8,21 @@ pub(super) fn restore_source_from_evidence(
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
+    if plan.source.team.is_some() && plan.source.tree_digest == "absent" {
+        let live = app.ctx.skill_path(&plan.skill);
+        let stage = Path::new(
+            journal
+                .source_staging
+                .as_deref()
+                .ok_or_else(|| corrupt("missing team staging"))?,
+        );
+        if crate::commands::team_package::source_digest(&live).map_err(map_io)? == "absent" {
+            return Ok(());
+        }
+        validate_activated_source_fingerprint(&live, journal)?;
+        rename_no_replace_atomic(&live, stage).map_err(map_io)?;
+        return Ok(());
+    }
     let backup = journal
         .source_backup
         .as_ref()

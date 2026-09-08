@@ -89,6 +89,7 @@ pub(crate) fn command_descriptor(command: &Command) -> CommandDescriptor {
         Command::Use(args) => desc("use", CommandMeta::new(true, args.apply, !args.apply)),
         Command::Plan { command } => match command {
             PlanCommand::Converge(_) => desc("plan.converge", CommandMeta::DURABLE),
+            PlanCommand::TeamInstall(_) => desc("plan.team-install", CommandMeta::DURABLE),
             PlanCommand::Use(_) => desc("plan.use", CommandMeta::DURABLE),
         },
         Command::Apply(_) => desc("apply", CommandMeta::DURABLE),

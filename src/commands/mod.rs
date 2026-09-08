@@ -61,6 +61,7 @@ mod skillset_release;
 mod sync_cmds;
 mod target_cmds;
 mod target_safety;
+pub(crate) mod team_package;
 mod telemetry;
 mod trash_cmds;
 mod use_cmds;

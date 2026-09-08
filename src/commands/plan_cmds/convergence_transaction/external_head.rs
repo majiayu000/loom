@@ -310,7 +310,7 @@ pub(super) fn retire_uncommitted_noop_after_external_head(
             "registry initialized during an uncommitted no-op source transaction",
         ));
     }
-    if plan.source.direction == ConvergenceInputDirection::Projection {
+    if plan.source.direction != ConvergenceInputDirection::Source {
         restore_source_from_evidence(app, plan, journal)?;
     } else {
         super::source_commit::validate_live_source(app, plan)?;

@@ -37,11 +37,17 @@ fn validate_pre_mutation_state(
     app: &App,
     plan: &SkillConvergencePlan,
 ) -> std::result::Result<Option<crate::state_model::RegistrySnapshot>, CommandFailure> {
+    if let Some(team) = &plan.source.team {
+        team.validate_metadata(&app.ctx.root, false)
+            .map_err(map_io)?;
+    }
     let head = gitops::head(&app.ctx).map_err(map_git)?;
     if head != plan.source.registry_head {
         return Err(stale("registry HEAD changed after planning", "PLAN_STALE"));
     }
-    let source_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
+    let source_digest =
+        crate::commands::team_package::source_digest(&app.ctx.skill_path(&plan.skill))
+            .map_err(map_io)?;
     if source_digest != plan.source.tree_digest {
         return Err(stale(
             "canonical source changed after planning",
@@ -208,7 +214,7 @@ fn validate_routing_paths_clean(
             let output = gitops::run_git_allow_failure(&app.ctx, &args).map_err(map_git)?;
             if !output.status.success() {
                 return Err(stale(
-                    "registry routing changed after planning or is not committed",
+                    format!("registry routing changed after planning or is not committed: {path}"),
                     "PLAN_CHECKPOINT_DRIFT",
                 ));
             }
@@ -387,7 +393,7 @@ fn validate_sealed_scope(
     }
 
     let selected_instance = match plan.source.direction {
-        ConvergenceInputDirection::Source => None,
+        ConvergenceInputDirection::Source | ConvergenceInputDirection::Team => None,
         ConvergenceInputDirection::Projection => plan.source.input_instance.as_deref(),
     };
     if plan.selectors.input_instance.as_deref() != selected_instance
@@ -504,6 +510,13 @@ fn validate_policy_gate(
     plan: &SkillConvergencePlan,
     source: PolicyCaptureSource,
 ) -> std::result::Result<(), CommandFailure> {
+    if plan.source.team.is_some() {
+        crate::commands::org_policy::require_team_install_policy(
+            &app.ctx,
+            &plan.skill,
+            !plan.projections.is_empty(),
+        )?;
+    }
     let checks = &plan.preflight.checks;
     if plan.preflight.input_direction != plan.source.direction
         || plan.preflight.input_tree_digest != plan.input.selected_input_tree_digest
@@ -514,6 +527,14 @@ fn validate_policy_gate(
         ));
     }
 
+    let team_candidate = match source {
+        PolicyCaptureSource::PlannedInput => plan
+            .source
+            .team
+            .as_ref()
+            .map(|team| Path::new(&team.input_path)),
+        PolicyCaptureSource::CommittedSource => None,
+    };
     let selected = match source {
         PolicyCaptureSource::PlannedInput
             if plan.source.direction == ConvergenceInputDirection::Projection =>
@@ -565,9 +586,14 @@ fn validate_policy_gate(
     let prepared = prepare_convergence_skill_input(
         &app.ctx,
         &plan.skill,
-        selected.map(|item| Path::new(&item.materialized_path)),
-        selected_method,
+        team_candidate.or_else(|| selected.map(|item| Path::new(&item.materialized_path))),
+        if team_candidate.is_some() {
+            Some("copy")
+        } else {
+            selected_method
+        },
         &plan.input.selected_input_tree_digest,
+        plan.source.team.as_ref(),
     )
     .map_err(|error| {
         scope_failure(
@@ -584,6 +610,7 @@ fn validate_policy_gate(
             plan.source.direction.clone(),
             &plan.input.selected_input_tree_digest,
             preflight_candidate.as_deref(),
+            plan.source.team.as_ref(),
         )
         .map_err(|error| {
             scope_failure(

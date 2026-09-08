@@ -18,6 +18,7 @@ mod apply_identity;
 mod converge;
 mod convergence_transaction;
 pub(super) mod request_scope;
+mod team_install;
 mod use_plan;
 
 use use_plan::{canonical_root, policy_risks, required_approvals};
@@ -38,6 +39,7 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         match command {
             PlanCommand::Converge(args) => self.cmd_plan_converge(args),
+            PlanCommand::TeamInstall(args) => self.cmd_plan_team_install(args),
             PlanCommand::Use(args) => self.cmd_plan_use(args),
         }
     }
@@ -237,7 +239,7 @@ fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredP
     events.iter().enumerate().rev().find_map(|(index, row)| {
         let kind = match row.event.cmd.as_str() {
             "plan.use" => StoredPlanKind::Use,
-            "plan.converge" => StoredPlanKind::Converge,
+            "plan.converge" | "plan.team-install" => StoredPlanKind::Converge,
             _ => return None,
         };
         if row.event.status != "succeeded" {

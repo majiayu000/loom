@@ -10,6 +10,7 @@ use crate::sha256::{Sha256, to_hex};
 pub(crate) enum ConvergenceInputDirection {
     Source,
     Projection,
+    Team,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -57,6 +58,8 @@ pub(crate) struct SourceGuard {
     pub registry_head: String,
     pub tree_digest: String,
     pub input_instance: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<crate::commands::team_package::TeamInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -284,7 +287,7 @@ fn stored_plan_shape_is_valid(plan: &serde_json::Map<String, Value>) -> bool {
 fn request_scope_is_valid(value: &serde_json::Map<String, Value>) -> bool {
     value.len() == 10
         && field_is_string(value, "skill")
-        && field_is_one_of(value, "direction", &["source", "projection"])
+        && field_is_one_of(value, "direction", &["source", "projection", "team"])
         && field_is_optional_string(value, "instance")
         && field_is_optional_string(value, "agent")
         && field_is_optional_string(value, "workspace_argument")
@@ -302,7 +305,7 @@ fn selectors_are_valid(value: &serde_json::Map<String, Value>) -> bool {
 }
 
 fn source_is_valid(value: &serde_json::Map<String, Value>) -> bool {
-    field_is_one_of(value, "direction", &["source", "projection"])
+    field_is_one_of(value, "direction", &["source", "projection", "team"])
         && field_is_string(value, "registry_head")
         && field_is_string(value, "tree_digest")
         && field_is_optional_string(value, "input_instance")
@@ -341,7 +344,7 @@ fn projection_input_is_valid(value: &serde_json::Map<String, Value>) -> bool {
 }
 
 fn preflight_is_valid(value: &serde_json::Map<String, Value>) -> bool {
-    field_is_one_of(value, "input_direction", &["source", "projection"])
+    field_is_one_of(value, "input_direction", &["source", "projection", "team"])
         && field_is_string(value, "input_tree_digest")
         && value
             .get("checks")

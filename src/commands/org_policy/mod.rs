@@ -12,7 +12,7 @@ use crate::gitops;
 use crate::state_model::REGISTRY_SCHEMA_VERSION;
 use crate::types::ErrorCode;
 
-use super::helpers::map_lock;
+use super::helpers::{map_io, map_lock};
 use super::skill_safety::trust_metadata_for_skill;
 use super::{App, CommandFailure};
 use state::{
@@ -442,4 +442,37 @@ fn evaluate_org_policy(
         evidence,
         approval_request_command,
     })
+}
+
+pub(crate) fn require_team_install_policy(
+    ctx: &crate::state::AppContext,
+    skill: &str,
+    has_projections: bool,
+) -> std::result::Result<(), CommandFailure> {
+    if !org_policy_path(ctx).try_exists().map_err(map_io)? {
+        return Ok(());
+    }
+    for action in if has_projections {
+        vec!["skill.install", "skill.project"]
+    } else {
+        vec!["skill.install"]
+    } {
+        let decision = evaluate_org_policy(
+            ctx,
+            &OrgPolicyCheckArgs {
+                action: action.into(),
+                skill: Some(skill.into()),
+                provider: None,
+                sync_remote: None,
+                agent: None,
+            },
+        )?;
+        if decision.decision != "allow" {
+            return Err(policy_blocked(
+                "team install requires the existing organization policy workflow",
+                json!({"policy": decision}),
+            ));
+        }
+    }
+    Ok(())
 }

@@ -42,8 +42,17 @@ impl App {
         &self,
         args: &PlanConvergeArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        self.plan_converge_input(args, None, None)
+    }
+
+    pub(super) fn plan_converge_input(
+        &self,
+        args: &PlanConvergeArgs,
+        team: Option<crate::commands::team_package::TeamInput>,
+        reviewed_source_digest: Option<&str>,
+    ) -> Result<(Value, Meta), CommandFailure> {
         validate_skill_name(&args.skill).map_err(map_arg)?;
-        if !self.ctx.skill_path(&args.skill).is_dir() {
+        if team.is_none() && !self.ctx.skill_path(&args.skill).is_dir() {
             return Err(CommandFailure::new(
                 ErrorCode::SkillNotFound,
                 format!("skill '{}' not found", args.skill),
@@ -52,7 +61,15 @@ impl App {
         let workspace = args.workspace.as_ref().map(|path| normalize_path(path));
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-        let source_digest = skill_tree_digest(&self.ctx.skill_path(&args.skill)).map_err(map_io)?;
+        let source_digest =
+            crate::commands::team_package::source_digest(&self.ctx.skill_path(&args.skill))
+                .map_err(map_io)?;
+        if reviewed_source_digest.is_some_and(|reviewed| reviewed != source_digest) {
+            return Err(CommandFailure::new(
+                ErrorCode::DependencyConflict,
+                "team source changed while preparing the artifact plan",
+            ));
+        }
         let registry_head = gitops::head(&self.ctx).map_err(map_git)?;
         let mut projections = resolve_projection_effects(
             &self.ctx,
@@ -61,6 +78,13 @@ impl App {
             workspace.as_deref(),
             &source_digest,
         )?;
+        if team.is_some() {
+            crate::commands::org_policy::require_team_install_policy(
+                &self.ctx,
+                &args.skill,
+                !projections.is_empty(),
+            )?;
+        }
         let visibility_agents = projections
             .iter()
             .map(|effect| effect.agent.clone())
@@ -75,15 +99,30 @@ impl App {
                 });
         validate_projection_input(args, &projections)?;
         let source_dirty_paths = source_replacement_risk_paths(&self.ctx, &args.skill)?;
+        if team.is_some() && !source_dirty_paths.is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::DependencyConflict,
+                "team source has local changes; preserve them before updating",
+            ));
+        }
         let projection_evidence =
             resolve_projection_input_evidence(&self.ctx, snapshot.as_ref(), &projections)?;
-        let direction = if args.from_projection {
+        let direction = if team.is_some() {
+            ConvergenceInputDirection::Team
+        } else if args.from_projection {
             ConvergenceInputDirection::Projection
         } else {
             ConvergenceInputDirection::Source
         };
-        let (selected_input_tree_digest, candidate_path) =
-            selected_input(args, &projection_evidence, &source_digest)?;
+        let (selected_input_tree_digest, candidate_path) = if let Some(team) = &team {
+            let candidate = PathBuf::from(&team.input_path);
+            (
+                skill_tree_digest(&candidate).map_err(map_io)?,
+                Some(candidate),
+            )
+        } else {
+            selected_input(args, &projection_evidence, &source_digest)?
+        };
         let canonical_source = self.ctx.skill_path(&args.skill);
         let selected_path = candidate_path.as_deref().unwrap_or(&canonical_source);
         let materialize_digest = projections
@@ -113,8 +152,13 @@ impl App {
             &self.ctx,
             &args.skill,
             candidate_path.as_deref(),
-            candidate_path.as_ref().and(candidate_method),
+            if team.is_some() {
+                Some("copy")
+            } else {
+                candidate_path.as_ref().and(candidate_method)
+            },
             &selected_input_tree_digest,
+            team.as_ref(),
         )?;
         let policy = prepared_input.policy();
         let approvals = required_approvals(policy);
@@ -126,6 +170,7 @@ impl App {
             direction.clone(),
             &selected_input_tree_digest,
             preflight_candidate.as_deref(),
+            team.as_ref(),
         )?;
         seal_policy_gate(&mut preflight, policy, &approvals)?;
         let selected_source_drift = if direction == ConvergenceInputDirection::Projection {
@@ -149,6 +194,23 @@ impl App {
             args.instance.as_deref(),
             selected_source_drift,
         );
+        if team.is_some()
+            && let Some(snapshot) = &snapshot
+        {
+            for existing in snapshot
+                .projections
+                .projections
+                .iter()
+                .filter(|projection| projection.skill_id == args.skill)
+            {
+                if !projections
+                    .iter()
+                    .any(|effect| effect.instance_id == existing.instance_id)
+                {
+                    input_conflicts.push(ConvergenceInputConflict { code: "TEAM_PROJECTION_OUTSIDE_ACTIVE_ROUTING".into(), message: "existing projection is outside active routing; resolve it before changing the shared team source".into(), evidence: json!({"projection":existing}) });
+                }
+            }
+        }
         input_conflicts.extend(resolve_projection_route_conflicts(
             snapshot.as_ref(),
             &projections,
@@ -195,10 +257,12 @@ impl App {
             plan_id,
             plan_digest: String::new(),
             skill: args.skill.clone(),
-            request_scope: super::request_scope::convergence_request_scope(
-                args,
-                workspace.as_deref(),
-            ),
+            request_scope: {
+                let mut scope =
+                    super::request_scope::convergence_request_scope(args, workspace.as_deref());
+                scope.direction = direction.clone();
+                scope
+            },
             selectors: ConvergenceSelectors {
                 agent: resolved_visibility_agent,
                 workspace: workspace.map(|path| path.display().to_string()),
@@ -210,6 +274,7 @@ impl App {
                 registry_head,
                 tree_digest: source_digest.clone(),
                 input_instance: args.instance.clone(),
+                team,
             },
             input: ConvergenceInputEvidence {
                 source_dirty_paths,

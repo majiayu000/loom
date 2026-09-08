@@ -486,6 +486,8 @@ fn git_candidate_digest(
             requested_ref: Some(candidate_ref.to_string()),
             resolved_commit: Some(commit),
             tree_sha: Some(tree),
+            team: None,
+            team_tree_digest: None,
         },
     )
     .map_err(|err| err.message)?;

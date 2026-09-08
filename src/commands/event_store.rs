@@ -66,6 +66,21 @@ pub(crate) fn command_event_input(cli: &Cli, request_id: &str) -> Result<serde_j
             ),
         );
     }
+    if let Command::Plan {
+        command: PlanCommand::TeamInstall(args),
+    } = &cli.command
+    {
+        let mut scope = convergence_request_scope(&args.convergence_args(), None);
+        scope.direction = crate::core::convergence::ConvergenceInputDirection::Team;
+        input
+            .pointer_mut("/command/Plan/command/TeamInstall")
+            .and_then(serde_json::Value::as_object_mut)
+            .context("missing team request")?
+            .insert(
+                "request_scope_digest".into(),
+                serde_json::Value::String(scope.digest()?),
+            );
+    }
     redact_sensitive_strings(&mut input);
     Ok(input)
 }
@@ -139,8 +154,9 @@ fn append_command_finished_with_fault_tags(
         exit_code: Some(exit_code),
         input: None,
         output: Some(redacted_value(envelope.data.clone())),
-        durable_plan: (envelope.ok && matches!(cmd, "plan.use" | "plan.converge"))
-            .then(|| durable_plan_value(cmd, &envelope.data)),
+        durable_plan: (envelope.ok
+            && matches!(cmd, "plan.use" | "plan.converge" | "plan.team-install"))
+        .then(|| durable_plan_value(cmd, &envelope.data)),
         error: envelope
             .error
             .as_ref()
@@ -280,7 +296,7 @@ fn durable_plan_value(cmd: &str, source: &serde_json::Value) -> serde_json::Valu
 
     let mut durable = redacted_value(source.clone());
     let authority_fields = match cmd {
-        "plan.converge" => CONVERGENCE_AUTHORITY_FIELDS,
+        "plan.converge" | "plan.team-install" => CONVERGENCE_AUTHORITY_FIELDS,
         "plan.use" => USE_AUTHORITY_FIELDS,
         _ => return durable,
     };

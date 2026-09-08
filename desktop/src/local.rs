@@ -43,6 +43,58 @@ async fn run(app: &AppHandle, root: Option<String>, args: Vec<String>) -> Result
         )
     })
 }
+pub(crate) async fn team_plan(
+    app: &AppHandle,
+    root: Option<String>,
+    name: String,
+    archive: PathBuf,
+    manifest: PathBuf,
+) -> Result<Value> {
+    atom(&name)?;
+    run(
+        app,
+        root,
+        vec![
+            "plan".into(),
+            "team-install".into(),
+            name,
+            "--archive".into(),
+            archive.to_string_lossy().into_owned(),
+            "--manifest".into(),
+            manifest.to_string_lossy().into_owned(),
+        ],
+    )
+    .await
+}
+#[tauri::command]
+pub async fn apply_plan(
+    app: AppHandle,
+    root: Option<String>,
+    plan_id: String,
+    plan_digest: String,
+    idempotency_key: String,
+) -> Result<Value> {
+    atom(&plan_id)?;
+    atom(&plan_digest)?;
+    atom(&idempotency_key)?;
+    run(
+        &app,
+        root,
+        vec![
+            "apply".into(),
+            plan_id,
+            "--plan-digest".into(),
+            plan_digest,
+            "--idempotency-key".into(),
+            idempotency_key,
+        ],
+    )
+    .await
+}
+#[tauri::command]
+pub async fn initialize_registry(app: AppHandle, root: Option<String>) -> Result<Value> {
+    run(&app, root, vec!["init".into()]).await
+}
 async fn git(app: &AppHandle) -> Result<String> {
     let output = app
         .shell()

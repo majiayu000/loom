@@ -29,12 +29,17 @@ cargo tauri build
 | `visibility_skill` | `{root?,skill,agent,workspace?}` | `skill visibility` JSON |
 | `preview_install` / `apply_install` | `{root?,source,name}` | `skill install local:<source> --name <name>`，预览追加 `--dry-run` |
 | `preview_activate` / `apply_activate` | `{root?,skill,agent,workspace?}` | `skill activate --agent`，有 workspace 为 project，否则 user；预览追加 `--dry-run` |
+| `initialize_registry` | `{root?}` | 显式初始化本地 registry，不隐式覆盖已有目录 |
+| `preview_publish` | `{source}` | 文件清单、压缩大小、SHA-256；拒绝链接、特殊文件、私密路径与非 UTF-8 文件名 |
+| `publish_skill` | `{team,skill?,source,metadata,expectedSha256,idempotencyKey}` | 重新打包并匹配预览摘要后发布；skill 省略为首版 |
+| `preview_team_install` | `{team,skill,version,name,root?,requestedRef?}` | 验证下载摘要后建立持久团队计划；requestedRef 为 recommended 或固定 version ID |
+| `apply_plan` | `{root?,planId,planDigest,idempotencyKey}` | 执行冻结计划，保留引擎策略和冲突保护 |
 | `get_cloud_config` | 无 | `{cloud_api_url,auth_url,auth_public_key}`，未设置时均空字符串 |
 | `save_cloud_config` | `{config:{cloud_api_url,auth_url,auth_public_key}}` | 保存系统凭证库并清除之前的会话 |
 | `request_otp` | `{email}` | Supabase `POST /auth/v1/otp`；成功 void |
 | `verify_otp` | `{email,token}` | Supabase `POST /auth/v1/verify` type=email；再向 auth user 端点验证并返回 `{id,email}` |
 | `current_user` | 无 | 通过刷新凭证及 auth user 端点返回 `{id,email}`；未登录 null |
-| `cloud_request` | `{method,path,body?,idempotencyKey?}` | `/v1/` 云端 API 成功 JSON；原生添加 bearer，不返回凭证 |
+| `cloud_request` | `{method,path,body?,idempotencyKey?,ifMatch?}` | `/v1/` 云端 API 成功 JSON；原生添加 bearer，不返回凭证 |
 | `logout` | 无 | 删除持久刷新凭证与内存访问令牌，保留服务配置 |
 
 `cloud_api_url` 为 API origin；`auth_url` 为 Supabase 项目 origin，均不带路径。远程必须 HTTPS，本机开发可用 HTTP localhost/127.0.0.1。请求禁用重定向，路径不能逃逸 `/v1/`。支持 GET/POST/PUT/PATCH/DELETE；JSON body 可选。访问令牌只在 Rust 内存，刷新凭证与服务配置在系统 credential store；Keychain/Secret Service 不可用即明确失败，无明文降级。首次请求从刷新凭证恢复会话，401 刷新一次。网络超时不会宣称写入未发生。
@@ -45,12 +50,8 @@ Supabase 邮件模板必须发送 OTP（`{{ .Token }}`），该实现不是浏�
 
 本地 install 只导入 registry，activate 是独立步骤；界面应先显示各自预览并分别提交，结果不得合并伪装成跨目标事务。引擎仍执行自身组织策略、信任与冲突检查，native 不提供绕过标志，也不会运行 Skill 脚本。当前 install/activate dry-run 不提供冻结计划 token，apply 会重新执行引擎检查；不宣称具备“预览后内容变化必定失效”的新事务保证。
 
-云端 provider 安装、包读取上传/下载、更新/回滚和云端来源身份接入尚未由此壳实现。不得将下载到临时目录的云端内容当 local source 冒充云端安装。后续应新增受限具名命令并使用引擎真实 provider 契约，凭证通过 native IPC/stdin 传递，不加入命令行。
+团队包有真实 team 来源身份，包括服务 origin、team/skill/version ID 与摘要。原生只在本地临时目录保存下载输入，引擎在预览返回前把候选内容存入 registry 的事务目录；apply 不依赖下载临时目录仍存在。更新会预览所有已有投影目标，使用引擎现有事务与恢复日志更新来源、provenance、lock 和投影。来源身份不能被临时路径伪装为 local provider。首次导入不自动激活。
 
-测试只验证 native 输入边界，不操作用户 Skill 目录。需要另行完成真实 keychain/OTP 服务、桌面 UI、干净机器 Git 缺失、Agent 可见性、安装中断恢复、签名包验收。涉及认证、凭证和进程调用，发布前需要人工审查。
-
-## 本次原生验证
-
-2026-09-08 在 macOS Apple Silicon 上完成 5 个 native 边界单元测试。隔离 checkout 当时没有团队前端 dist，测试使用 `TAURI_CONFIG='{"build":{"frontendDist":".artifacts/ui"}}' cargo test --manifest-path desktop/Cargo.toml --locked`，其中 `.artifacts/ui/team.html` 是仅供编译的临时 fixture。sidecar 编译资源使用本机既有 debug loom，未在此测试启动它；正式包必须运行上述 prepare 脚本。未将这些结果视为完整 UI、正式发布包或身份服务验收。图标由已有 `panel/public/favicon.svg` 渲染，没有新增品牌设计。日志在忽略目录 `.artifacts/`。
+本次只构建 macOS Apple Silicon 的未签名本地 App。真实托管 OTP、Keychain 端到端、干净机器 Git 缺失、各 Agent 会话可见性、签名公证与团队内测尚未验收。认证、凭证和进程调用发布前需要人工审查。测试与产物证据见 [实施验收记录](../docs/plan/loom-desktop-cloud-verification.md)。
 
 POST 云端请求携带 Idempotency-Key，调用者可传入稳定 `idempotencyKey` 以便超时后重试；不传则每次 native 调用生成 UUID，内部 401 重试复用同一值。

@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod cloud;
 mod local;
+mod packages;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -24,7 +25,12 @@ fn main() {
             cloud::verify_otp,
             cloud::current_user,
             cloud::cloud_request,
-            cloud::logout
+            cloud::logout,
+            packages::preview_publish,
+            packages::publish_skill,
+            packages::preview_team_install,
+            local::apply_plan,
+            local::initialize_registry
         ])
         .run(tauri::generate_context!())
         .expect("Loom desktop runtime failed");

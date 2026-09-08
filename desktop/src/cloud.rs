@@ -204,8 +204,31 @@ pub async fn cloud_request(
     path: String,
     body: Option<Value>,
     idempotency_key: Option<String>,
+    if_match: Option<String>,
 ) -> Result<Value> {
-    let method = match method.as_str() {
+    let response = authorized_response(
+        &state,
+        &method,
+        &path,
+        body,
+        None,
+        idempotency_key,
+        if_match,
+    )
+    .await?;
+    json_response(response).await
+}
+
+pub(crate) async fn authorized_response(
+    state: &CloudState,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+    artifact: Option<Vec<u8>>,
+    idempotency_key: Option<String>,
+    if_match: Option<String>,
+) -> Result<Response> {
+    let method = match method {
         "GET" => Method::GET,
         "POST" => Method::POST,
         "PUT" => Method::PUT,
@@ -215,7 +238,7 @@ pub async fn cloud_request(
     };
     let mut session = state.0.lock().await;
     let mut saved = load()?;
-    let url = endpoint(&saved.config.cloud_api_url, &path)?;
+    let url = endpoint(&saved.config.cloud_api_url, path)?;
     if session.is_none() {
         let refresh = saved.refresh_token.clone().ok_or("请先登录")?;
         *session = Some(
@@ -235,7 +258,24 @@ pub async fn cloud_request(
         if method == Method::POST {
             request = request.header("Idempotency-Key", &request_key);
         }
-        if let Some(body) = &body {
+        if let Some(revision) = &if_match {
+            request = request.header(reqwest::header::IF_MATCH, revision);
+        }
+        if let Some(bytes) = &artifact {
+            let form = reqwest::multipart::Form::new()
+                .text(
+                    "metadata",
+                    body.as_ref().ok_or("发布元数据缺失")?.to_string(),
+                )
+                .part(
+                    "artifact",
+                    reqwest::multipart::Part::bytes(bytes.clone())
+                        .file_name("skill.tar.gz")
+                        .mime_str("application/gzip")
+                        .map_err(|e| e.to_string())?,
+                );
+            request = request.multipart(form);
+        } else if let Some(body) = &body {
             request = request.json(body);
         }
         Ok::<_, String>(request)
@@ -260,8 +300,13 @@ pub async fn cloud_request(
             .await
             .map_err(|_| "云端连接失败".to_string())?;
     }
+    Ok(response)
+}
+
+pub(crate) async fn response_json(response: Response) -> Result<Value> {
     json_response(response).await
 }
+
 #[tauri::command]
 pub async fn logout(state: State<'_, CloudState>) -> Result<()> {
     let mut session = state.0.lock().await;

@@ -37,6 +37,11 @@ Loom can import from local directories, Git URLs, and GitHub locators, but it is
 
 ## Quick Start
 
+The desktop and private team registry are available as a source-build preview:
+[desktop build and native bridge](desktop/README.md), [cloud setup](cloud/README.md),
+and [design and implementation scope](docs/plan/loom-desktop-cloud-design.md).
+The team UI is `panel/team.html`. This preview is not a signed desktop release or a hosted service.
+
 ```bash
 # 1. Install the latest prebuilt release (recommended)
 # Review the installer first: https://github.com/majiayu000/loom/blob/main/scripts/install.sh

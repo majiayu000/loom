@@ -1,0 +1,52 @@
+name: Team App
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cloud:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: loom_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d loom_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      LOOM_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/loom_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --manifest-path cloud/Cargo.toml -- --check
+      - run: cargo test --manifest-path cloud/Cargo.toml --locked
+
+  desktop:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: make panel-build
+      - run: ./desktop/scripts/prepare-sidecar.sh
+      - run: cargo fmt --manifest-path desktop/Cargo.toml -- --check
+      - run: cargo test --manifest-path desktop/Cargo.toml --locked
+      - name: Build local app bundle
+        working-directory: desktop
+        run: bunx @tauri-apps/cli@2.11.4 build --debug --bundles app

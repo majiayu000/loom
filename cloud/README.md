@@ -20,7 +20,7 @@
 
 运行 `cargo run --manifest-path cloud/Cargo.toml --release`。启动自动应用迁移；`GET /v1/health` 检查数据库连通性。生产入口必须提供 TLS。Auth 必须使用 RS256 或 ES256 JWT，验证签名、kid、issuer、audience、exp、sub；不存在开发登录或可信身份头。验证 `nbf` 并禁用时间宽限；JWKS 仅从配置 HTTPS 地址读取，禁止重定向，超时 10 秒、最大 1 MiB。未知 kid 触发刷新，互斥锁合并并发请求；全局至少间隔 30 秒，缓存最长 5 分钟。刷新失败明确 503，过期缓存不继续授权；冷却期间新轮换 key 可能需最多 30 秒后重试。数据库不得通过 Supabase Data API 对客户端开放；迁移撤销 PUBLIC 表权限，部署者还需撤销其平台上 anon/authenticated 等显式角色授权。不要向浏览器发放数据库凭证。
 
-邮箱邀请要求 JWT 顶层 `email_verified: true` 与 `email`。使用 Supabase 时，需由可信 Auth custom access-token hook 根据身份服务已确认邮箱状态生成此声明；不要从用户可编辑 metadata 推断验证状态。未配置该声明时接受邀请明确返回 403。Web OTP/PKCE 与令牌刷新由客户端身份服务集成负责，API 不保存浏览器会话。
+邮箱邀请要求 JWT 顶层 `email_verified: true` 与 `email`。使用 Supabase 时，在 Auth 项目执行 [supabase-email-hook.sql](supabase-email-hook.sql)，并在 Authentication → Hooks 启用 `public.loom_access_token_hook`；如已有 hook，应把已确认邮箱判断合入已有函数。此脚本需部署者审阅后手动执行，不属于 Loom 自动迁移。它只读取 `auth.users.email_confirmed_at` 和实际邮箱，不信任用户 metadata，并保留原有 claims。配置完成后重新登录取得新 JWT；未配置时接受邀请明确返回 403。接入方式依据 [Supabase Custom Access Token Hook](https://supabase.com/docs/guides/auth/auth-hooks/custom-access-token-hook) 与 [权限说明](https://supabase.com/docs/guides/auth/auth-hooks)。API 不保存浏览器会话。
 
 每日运行同一二进制 `loom-cloud --gc`（仅需要数据库和存储环境变量）清理超过 24 小时且两次确认未引用的 UUID 对象和过期幂等记录。原始 artifact key 不返回给客户端。备份恢复演练、真实 Auth 账户、请求限流和签名生产部署仍需上线前验收；当前未声称生产上线。
 

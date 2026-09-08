@@ -39,6 +39,37 @@ const version = {
   created_at: "2026-09-08",
 };
 describe("cloud detail workflows", () => {
+  it("reuses the team creation key after an ambiguous failure and renews it for changed input", async () => {
+    const failure = vi.fn();
+    const retryRun = async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+      } catch (error) {
+        failure(error);
+      }
+    };
+    const done = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(client.request)
+      .mockRejectedValueOnce(new Error("connection interrupted"))
+      .mockResolvedValue({ team: { id: "t" } });
+    render(<TeamForms run={retryRun} done={done} />);
+    fireEvent.change(screen.getByLabelText("团队名称"), {
+      target: { value: "First" },
+    });
+    fireEvent.click(screen.getByText("创建空间"));
+    await waitFor(() => expect(failure).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByText("创建空间"));
+    await waitFor(() => expect(done).toHaveBeenCalledOnce());
+    const calls = vi.mocked(client.request).mock.calls;
+    expect(calls[0][1]?.idempotencyKey).toEqual(expect.any(String));
+    expect(calls[1][1]?.idempotencyKey).toBe(calls[0][1]?.idempotencyKey);
+    fireEvent.change(screen.getByLabelText("团队名称"), {
+      target: { value: "Second" },
+    });
+    fireEvent.click(screen.getByText("创建空间"));
+    await waitFor(() => expect(done).toHaveBeenCalledTimes(2));
+    expect(calls[2][1]?.idempotencyKey).not.toBe(calls[0][1]?.idempotencyKey);
+  });
   it("loads more versions, previews files as text and edits with current revision", async () => {
     vi.mocked(client.request).mockImplementation(async (path, options) => {
       if (options?.method === "PATCH")

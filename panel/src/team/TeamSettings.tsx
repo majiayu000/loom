@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { request, segment, teamPath, type Member, type Team } from "./client";
 import type { Runner } from "./operations";
 
@@ -18,6 +18,7 @@ export function TeamForms({
   run: Runner;
   done: (preferred?: string) => Promise<void>;
 }) {
+  const creation = useRef<{ name: string; key: string } | null>(null);
   const [token, setToken] = useState(
     () => new URL(window.location.href).searchParams.get("invite") ?? "",
   );
@@ -27,10 +28,18 @@ export function TeamForms({
         className="team-card"
         onSubmit={(e) => {
           e.preventDefault();
-          const name = new FormData(e.currentTarget).get("name");
+          const name = String(new FormData(e.currentTarget).get("name"));
+          if (creation.current?.name !== name)
+            creation.current = { name, key: crypto.randomUUID() };
+          const key = creation.current.key;
           void run(async () => {
-            await request("/v1/teams", { method: "POST", body: { name } });
+            await request("/v1/teams", {
+              method: "POST",
+              body: { name },
+              idempotencyKey: key,
+            });
             await done();
+            if (creation.current?.key === key) creation.current = null;
           });
         }}
       >

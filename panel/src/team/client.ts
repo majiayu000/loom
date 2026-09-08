@@ -155,6 +155,7 @@ export async function request<T>(
       method: options.method ?? "GET",
       path,
       body: options.body ?? null,
+      idempotencyKey: options.idempotencyKey ?? null,
       ifMatch: options.ifMatch === undefined ? null : String(options.ifMatch),
     });
     options.signal?.throwIfAborted();

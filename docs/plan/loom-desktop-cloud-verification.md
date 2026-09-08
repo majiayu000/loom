@@ -20,9 +20,9 @@
 | Cloud | 临时独立 PostgreSQL，5 项测试通过；包括迁移、邀请、租户隔离、并发发布、不可变内容、条件推荐、真实签名 JWT 与密钥轮换。`cloud-tests.log` |
 | Auth hook | 临时数据库模拟 Supabase Auth 表与角色，验证已确认邮箱、未确认邮箱、邮箱不匹配和函数执行权限。`hook-check.log`。不等于真实托管 OTP 验收 |
 | Native | 10 项测试通过；包括路径/参数边界、包摘要、链接和 FIFO 拒绝、非 UTF-8 名称拒绝。`desktop-tests.log` |
-| Frontend | 全量前端 217 项测试通过，团队部分 24 项；TypeScript 检查、lint 与生产构建通过。全库 lint 有 200 条既有警告，团队新增目录单独检查无警告。`frontend-final.log` |
+| Frontend | 全量前端 219 项测试通过，团队部分 26 项；TypeScript 检查、lint 与生产构建通过。全库 lint 有 200 条既有警告，团队新增目录单独检查无警告。`frontend-final.log` |
 | Browser | 登录页与详情页在桌面和窄屏检查；详情使用明确标注的测试数据，不能当作真实云端账户联调证据 |
-| Engine | 团队安装 11 项、命令契约 32 项；inspect 23、provenance 12、workspace init 18、convergence 160、input review 16、org policy 3、provider 2 项回归通过；新增 archive/snapshot/cleanup 检查通过。工作线程 lint、fmt、模块上限通过，35 条既有接近阈值提示。整合输出 `engine-final.log`，工作线程分组日志 `worker-engine-*.log` |
+| Engine | 团队安装 11 项、命令契约 32 项；inspect 23、provenance 12、workspace init 18、convergence 160、input review 16、org policy 3、provider 2 项回归通过；新增 archive/snapshot/cleanup 检查通过。工作线程 lint、fmt、模块上限通过，35 条既有接近阈值提示。干净 checkout 最终 43 项通过，输出 `engine-clean-final.log`，工作线程分组日志 `worker-engine-*.log` |
 
 原生文件读取审查发现的链接/FIFO 竞态和有损文件名问题已修复，并经只读复核关闭。云端审查发现的条件更新 header、JWT nbf 和密钥刷新问题已修复。一次非 UTF-8 文件测试受到 APFS 文件名限制而失败，改为直接测试实际收集入口使用的 UTF-8 边界，保留拒绝断言。
 
@@ -37,3 +37,7 @@
 认证、凭证和进程调用在公开发布前仍需人工审阅。新增 CI 工作流尚未推送，不能宣称远端 CI 已通过。
 
 整合构建发现 `build.rs` 未复制新增 `team.html`，已补齐复制及重新构建触发。当前主目录有 Git 忽略的旧 `skills/loom/SKILL.md`，使严格命令 inventory 检查发现未登记的本机命令面；保留此用户本地文件，最终契约验收使用 `/tmp/loom-team-final-20260908` 干净 checkout，不修改检查规则。
+
+最终桌面产物位于 `desktop/target/debug/bundle/macos/Loom.app`。已用真实 Tauri 窗口验证无需登录进入本机页面、通过包内 CLI 初始化 `/tmp/loom-desktop-smoke-20260908` 并读取本机清单。清单包含已发现但未导入的 Agent 技能，界面提供显式目录导入和预览确认。包内 CLI 与本次源码构建的 sidecar SHA-256 一致，见 `native-smoke.json`；最终构建日志 `desktop-final-bundle.log`。托管认证与团队网络全链路不在此原生冒烟结果内。
+
+线程日志校验脚本只登记旧宿主的 `multi_agent_v1.spawn_agent`；本次在调用进程内登记实际的 `collaboration.spawn_agent` 后使用原 helper 追加，保留其余证据校验、隐私清理和文件锁；未修改安装的 Skill 文件。

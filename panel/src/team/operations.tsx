@@ -612,6 +612,7 @@ export function LocalSkills({ run }: { run: Runner }) {
                     void act(async () => {
                       setSelected(s);
                       setInspection(null);
+                      if (s.source_status === "missing") return;
                       setInspection(
                         requireSuccess(
                           await native<Envelope>("inspect_skill", {

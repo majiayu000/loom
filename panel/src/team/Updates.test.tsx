@@ -49,6 +49,22 @@ function app(team = "team-a") {
   );
 }
 describe("installed team version comparison", () => {
+  it("does not inspect discovered skills that have not been imported", async () => {
+    vi.mocked(client.native).mockImplementation(async (name, args) => {
+      if (name === "local_skills") return {
+        ok: true, data: { skills: [
+          { skill_id: "discovered", source_status: "missing" },
+          { skill_id: "review", source_status: "present" },
+        ] },
+      };
+      if (args?.skill !== "review") throw new Error("unmanaged source cannot be inspected");
+      return { ok: true, data: { provenance: { team: source } } };
+    });
+    render(app());
+    fireEvent.click(screen.getByText("检查本机版本"));
+    expect(await screen.findByText("可更新：团队推荐版本已变化。")).toBeInTheDocument();
+    expect(client.native).not.toHaveBeenCalledWith("inspect_skill", expect.objectContaining({ skill: "discovered" }));
+  });
   it("does not count a same slug from another service, team, or skill as installed", async () => {
     const sources = {
       review: { ...source, service_origin: "https://other.example.test" },

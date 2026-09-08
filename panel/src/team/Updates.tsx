@@ -62,7 +62,9 @@ export function Updates({
           await native<Envelope>("local_skills", { root: root || null }),
         );
         if (current !== generation.current) return;
-        const rows = inventory.skills as { skill_id: string }[];
+        const rows = (
+          inventory.skills as { skill_id: string; source_status?: string }[]
+        ).filter((row) => row.source_status !== "missing");
         const found: Installed[] = [];
         for (const [index, row] of rows.entries()) {
           setProgress(`检查本机来源 ${index + 1} / ${rows.length}`);

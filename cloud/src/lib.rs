@@ -6,7 +6,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
 };
-use jsonwebtoken::{DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
+mod auth;
+mod teams;
+pub use auth::JwksCache;
+use auth::auth;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -16,6 +19,7 @@ use std::{
     path::{Component, PathBuf},
     sync::Arc,
 };
+use teams::*;
 use uuid::Uuid;
 
 pub const MAX_UPLOAD: usize = 10 * 1024 * 1024;
@@ -25,7 +29,7 @@ pub struct App {
     pub storage: PathBuf,
     pub issuer: String,
     pub audience: String,
-    pub jwks: Arc<JwkSet>,
+    pub jwks: Arc<JwksCache>,
 }
 #[derive(Clone, Deserialize)]
 struct Identity {
@@ -70,43 +74,6 @@ fn ok(v: Value) -> Json<Value> {
 fn hash(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))
 }
-async fn auth(
-    State(a): State<App>,
-    mut req: Request<axum::body::Body>,
-    next: Next,
-) -> Result<Response> {
-    let token = req
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Bearer token required"))?;
-    let h = decode_header(token).map_err(|_| err(StatusCode::UNAUTHORIZED, "Invalid token"))?;
-    if !matches!(
-        h.alg,
-        jsonwebtoken::Algorithm::RS256 | jsonwebtoken::Algorithm::ES256
-    ) {
-        return Err(err(StatusCode::UNAUTHORIZED, "Unsupported token algorithm"));
-    }
-    let jwk = a
-        .jwks
-        .find(h.kid.as_deref().unwrap_or(""))
-        .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Unknown signing key"))?;
-    let key = DecodingKey::from_jwk(jwk)
-        .map_err(|_| err(StatusCode::UNAUTHORIZED, "Invalid signing key"))?;
-    let mut v = Validation::new(h.alg);
-    v.set_issuer(&[&a.issuer]);
-    v.set_audience(&[&a.audience]);
-    v.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
-    let identity = decode::<Identity>(token, &key, &v)
-        .map_err(|_| err(StatusCode::UNAUTHORIZED, "Invalid or expired token"))?
-        .claims;
-    if identity.sub.is_empty() {
-        return Err(err(StatusCode::UNAUTHORIZED, "Missing subject"));
-    }
-    req.extensions_mut().insert(identity);
-    Ok(next.run(req).await)
-}
 pub fn router(a: App) -> Router {
     Router::new()
         .route("/v1/me/teams", get(teams))
@@ -129,6 +96,10 @@ pub fn router(a: App) -> Router {
         .route(
             "/v1/teams/{team}/skills/{skill}/recommendation",
             put(recommend),
+        )
+        .route(
+            "/v1/teams/{team}/skills/{skill}/versions/{version}",
+            get(version_detail),
         )
         .route(
             "/v1/teams/{team}/skills/{skill}/versions/{version}/artifact",
@@ -174,260 +145,6 @@ async fn health(State(a): State<App>) -> Result<Json<Value>> {
     Ok(ok(json!({"status":"ready"})))
 }
 type User = axum::Extension<Identity>;
-async fn member(a: &App, t: Uuid, u: &str) -> Result<String> {
-    sqlx::query_scalar("SELECT owner_user_id FROM teams JOIN memberships ON teams.id=memberships.team_id WHERE teams.id=$1 AND user_id=$2").bind(t).bind(u).fetch_optional(&a.db).await?.ok_or_else(||err(StatusCode::NOT_FOUND,"Team not found"))
-}
-async fn locked<'a>(a: &'a App, t: Uuid, u: &str) -> Result<(Transaction<'a, Postgres>, String)> {
-    let mut tx = a.db.begin().await?;
-    let owner: String =
-        sqlx::query_scalar("SELECT owner_user_id FROM teams WHERE id=$1 FOR UPDATE")
-            .bind(t)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| err(StatusCode::NOT_FOUND, "Team not found"))?;
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM memberships WHERE team_id=$1 AND user_id=$2)",
-    )
-    .bind(t)
-    .bind(u)
-    .fetch_one(&mut *tx)
-    .await?;
-    if !exists {
-        return Err(err(StatusCode::NOT_FOUND, "Team not found"));
-    }
-    Ok((tx, owner))
-}
-fn owner(o: &str, u: &str) -> Result<()> {
-    if o != u {
-        Err(err(StatusCode::FORBIDDEN, "Owner required"))
-    } else {
-        Ok(())
-    }
-}
-async fn event(
-    tx: &mut Transaction<'_, Postgres>,
-    t: Uuid,
-    u: &str,
-    action: &str,
-    id: Uuid,
-) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO team_events(id,team_id,actor_id,action,subject_id) VALUES($1,$2,$3,$4,$5)",
-    )
-    .bind(Uuid::new_v4())
-    .bind(t)
-    .bind(u)
-    .bind(action)
-    .bind(id)
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
-}
-async fn teams(State(a): State<App>, axum::Extension(u): User) -> Result<Json<Value>> {
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',t.id,'name',t.name,'owner_user_id',t.owner_user_id) FROM teams t JOIN memberships m ON m.team_id=t.id WHERE m.user_id=$1 ORDER BY t.created_at,t.id").bind(u.sub).fetch_all(&a.db).await?;
-    Ok(ok(json!({"teams":rows})))
-}
-fn required(v: &Value, k: &str) -> Result<String> {
-    let s = v[k]
-        .as_str()
-        .filter(|s| !s.trim().is_empty() && s.len() <= 8192)
-        .ok_or_else(|| bad(&format!("Invalid {k}")))?;
-    Ok(s.to_owned())
-}
-fn key(h: &HeaderMap) -> Result<String> {
-    h.get("idempotency-key")
-        .and_then(|s| s.to_str().ok())
-        .filter(|s| !s.is_empty() && s.len() <= 200)
-        .map(str::to_owned)
-        .ok_or_else(|| bad("Idempotency-Key required"))
-}
-async fn replay(
-    tx: &mut Transaction<'_, Postgres>,
-    u: &str,
-    t: Uuid,
-    op: &str,
-    k: &str,
-    d: &str,
-) -> Result<Option<Value>> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
-        .bind(format!("{u}:{t}:{op}:{k}"))
-        .execute(&mut **tx)
-        .await?;
-    let r=sqlx::query("SELECT request_digest,result FROM idempotency_requests WHERE actor_id=$1 AND team_id=$2 AND operation=$3 AND key=$4 AND expires_at>now()").bind(u).bind(t).bind(op).bind(k).fetch_optional(&mut **tx).await?;
-    if let Some(r) = r {
-        if r.get::<String, _>(0) != d {
-            return Err(err(
-                StatusCode::CONFLICT,
-                "Idempotency key reused with different content",
-            ));
-        }
-        return Ok(Some(r.get(1)));
-    }
-    Ok(None)
-}
-async fn remember(
-    tx: &mut Transaction<'_, Postgres>,
-    u: &str,
-    t: Uuid,
-    op: &str,
-    k: &str,
-    d: &str,
-    v: &Value,
-) -> Result<()> {
-    sqlx::query("INSERT INTO idempotency_requests(actor_id,team_id,operation,key,request_digest,result) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(actor_id,team_id,operation,key) DO UPDATE SET request_digest=EXCLUDED.request_digest,result=EXCLUDED.result,expires_at=EXCLUDED.expires_at").bind(u).bind(t).bind(op).bind(k).bind(d).bind(v).execute(&mut **tx).await?;
-    Ok(())
-}
-async fn create_team(
-    State(a): State<App>,
-    axum::Extension(u): User,
-    h: HeaderMap,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    let name = required(&v, "name")?;
-    let k = key(&h)?;
-    let d = hash(v.to_string().as_bytes());
-    let mut tx = a.db.begin().await?;
-    if let Some(v) = replay(&mut tx, &u.sub, Uuid::nil(), "create-team", &k, &d).await? {
-        return Ok(ok(v));
-    }
-    let t = Uuid::new_v4();
-    sqlx::query("INSERT INTO teams(id,name,owner_user_id) VALUES($1,$2,$3)")
-        .bind(t)
-        .bind(&name)
-        .bind(&u.sub)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("INSERT INTO memberships(team_id,user_id) VALUES($1,$2)")
-        .bind(t)
-        .bind(&u.sub)
-        .execute(&mut *tx)
-        .await?;
-    event(&mut tx, t, &u.sub, "team.created", t).await?;
-    let v = json!({"team":{"id":t,"name":name,"owner_user_id":u.sub}});
-    remember(&mut tx, &u.sub, Uuid::nil(), "create-team", &k, &d, &v).await?;
-    tx.commit().await?;
-    Ok(ok(v))
-}
-async fn members(
-    State(a): State<App>,
-    axum::Extension(u): User,
-    Path(t): Path<Uuid>,
-) -> Result<Json<Value>> {
-    member(&a, t, &u.sub).await?;
-    let rows: Vec<Value> = sqlx::query_scalar(
-        "SELECT to_jsonb(m) FROM memberships m WHERE team_id=$1 ORDER BY joined_at,user_id",
-    )
-    .bind(t)
-    .fetch_all(&a.db)
-    .await?;
-    Ok(ok(json!({"members":rows})))
-}
-async fn remove_member(
-    State(a): State<App>,
-    axum::Extension(u): User,
-    Path((t, target)): Path<(Uuid, String)>,
-) -> Result<Json<Value>> {
-    let (mut tx, o) = locked(&a, t, &u.sub).await?;
-    if target == o {
-        return Err(err(StatusCode::CONFLICT, "Transfer ownership first"));
-    }
-    if target != u.sub {
-        owner(&o, &u.sub)?
-    }
-    sqlx::query("UPDATE skills SET maintainer_id=$3,revision=revision+1,updated_at=now() WHERE team_id=$1 AND maintainer_id=$2").bind(t).bind(&target).bind(o).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM memberships WHERE team_id=$1 AND user_id=$2")
-        .bind(t)
-        .bind(target)
-        .execute(&mut *tx)
-        .await?;
-    event(&mut tx, t, &u.sub, "member.removed", t).await?;
-    tx.commit().await?;
-    Ok(ok(json!({})))
-}
-async fn transfer_owner(
-    State(a): State<App>,
-    axum::Extension(u): User,
-    Path(t): Path<Uuid>,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    let target = required(&v, "user_id")?;
-    let (mut tx, o) = locked(&a, t, &u.sub).await?;
-    owner(&o, &u.sub)?;
-    sqlx::query("UPDATE teams SET owner_user_id=$2 WHERE id=$1")
-        .bind(t)
-        .bind(target)
-        .execute(&mut *tx)
-        .await?;
-    event(&mut tx, t, &u.sub, "owner.transferred", t).await?;
-    tx.commit().await?;
-    Ok(ok(json!({})))
-}
-async fn invite(
-    State(a): State<App>,
-    axum::Extension(u): User,
-    Path(t): Path<Uuid>,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    let email = required(&v, "email")?.trim().to_lowercase();
-    if !email.contains('@') {
-        return Err(bad("Invalid email"));
-    }
-    let (mut tx, o) = locked(&a, t, &u.sub).await?;
-    owner(&o, &u.sub)?;
-    let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-    let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO invitations(id,team_id,email,token_hash,expires_at,created_by) VALUES($1,$2,$3,$4,now()+interval '7 days',$5)").bind(id).bind(t).bind(email).bind(hash(token.as_bytes())).bind(&u.sub).execute(&mut *tx).await?;
-    event(&mut tx, t, &u.sub, "invitation.created", id).await?;
-    tx.commit().await?;
-    Ok(ok(
-        json!({"invitation":{"id":id,"token":token,"expires_in_seconds":604800}}),
-    ))
-}
-async fn revoke(
-    State(a): State<App>,
-    axum::Extension(u): User,
-    Path((t, id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<Value>> {
-    let (mut tx, o) = locked(&a, t, &u.sub).await?;
-    owner(&o, &u.sub)?;
-    sqlx::query("UPDATE invitations SET revoked_at=now() WHERE team_id=$1 AND id=$2 AND accepted_at IS NULL").bind(t).bind(id).execute(&mut *tx).await?;
-    event(&mut tx, t, &u.sub, "invitation.revoked", id).await?;
-    tx.commit().await?;
-    Ok(ok(json!({})))
-}
-async fn accept(
-    State(a): State<App>,
-    axum::Extension(u): User,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    if !u.email_verified {
-        return Err(err(StatusCode::FORBIDDEN, "Verified email required"));
-    }
-    let token = required(&v, "token")?;
-    let mut tx = a.db.begin().await?;
-    let r=sqlx::query("SELECT id,team_id,email FROM invitations WHERE token_hash=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE").bind(hash(token.as_bytes())).fetch_optional(&mut *tx).await?.ok_or_else(||bad("Invitation invalid, used or expired"))?;
-    let email: String = r.get("email");
-    if u.email.as_deref().map(|e| e.trim().to_lowercase()) != Some(email) {
-        return Err(err(
-            StatusCode::FORBIDDEN,
-            "Invitation email does not match",
-        ));
-    }
-    let t: Uuid = r.get("team_id");
-    let id: Uuid = r.get("id");
-    sqlx::query("INSERT INTO memberships(team_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
-        .bind(t)
-        .bind(&u.sub)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("UPDATE invitations SET accepted_at=now() WHERE id=$1")
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-    event(&mut tx, t, &u.sub, "invitation.accepted", id).await?;
-    tx.commit().await?;
-    Ok(ok(json!({"team_id":t})))
-}
 #[derive(Deserialize)]
 struct Listing {
     q: Option<String>,
@@ -835,6 +552,23 @@ async fn bytes(a: &App, v: &Value) -> Result<Vec<u8>> {
     }
     Ok(b)
 }
+async fn version_detail(
+    State(a): State<App>,
+    axum::Extension(u): User,
+    Path((t, s, v)): Path<(Uuid, Uuid, Uuid)>,
+) -> Result<Json<Value>> {
+    member(&a, t, &u.sub).await?;
+    let mut row = version(&a, t, s, v).await?;
+    row.as_object_mut()
+        .ok_or_else(|| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Invalid version metadata",
+            )
+        })?
+        .remove("artifact_key");
+    Ok(ok(json!({"version":row})))
+}
 async fn artifact(
     State(a): State<App>,
     axum::Extension(u): User,
@@ -898,322 +632,4 @@ async fn file(
     Err(err(StatusCode::INTERNAL_SERVER_ERROR, "Manifest mismatch"))
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    fn pack(path: &str, kind: tar::EntryType, content: &[u8]) -> Vec<u8> {
-        let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        let mut b = tar::Builder::new(gz);
-        let mut h = tar::Header::new_gnu();
-        h.set_size(content.len() as u64);
-        h.set_mode(0o644);
-        h.set_entry_type(kind);
-        h.set_cksum();
-        b.append_data(&mut h, path, content).unwrap();
-        b.into_inner().unwrap().finish().unwrap()
-    }
-    #[test]
-    fn archive_boundary() {
-        assert!(validate_archive(&pack("SKILL.md", tar::EntryType::Regular, b"hello")).is_ok());
-        for p in [".env", ".git/config", "nested/SKILL.md"] {
-            assert!(validate_archive(&pack(p, tar::EntryType::Regular, b"secret")).is_err());
-        }
-        assert!(validate_archive(&pack("SKILL.md", tar::EntryType::Symlink, b"")).is_err());
-        assert!(validate_archive(&vec![0; MAX_UPLOAD + 1]).is_err());
-    }
-    #[tokio::test]
-    async fn postgres_team_and_invitation_isolation() {
-        let url = std::env::var("LOOM_TEST_DATABASE_URL")
-            .expect("Set LOOM_TEST_DATABASE_URL to a disposable PostgreSQL database");
-        let db = PgPool::connect(&url).await.unwrap();
-        sqlx::migrate!("./migrations").run(&db).await.unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let a = App {
-            db,
-            storage: tmp.path().into(),
-            issuer: "https://test.invalid".into(),
-            audience: "test".into(),
-            jwks: Arc::new(JwkSet { keys: vec![] }),
-        };
-        let alice = Identity {
-            sub: Uuid::new_v4().to_string(),
-            email: Some("alice@example.test".into()),
-            email_verified: true,
-        };
-        let bob = Identity {
-            sub: Uuid::new_v4().to_string(),
-            email: Some("bob@example.test".into()),
-            email_verified: true,
-        };
-        let mut h = HeaderMap::new();
-        h.insert(
-            "idempotency-key",
-            Uuid::new_v4().to_string().parse().unwrap(),
-        );
-        let v = json!({"name":"Test team"});
-        let first = create_team(
-            State(a.clone()),
-            axum::Extension(alice.clone()),
-            h.clone(),
-            Json(v.clone()),
-        )
-        .await
-        .unwrap()
-        .0["data"]
-            .clone();
-        let retry = create_team(
-            State(a.clone()),
-            axum::Extension(alice.clone()),
-            h.clone(),
-            Json(v),
-        )
-        .await
-        .unwrap()
-        .0["data"]
-            .clone();
-        assert_eq!(first, retry);
-        assert_eq!(
-            create_team(
-                State(a.clone()),
-                axum::Extension(alice.clone()),
-                h,
-                Json(json!({"name":"other"}))
-            )
-            .await
-            .unwrap_err()
-            .0,
-            StatusCode::CONFLICT
-        );
-        let t = first["team"]["id"].as_str().unwrap().parse().unwrap();
-        assert!(member(&a, t, &bob.sub).await.is_err());
-        let invitation = invite(
-            State(a.clone()),
-            axum::Extension(alice.clone()),
-            Path(t),
-            Json(json!({"email":"bob@example.test"})),
-        )
-        .await
-        .unwrap()
-        .0["data"]["invitation"]
-            .clone();
-        let token = json!({"token":invitation["token"]});
-        assert_eq!(
-            accept(
-                State(a.clone()),
-                axum::Extension(alice.clone()),
-                Json(token.clone())
-            )
-            .await
-            .unwrap_err()
-            .0,
-            StatusCode::FORBIDDEN
-        );
-        let _ = accept(
-            State(a.clone()),
-            axum::Extension(bob.clone()),
-            Json(token.clone()),
-        )
-        .await
-        .unwrap();
-        assert!(
-            accept(State(a.clone()), axum::Extension(bob.clone()), Json(token))
-                .await
-                .is_err()
-        );
-        assert!(member(&a, t, &bob.sub).await.is_ok());
-        assert!(
-            remove_member(
-                State(a.clone()),
-                axum::Extension(alice.clone()),
-                Path((t, alice.sub.clone()))
-            )
-            .await
-            .is_err()
-        );
-        let _ = remove_member(
-            State(a.clone()),
-            axum::Extension(alice.clone()),
-            Path((t, bob.sub.clone())),
-        )
-        .await
-        .unwrap();
-        assert!(member(&a, t, &bob.sub).await.is_err());
-        use tower::ServiceExt;
-        let response = router(a.clone())
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/v1/teams/{t}/members"))
-                    .header("x-user-id", &alice.sub)
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let (r1, r2) = tokio::join!(
-            transfer_owner(
-                State(a.clone()),
-                axum::Extension(alice.clone()),
-                Path(t),
-                Json(json!({"user_id":bob.sub}))
-            ),
-            remove_member(
-                State(a.clone()),
-                axum::Extension(alice.clone()),
-                Path((t, bob.sub.clone()))
-            )
-        );
-        assert!(r1.is_err());
-        assert!(r2.is_ok());
-    }
-    #[tokio::test]
-    async fn postgres_publish_concurrency_and_private_download() {
-        use http_body_util::BodyExt;
-        use tower::ServiceExt;
-        let db = PgPool::connect(
-            &std::env::var("LOOM_TEST_DATABASE_URL").expect("disposable PostgreSQL required"),
-        )
-        .await
-        .unwrap();
-        sqlx::migrate!("./migrations").run(&db).await.unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let a = App {
-            db,
-            storage: dir.path().into(),
-            issuer: "test".into(),
-            audience: "test".into(),
-            jwks: Arc::new(JwkSet { keys: vec![] }),
-        };
-        let u = Identity {
-            sub: Uuid::new_v4().to_string(),
-            email: None,
-            email_verified: false,
-        };
-        let mut h = HeaderMap::new();
-        h.insert(
-            "idempotency-key",
-            Uuid::new_v4().to_string().parse().unwrap(),
-        );
-        let t: Uuid = create_team(
-            State(a.clone()),
-            axum::Extension(u.clone()),
-            h,
-            Json(json!({"name":"Publisher"})),
-        )
-        .await
-        .unwrap()
-        .0["data"]["team"]["id"]
-            .as_str()
-            .unwrap()
-            .parse()
-            .unwrap();
-        // Identity injection exists only within this test; the production router always verifies JWTs.
-        let app = Router::new()
-            .route("/v1/teams/{team}/skills", post(publish_first))
-            .route(
-                "/v1/teams/{team}/skills/{skill}/versions",
-                post(publish_next),
-            )
-            .layer(axum::Extension(u.clone()))
-            .with_state(a.clone());
-        fn request(uri: String, metadata: Value, k: &str) -> Request<axum::body::Body> {
-            let mut b=format!("--BOUNDARY\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{metadata}\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"artifact\"; filename=\"skill.tar.gz\"\r\nContent-Type: application/gzip\r\n\r\n").into_bytes();
-            b.extend(pack("SKILL.md", tar::EntryType::Regular, b"# Skill"));
-            b.extend(b"\r\n--BOUNDARY--\r\n");
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .header("content-type", "multipart/form-data; boundary=BOUNDARY")
-                .header("idempotency-key", k)
-                .body(axum::body::Body::from(b))
-                .unwrap()
-        }
-        let metadata = json!({"slug":"review","title":"Review","description":"Useful review","example":"Review changes","version":"0.1.0","release_notes":"First"});
-        let r = app
-            .clone()
-            .oneshot(request(
-                format!("/v1/teams/{t}/skills"),
-                metadata.clone(),
-                "first",
-            ))
-            .await
-            .unwrap();
-        assert_eq!(r.status(), StatusCode::OK);
-        let v: Value =
-            serde_json::from_slice(&r.into_body().collect().await.unwrap().to_bytes()).unwrap();
-        let sid: Uuid = v["data"]["skill_id"].as_str().unwrap().parse().unwrap();
-        let vid: Uuid = v["data"]["version"]["id"]
-            .as_str()
-            .unwrap()
-            .parse()
-            .unwrap();
-        let r = app
-            .clone()
-            .oneshot(request(format!("/v1/teams/{t}/skills"), metadata, "first"))
-            .await
-            .unwrap();
-        assert_eq!(r.status(), StatusCode::OK);
-        let next = json!({"version":"0.2.0","release_notes":"Second","expected_recommended_version_id":vid});
-        let other = json!({"version":"0.3.0","release_notes":"Third","expected_recommended_version_id":vid});
-        let (x, y) = tokio::join!(
-            app.clone().oneshot(request(
-                format!("/v1/teams/{t}/skills/{sid}/versions"),
-                next,
-                "second"
-            )),
-            app.oneshot(request(
-                format!("/v1/teams/{t}/skills/{sid}/versions"),
-                other,
-                "third"
-            ))
-        );
-        let statuses = [x.unwrap().status(), y.unwrap().status()];
-        assert!(statuses.contains(&StatusCode::OK));
-        assert!(statuses.contains(&StatusCode::CONFLICT));
-        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM skill_versions WHERE skill_id=$1")
-            .bind(sid)
-            .fetch_one(&a.db)
-            .await
-            .unwrap();
-        assert_eq!(n, 2);
-        assert!(
-            artifact(
-                State(a.clone()),
-                axum::Extension(u.clone()),
-                Path((t, sid, vid))
-            )
-            .await
-            .is_ok()
-        );
-        let outsider = Identity {
-            sub: Uuid::new_v4().to_string(),
-            email: None,
-            email_verified: false,
-        };
-        assert_eq!(
-            artifact(
-                State(a.clone()),
-                axum::Extension(outsider),
-                Path((t, sid, vid))
-            )
-            .await
-            .unwrap_err()
-            .0,
-            StatusCode::NOT_FOUND
-        );
-        assert!(version(&a, Uuid::new_v4(), sid, vid).await.is_err());
-        let stored = version(&a, t, sid, vid).await.unwrap();
-        tokio::fs::write(
-            a.storage.join(stored["artifact_key"].as_str().unwrap()),
-            b"tampered",
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            artifact(State(a), axum::Extension(u), Path((t, sid, vid)))
-                .await
-                .unwrap_err()
-                .0,
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-    }
-}
+mod tests;

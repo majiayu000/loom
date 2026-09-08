@@ -1,4 +1,4 @@
-use loom_cloud::{App, router};
+use loom_cloud::{App, JwksCache, router};
 use std::{path::PathBuf, sync::Arc};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -51,16 +51,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let jwks_url = std::env::var("LOOM_AUTH_JWKS_URL")?;
-    anyhow::ensure!(jwks_url.starts_with("https://"), "JWKS URL must use HTTPS");
-    let jwks = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?
-        .get(jwks_url)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let jwks = JwksCache::from_url(&jwks_url).await?;
     let app = App {
         db,
         storage,

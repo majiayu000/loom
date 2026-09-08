@@ -15,14 +15,14 @@
 | `LOOM_ARTIFACT_DIR` | 私有持久卷绝对路径 |
 | `LOOM_AUTH_ISSUER` | JWT 精确 issuer |
 | `LOOM_AUTH_AUDIENCE` | JWT audience |
-| `LOOM_AUTH_JWKS_URL` | HTTPS JWKS 地址，启动读取，密钥轮换后重启服务 |
+| `LOOM_AUTH_JWKS_URL` | HTTPS JWKS 地址；启动加载，未知 kid 与 5 分钟 TTL 触发刷新 |
 | `LOOM_CORS_ORIGINS` | 逗号分隔的精确网页 origin，禁止 `*` |
 
-运行 `cargo run --manifest-path cloud/Cargo.toml --release`。启动自动应用迁移；`GET /v1/health` 检查数据库连通性。生产入口必须提供 TLS。Auth 必须使用 RS256 或 ES256 JWT，验证签名、kid、issuer、audience、exp、sub；不存在开发登录或可信身份头。数据库不得通过 Supabase Data API 对客户端开放；迁移撤销 PUBLIC 表权限，部署者还需撤销其平台上 anon/authenticated 等显式角色授权。不要向浏览器发放数据库凭证。
+运行 `cargo run --manifest-path cloud/Cargo.toml --release`。启动自动应用迁移；`GET /v1/health` 检查数据库连通性。生产入口必须提供 TLS。Auth 必须使用 RS256 或 ES256 JWT，验证签名、kid、issuer、audience、exp、sub；不存在开发登录或可信身份头。验证 `nbf` 并禁用时间宽限；JWKS 仅从配置 HTTPS 地址读取，禁止重定向，超时 10 秒、最大 1 MiB。未知 kid 触发刷新，互斥锁合并并发请求；全局至少间隔 30 秒，缓存最长 5 分钟。刷新失败明确 503，过期缓存不继续授权；冷却期间新轮换 key 可能需最多 30 秒后重试。数据库不得通过 Supabase Data API 对客户端开放；迁移撤销 PUBLIC 表权限，部署者还需撤销其平台上 anon/authenticated 等显式角色授权。不要向浏览器发放数据库凭证。
 
 邮箱邀请要求 JWT 顶层 `email_verified: true` 与 `email`。使用 Supabase 时，需由可信 Auth custom access-token hook 根据身份服务已确认邮箱状态生成此声明；不要从用户可编辑 metadata 推断验证状态。未配置该声明时接受邀请明确返回 403。Web OTP/PKCE 与令牌刷新由客户端身份服务集成负责，API 不保存浏览器会话。
 
-每日运行同一二进制 `loom-cloud --gc`（仅需要数据库和存储环境变量）清理超过 24 小时且两次确认未引用的 UUID 对象和过期幂等记录。原始 artifact key 不返回给客户端。备份恢复演练、真实 Auth 账户、密钥轮换自动刷新、请求限流和签名生产部署仍需上线前验收；当前未声称生产上线。
+每日运行同一二进制 `loom-cloud --gc`（仅需要数据库和存储环境变量）清理超过 24 小时且两次确认未引用的 UUID 对象和过期幂等记录。原始 artifact key 不返回给客户端。备份恢复演练、真实 Auth 账户、请求限流和签名生产部署仍需上线前验收；当前未声称生产上线。
 
 ## HTTP 契约
 
@@ -40,6 +40,7 @@ JSON 成功 `{data,request_id}`，错误 `{error:{message},request_id}`。授权
 - `PATCH …/{skill}`，`If-Match: <revision>`，JSON 可含 `title,description,example,archived`；只有 owner 可以设置 `maintainer_id`。返回 `{skill}`。
 - `PUT …/{skill}/recommendation`，`{version_id,expected_version_id}` → `{skill}`。
 - `GET …/{skill}/versions?cursor=&limit=` → `{versions,next_cursor}`。
+- `GET …/{skill}/versions/{version}` → `{version}`，授权后返回固定版本元数据及 SHA-256，不暴露内部存储 key。
 - `GET …/{skill}/versions/{version}/files` → `{files}`；`…/file?path=` → `{file,text}`，超过 256 KiB 或二进制不返回文本；JSON 文本不得按 HTML 渲染。
 - `GET …/{skill}/versions/{version}/artifact` 私有下载；归档仍允许查看历史、恢复既有安装，客户端负责阻止归档 Skill 新增安装。
 
@@ -51,4 +52,4 @@ Cursor 是最后一条资源 UUID，服务端在当前租户范围解析它对�
 
 `cargo fmt --manifest-path cloud/Cargo.toml -- --check`
 
-设置 `LOOM_TEST_DATABASE_URL` 指向可丢弃 PostgreSQL 数据库，再运行 `cargo test --manifest-path cloud/Cargo.toml`。测试不会跳过缺失数据库：未配置直接失败。测试注入身份只存在 `#[cfg(test)]` 模块内，生产 HTTP 路由始终校验 JWT。覆盖归档边界、真实数据库迁移、邮箱绑定/重复邀请、移除后权限、owner 约束、创建幂等、并发发布推荐冲突、不可变重试、跨租户下载和篡改检测。测试库包含随机测试数据，应整库丢弃。
+设置 `LOOM_TEST_DATABASE_URL` 指向可丢弃 PostgreSQL 数据库，再运行 `cargo test --manifest-path cloud/Cargo.toml`。测试不会跳过缺失数据库：未配置直接失败。测试注入身份只存在 `#[cfg(test)]` 模块内，生产 HTTP 路由始终校验 JWT。覆盖归档边界、真实数据库迁移、邮箱绑定/重复邀请、移除后权限、owner 约束、创建幂等、并发发布推荐冲突、不可变重试、跨租户下载和篡改检测，以及签名 JWT 的未来 nbf 拒绝、JWKS 轮换/并发刷新限频与固定版本元数据隔离。测试库包含随机测试数据，应整库丢弃。

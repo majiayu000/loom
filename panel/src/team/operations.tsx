@@ -209,13 +209,15 @@ export function InstallSkill({
   skill,
   versions,
   run,
+  initialRoot = "",
 }: {
   team: string;
   skill: Skill;
   versions: Version[];
   run: Runner;
+  initialRoot?: string;
 }) {
-  const [root, setRoot] = useState("");
+  const [root, setRoot] = useState(initialRoot);
   const [version, setVersion] = useState(
     skill.recommended_version_id ? "recommended" : (versions[0]?.id ?? ""),
   );
@@ -276,12 +278,14 @@ export function InstallSkill({
             />
           </label>
           <p className="subtle">
-            先导入本机仓库，再选择项目激活。更新会检查现有安装与本地修改。
+            {skill.archived_at
+              ? "仅可恢复此设备已安装的同来源技能；选择固定版本进行恢复。"
+              : "先导入本机仓库，再选择项目激活。更新会检查现有安装与本地修改。"}
           </p>
           <button
             type="button"
             className="primary"
-            disabled={busy || !fixed || !!skill.archived_at}
+            disabled={busy || !fixed}
             onClick={() =>
               void act(async () => {
                 reset();
@@ -300,7 +304,7 @@ export function InstallSkill({
               })
             }
           >
-            预览安装
+            {skill.archived_at ? "预览恢复已有安装" : "预览安装"}
           </button>
           {plan && (
             <div className="team-notice">

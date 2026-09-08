@@ -73,6 +73,7 @@ function VersionFiles({ path, run }: { path: string; run: Runner }) {
 export function SkillDetail({
   team,
   initial,
+  initialRoot = "",
   owner,
   userId,
   run,
@@ -81,6 +82,7 @@ export function SkillDetail({
 }: {
   team: string;
   initial: Skill;
+  initialRoot?: string;
   owner: boolean;
   userId: string;
   run: Runner;
@@ -246,6 +248,7 @@ export function SkillDetail({
               key={`${skill.id}:${skill.recommended_version_id}`}
               team={team}
               skill={skill}
+              initialRoot={initialRoot}
               versions={versions}
               run={run}
             />

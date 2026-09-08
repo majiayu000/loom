@@ -47,6 +47,32 @@ const run = async (fn: () => Promise<void>) => {
   }
 };
 describe("native team workflows", () => {
+  it("labels archived recovery and never claims a blocked first install succeeded", async () => {
+    vi.mocked(client.native).mockResolvedValue({
+      ok: false,
+      error: { message: "Archived skill is not installed from this source" },
+    });
+    render(
+      <InstallSkill
+        team="team"
+        skill={{ ...skill, archived_at: "2026-09-08" }}
+        versions={versions}
+        run={run}
+      />,
+    );
+    fireEvent.click(screen.getByText("预览恢复已有安装"));
+    await waitFor(() =>
+      expect(errors).toContain(
+        "Error: Archived skill is not installed from this source",
+      ),
+    );
+    expect(screen.queryByText("确认导入本机仓库")).not.toBeInTheDocument();
+    expect(screen.queryByText(/已导入本机仓库/)).not.toBeInTheDocument();
+    expect(client.native).not.toHaveBeenCalledWith(
+      "apply_plan",
+      expect.anything(),
+    );
+  });
   it("binds apply to a safe preview and activates separately", async () => {
     vi.mocked(client.native).mockImplementation(async (name) =>
       name === "preview_team_install"

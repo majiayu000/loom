@@ -1,3 +1,4 @@
+import { Updates } from "./Updates";
 import { SkillDetail } from "./SkillDetail";
 import { TeamForms, TeamSettings } from "./TeamSettings";
 import { PublishForm } from "./PublishForm";
@@ -33,6 +34,7 @@ export function TeamApp() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [detail, setDetail] = useState<Skill | null>(null);
+  const [detailRoot, setDetailRoot] = useState("");
   const [search, setSearch] = useState("");
   const [archived, setArchived] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -101,7 +103,9 @@ export function TeamApp() {
         }>(`${teamPath(team)}/skills?${params}`);
         if (current !== generation.current) return;
         setSkills((old) =>
-          cursor ? [...old, ...result.skills] : result.skills,
+          cursor && page !== "updates"
+            ? [...old, ...result.skills]
+            : result.skills,
         );
         setNext(result.next_cursor ?? null);
       } catch (err) {
@@ -110,7 +114,7 @@ export function TeamApp() {
         if (current === generation.current) setLoading(false);
       }
     },
-    [team, search, archived],
+    [team, search, archived, page],
   );
 
   useEffect(() => {
@@ -126,6 +130,7 @@ export function TeamApp() {
   }, [loadSkills]);
 
   const selectSkill = (skill: Skill) => {
+    setDetailRoot("");
     setDetail(skill);
   };
 
@@ -364,6 +369,7 @@ export function TeamApp() {
             key={`${team}:${detail.id}`}
             team={team}
             initial={detail}
+            initialRoot={detailRoot}
             owner={owner}
             userId={user.id}
             run={run}
@@ -427,11 +433,6 @@ export function TeamApp() {
                 {loading ? "正在检查…" : "刷新目录 ↻"}
               </button>
             </div>
-            {page === "updates" && (
-              <p className="subtle">
-                这里显示云端目录，不代表设备安装状态。选择技能查看版本；本地修改不会被自动覆盖。
-              </p>
-            )}
             {loading && !skills.length ? (
               <div role="status" className="empty-state">
                 正在读取团队技能…
@@ -453,6 +454,18 @@ export function TeamApp() {
                   </button>
                 )}
               </div>
+            ) : page === "updates" ? (
+              <Updates
+                key={team}
+                team={team}
+                origin={config.cloud_api_url}
+                skills={skills}
+                run={run}
+                open={(skill, root) => {
+                  setDetailRoot(root);
+                  setDetail(skill);
+                }}
+              />
             ) : (
               <div className="skill-grid">
                 {skills.map((s, i) => (
@@ -484,7 +497,7 @@ export function TeamApp() {
                 disabled={loading}
                 onClick={() => void loadSkills(next)}
               >
-                加载更多
+                {page === "updates" ? "下一页" : "加载更多"}
               </button>
             )}
             {publishing && (

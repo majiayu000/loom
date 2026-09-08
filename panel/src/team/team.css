@@ -715,6 +715,7 @@ body {
 }
 .loom-team-app .archive-toggle {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 6px;
 }
@@ -725,4 +726,8 @@ body {
   margin-top: 24px;
   padding-top: 18px;
   border-top: 1px solid var(--line);
+}
+
+.update-comparison > .team-card {
+  margin-bottom: 16px;
 }

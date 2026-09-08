@@ -35,6 +35,7 @@ export function TeamApp() {
   const [next, setNext] = useState<string | null>(null);
   const [detail, setDetail] = useState<Skill | null>(null);
   const [detailRoot, setDetailRoot] = useState("");
+  const [detailName, setDetailName] = useState<string | undefined>();
   const [search, setSearch] = useState("");
   const [archived, setArchived] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -131,6 +132,7 @@ export function TeamApp() {
 
   const selectSkill = (skill: Skill) => {
     setDetailRoot("");
+    setDetailName(undefined);
     setDetail(skill);
   };
 
@@ -370,6 +372,7 @@ export function TeamApp() {
             team={team}
             initial={detail}
             initialRoot={detailRoot}
+            localName={detailName}
             owner={owner}
             userId={user.id}
             run={run}
@@ -461,8 +464,9 @@ export function TeamApp() {
                 origin={config.cloud_api_url}
                 skills={skills}
                 run={run}
-                open={(skill, root) => {
+                open={(skill, root, localName) => {
                   setDetailRoot(root);
+                  setDetailName(localName);
                   setDetail(skill);
                 }}
               />

@@ -43,6 +43,129 @@ async function login() {
 }
 
 describe("team first-run", () => {
+  it("carries a selected installed alias through update preview and project activation", async () => {
+    const skill = {
+      id: "s1",
+      slug: "review",
+      title: "Review",
+      description: "Review code",
+      example: "Try",
+      maintainer_id: "alice",
+      recommended_version_id: "v2",
+      archived_at: null,
+      revision: 1,
+    };
+    vi.mocked(cloud.isDesktop).mockReturnValue(true);
+    vi.mocked(cloud.readConfig).mockResolvedValueOnce({
+      cloud_api_url: "https://cloud.example.test",
+      auth_url: "",
+      auth_public_key: "",
+    });
+    vi.mocked(cloud.request).mockImplementation(async (path) => {
+      if (path === "/v1/me/teams")
+        return { teams: [{ id: "t1", name: "Team", owner_user_id: "alice" }] };
+      if (path.includes("/skills?")) return { skills: [skill] };
+      if (path.includes("/versions?"))
+        return {
+          versions: [
+            {
+              id: "v2",
+              version: "2.0.0",
+              sha256: "a".repeat(64),
+              created_at: "2026-09-08",
+              release_notes: "Update",
+            },
+          ],
+        };
+      return { skill };
+    });
+    vi.mocked(cloud.native).mockImplementation(async (name) => {
+      if (name === "current_user")
+        return { id: "alice", email: "alice@example.test" };
+      if (name === "local_skills")
+        return {
+          ok: true,
+          data: {
+            skills: [{ skill_id: "review-one" }, { skill_id: "review-two" }],
+          },
+        };
+      if (name === "inspect_skill")
+        return {
+          ok: true,
+          data: {
+            provenance: {
+              team: {
+                service_origin: "https://cloud.example.test",
+                team_id: "t1",
+                skill_id: "s1",
+                version_id: "v1",
+                requested_ref: "recommended",
+              },
+            },
+          },
+        };
+      if (name === "preview_team_install")
+        return {
+          ok: true,
+          data: {
+            plan_id: "p1",
+            plan_digest: "digest",
+            safe_to_apply: true,
+            execution_enabled: true,
+          },
+        };
+      if (name === "choose_directory") return "/tmp/project";
+      if (name === "preview_activate")
+        return {
+          ok: true,
+          data: { materialized_path: "/tmp/project/.agents/skills/review-two" },
+        };
+      return { ok: true, data: {} };
+    });
+    render(<TeamApp />);
+    await screen.findByText("Review");
+    fireEvent.click(screen.getByRole("button", { name: /版本更新/ }));
+    fireEvent.change(
+      await screen.findByLabelText("Registry 目录（留空使用 Loom 默认目录）"),
+      { target: { value: "/tmp/registry" } },
+    );
+    fireEvent.click(screen.getByText("检查本机版本"));
+    expect(await screen.findByText("更新本机 review-one")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("更新本机 review-two"));
+    fireEvent.click(await screen.findByText("预览安装"));
+    await waitFor(() =>
+      expect(cloud.native).toHaveBeenCalledWith(
+        "preview_team_install",
+        expect.objectContaining({
+          root: "/tmp/registry",
+          name: "review-two",
+          skill: "s1",
+        }),
+      ),
+    );
+    fireEvent.click(await screen.findByText("确认导入本机仓库"));
+    fireEvent.click(await screen.findByText("选择项目"));
+    await waitFor(() => expect(screen.getByText("预览激活")).toBeEnabled());
+    fireEvent.click(screen.getByText("预览激活"));
+    await waitFor(() =>
+      expect(cloud.native).toHaveBeenCalledWith("preview_activate", {
+        root: "/tmp/registry",
+        skill: "review-two",
+        agent: "codex",
+        workspace: "/tmp/project",
+      }),
+    );
+    fireEvent.click(await screen.findByText("确认激活到项目"));
+    await waitFor(() =>
+      expect(cloud.native).toHaveBeenCalledWith("apply_activate", {
+        root: "/tmp/registry",
+        skill: "review-two",
+        agent: "codex",
+        workspace: "/tmp/project",
+      }),
+    );
+  });
+
   it("restores the native identity before loading private teams", async () => {
     vi.mocked(cloud.isDesktop).mockReturnValue(true);
     vi.mocked(cloud.native).mockResolvedValue({

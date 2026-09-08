@@ -74,6 +74,7 @@ export function SkillDetail({
   team,
   initial,
   initialRoot = "",
+  localName,
   owner,
   userId,
   run,
@@ -83,6 +84,7 @@ export function SkillDetail({
   team: string;
   initial: Skill;
   initialRoot?: string;
+  localName?: string;
   owner: boolean;
   userId: string;
   run: Runner;
@@ -249,6 +251,7 @@ export function SkillDetail({
               team={team}
               skill={skill}
               initialRoot={initialRoot}
+              localName={localName}
               versions={versions}
               run={run}
             />

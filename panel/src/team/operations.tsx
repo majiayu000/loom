@@ -210,12 +210,14 @@ export function InstallSkill({
   versions,
   run,
   initialRoot = "",
+  localName = skill.slug,
 }: {
   team: string;
   skill: Skill;
   versions: Version[];
   run: Runner;
   initialRoot?: string;
+  localName?: string;
 }) {
   const [root, setRoot] = useState(initialRoot);
   const [version, setVersion] = useState(
@@ -244,6 +246,7 @@ export function InstallSkill({
   return (
     <div className="team-card install-card">
       <h2>安装到我的工具</h2>
+      <p>本机名称：{localName}</p>
       <label>
         版本
         <select
@@ -295,7 +298,7 @@ export function InstallSkill({
                       team,
                       skill: skill.id,
                       version: fixed,
-                      name: skill.slug,
+                      name: localName,
                       root: root || null,
                       requestedRef: version,
                     }),
@@ -383,7 +386,7 @@ export function InstallSkill({
           {installed && (
             <Activation
               key={`${skill.id}:${root}`}
-              skill={skill.slug}
+              skill={localName}
               root={root}
               run={run}
             />

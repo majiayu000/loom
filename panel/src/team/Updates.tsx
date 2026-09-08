@@ -30,7 +30,7 @@ export function Updates({
   origin: string;
   skills: Skill[];
   run: Runner;
-  open: (skill: Skill, root: string) => void;
+  open: (skill: Skill, root: string, localName?: string) => void;
 }) {
   const [root, setRoot] = useState("");
   const [installed, setInstalled] = useState<Installed[] | null>(null);
@@ -169,15 +169,23 @@ export function Updates({
                           ? "已是推荐版本。"
                           : "可更新：团队推荐版本已变化。"}
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => open(skill, root, row.name)}
+                  >
+                    更新本机 {row.name}
+                  </button>
                 </div>
               ))
             )}
             {skill.archived_at && (
               <p>已归档，仅可恢复此设备已安装的同来源技能。</p>
             )}
-            <button type="button" onClick={() => open(skill, root)}>
-              查看版本与手动预览
-            </button>
+            {matches.length === 0 && (
+              <button type="button" onClick={() => open(skill, root)}>
+                查看版本与手动预览
+              </button>
+            )}
           </article>
         );
       })}

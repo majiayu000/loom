@@ -25,6 +25,19 @@ fn id(value: &str) -> Result<()> {
         .map_err(|_| "云端资源标识无效".into())
 }
 
+fn require_existing_team(inspection: &Value, origin: &str, team: &str, skill: &str) -> Result<()> {
+    let source = &inspection["data"]["provenance"]["team"];
+    if inspection["ok"] != true
+        || inspection["data"]["source"]["exists"] != true
+        || source["service_origin"] != origin
+        || source["team_id"] != team
+        || source["skill_id"] != skill
+    {
+        return Err("已归档技能只允许恢复本机已安装的同来源技能，不能新增安装".into());
+    }
+    Ok(())
+}
+
 fn collect(
     root: &cap_std::fs::Dir,
     relative: &Path,
@@ -227,10 +240,30 @@ pub async fn preview_team_install(
     id(&team)?;
     id(&skill)?;
     id(&version)?;
+    let skill_response = cloud::authorized_response(
+        &state,
+        "GET",
+        &format!("/v1/teams/{team}/skills/{skill}"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await?;
+    let origin = skill_response.url().origin().ascii_serialization();
+    let skill_metadata = cloud::response_json(skill_response).await?;
+    let archived = !skill_metadata["data"]["skill"]["archived_at"].is_null();
+    if archived {
+        let inspection =
+            local::inspect_skill(app.clone(), root.clone(), name.clone(), None, None).await?;
+        require_existing_team(&inspection, &origin, &team, &skill)?;
+    }
     let path = format!("/v1/teams/{team}/skills/{skill}/versions/{version}");
     let metadata_response =
         cloud::authorized_response(&state, "GET", &path, None, None, None, None).await?;
-    let origin = metadata_response.url().origin().ascii_serialization();
+    if metadata_response.url().origin().ascii_serialization() != origin {
+        return Err("服务配置在预览过程中变化，请重试".into());
+    }
     let metadata = cloud::response_json(metadata_response).await?;
     let sha = metadata["data"]["version"]["sha256"]
         .as_str()
@@ -272,12 +305,43 @@ pub async fn preview_team_install(
     let manifest_path = staging.path().join("manifest.json");
     fs::write(&archive, bytes).map_err(|e| e.to_string())?;
     fs::write(&manifest_path,serde_json::to_vec(&json!({"service_origin":origin,"team_id":team,"skill_id":skill,"version_id":version,"sha256":sha,"requested_ref":requested_ref.unwrap_or_else(||version.clone())})).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
-    local::team_plan(&app, root, name, archive, manifest_path).await
+    let plan = local::team_plan(&app, root, name, archive, manifest_path).await?;
+    if archived
+        && plan["ok"] == true
+        && (plan["data"]["source"]["direction"] != "team"
+            || !plan["data"]["source"]["tree_digest"]
+                .as_str()
+                .is_some_and(|digest| digest.starts_with("sha256:")))
+    {
+        return Err("本机安装在预览过程中变化，归档技能不能新增安装".into());
+    }
+    Ok(plan)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archived_restore_requires_existing_matching_identity() {
+        let original = json!({"ok":true,"data":{"source":{"exists":true},"provenance":{"team":{
+            "service_origin":"https://team.example","team_id":"team-a","skill_id":"skill-a"
+        }}}});
+        assert!(
+            require_existing_team(&original, "https://team.example", "team-a", "skill-a").is_ok()
+        );
+        assert!(
+            require_existing_team(&original, "https://other.example", "team-a", "skill-a").is_err()
+        );
+        assert!(
+            require_existing_team(&original, "https://team.example", "team-b", "skill-a").is_err()
+        );
+        let mut missing = original.clone();
+        missing["data"]["source"]["exists"] = json!(false);
+        assert!(
+            require_existing_team(&missing, "https://team.example", "team-a", "skill-a").is_err()
+        );
+    }
     #[test]
     fn package_is_deterministic_and_rejects_private_files() {
         let temp = tempdir().unwrap();

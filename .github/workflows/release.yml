@@ -46,11 +46,18 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      # Vitest 5 (panel) requires Node ^22.12; coverage-v8 needs Node inspector APIs.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.12"
+
       - name: Tool Versions
         run: |
           rustc --version
           cargo nextest --version
           bun --version
+          node --version
 
       - name: Check tag matches Cargo version
         shell: bash

@@ -91,3 +91,9 @@
 蓝白版保留于提交 `682916d`（`codex/desktop-cloud`）及 `~/Applications/Loom-Previews/Loom-Blue.app`。新界面位于 `codex/getdesign-dark-preview`，参考 getdesign.md 首页的黑灰表面、固定侧栏、粉色标题与黄色主按钮，沿用现有业务组件。独立预览包为 `~/Applications/Loom-Previews/Loom-Dark.app`。
 
 类型检查、224 项前端测试、4 个变动文件 lint、构建与 App 打包通过。`.git/codex/studio-ui/dark-check.mjs` 使用视觉验收样本检查登录、团队、本机、更新、设置页面和搜索；390px 页面无横向溢出，无脚本错误。原生窗口已确认加载深色版邮箱登录页。未把视觉样本写入真实团队数据库。
+
+## 2026-09-10 同一 App 内切换两版界面
+
+顶部提供蓝白版/深色版切换按钮，两套样式随包分发，共用业务组件，蓝白版保留插画和顶部导航，深色版保留目录侧栏。选择保存在本机 localStorage，读取或保存失败会在页面明确报错。切换不刷新页面。独立包位于 `~/Applications/Loom-Previews/Loom-Switchable.app`，原有两个预览包保留。
+
+本次重新通过类型检查、5 项 TeamApp 测试、4 个变动 TSX 文件 lint、前端构建和 debug App 打包。Playwright 检查两版 1180px/390px 登录页无横向溢出、无脚本错误，切换保留邮箱输入及本机页位置，刷新恢复所选界面。截图位于 `/tmp/loom-switch-{blue,dark}-{1180,390}.png`。已打开新 App；本次交互验收在浏览器完成。

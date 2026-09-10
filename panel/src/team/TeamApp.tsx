@@ -1,3 +1,7 @@
+import blueStyles from "./studio-blue.css?inline";
+import darkStyles from "./studio.css?inline";
+import methodBridge from "../assets/loom-method-bridge.png";
+import paperSteps from "../assets/loom-paper-steps.png";
 import { StudioWelcome } from "./StudioWelcome";
 import { Updates } from "./Updates";
 import { LocalActivity } from "./LocalActivity";
@@ -24,6 +28,15 @@ const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 export function TeamApp() {
+  const [theme, setTheme] = useState<"blue" | "dark">("dark");
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("loom-ui-theme");
+      if (saved === "blue" || saved === "dark") setTheme(saved);
+    } catch (err) {
+      setError(`无法读取界面偏好：${message(err)}`);
+    }
+  }, []);
   const [page, setPage] = useState<Page>("team");
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
   const [config, setConfig] = useState<Config>({
@@ -151,15 +164,16 @@ export function TeamApp() {
     });
 
   return (
-    <div className="loom-team-app">
+    <div className="loom-team-app" data-theme={theme}>
+      <style>{theme === "blue" ? blueStyles : darkStyles}</style>
       <aside className="team-sidebar">
         <a className="team-brand" href="./team.html">
           <span className="loom-mark" aria-hidden="true">
             ▥
           </span>{" "}
-          loom<span className="brand-extension">.team</span>
+          loom{theme === "blue" ? <span className="team-brand-tag">TEAM STUDIO</span> : <span className="brand-extension">.team</span>}
         </a>
-        <div className="nav-section-label">WORKSPACE</div>
+        {theme === "dark" && <div className="nav-section-label">WORKSPACE</div>}
         <nav aria-label="主导航">
           {(
             [
@@ -187,7 +201,7 @@ export function TeamApp() {
             </button>
           ))}
         </nav>
-        <div className="sidebar-manifest"><span>SHARED KNOW-HOW</span><p>好方法，<br />值得团队共享。</p><small>技能在你的工具中运行。</small></div>
+        {theme === "dark" && <div className="sidebar-manifest"><span>SHARED KNOW-HOW</span><p>好方法，<br />值得团队共享。</p><small>技能在你的工具中运行。</small></div>}
         <div className="team-account">
           <span className="account-dot" />
           {user?.email ?? (user ? "已登录" : "尚未登录")}
@@ -220,7 +234,15 @@ export function TeamApp() {
           </select>
         </div>
 <span className="workspace-context">{page === "local" || page === "activity" ? "ON THIS DEVICE" : "SHARED WORKSPACE"}</span>
-          <span className="surface-tag">{isDesktop() ? "DESKTOP" : "WEB"}</span>
+          <button type="button" className="theme-switch" aria-label={theme === "dark" ? "切换到蓝白版" : "切换到深色版"} onClick={() => {
+            const nextTheme = theme === "dark" ? "blue" : "dark";
+            try {
+              localStorage.setItem("loom-ui-theme", nextTheme);
+              setTheme(nextTheme);
+            } catch (err) {
+              setError(`无法保存界面偏好：${message(err)}`);
+            }
+          }}>{theme === "dark" ? "◐ 蓝白版" : "◑ 深色版"}</button>
         </header>
         {error && (
           <div role="alert" className="team-alert">
@@ -246,7 +268,7 @@ export function TeamApp() {
           <LocalActivity />
         ) : !user ? (
           <section className="login-layout">
-            <StudioWelcome />
+            <StudioWelcome blue={theme === "blue"} />
             <form
               className="team-card login-card"
               onSubmit={(e) => {
@@ -369,6 +391,7 @@ export function TeamApp() {
         ) : (
           <section className="team-content">
             <div className="page-heading illustrated-heading">
+              {theme === "blue" && <img className="workspace-art" src={page === "updates" ? paperSteps : methodBridge} alt="" aria-hidden="true" />}
               <div>
                 <span className="eyebrow">
                   {page === "updates"
@@ -377,8 +400,8 @@ export function TeamApp() {
                 </span>
                 <h1>
                   {page === "updates"
-                    ? <>每一次更新，<span className="heading-accent">都向前一步。</span></>
-                    : <>团队的好方法，<span className="heading-accent">都在这里。</span></>}
+                    ? theme === "blue" ? "跟上团队的改进。" : <>每一次更新，<span className="heading-accent">都向前一步。</span></>
+                    : theme === "blue" ? "团队的好方法，\n都在这里。" : <>团队的好方法，<span className="heading-accent">都在这里。</span></>}
                 </h1>
                 <p className="lead">
                   {page === "updates"

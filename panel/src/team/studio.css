@@ -132,3 +132,5 @@ body { background: #090909; }
 @media (prefers-reduced-motion: reduce) {
   .loom-team-app .skill-card { transition: none; }
 }
+
+.local-workshop-art { display: none; }

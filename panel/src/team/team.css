@@ -732,7 +732,12 @@ body {
   margin-bottom: 16px;
 }
 
-.loom-team-app .theme-switch { flex-shrink: 0; white-space: nowrap; font-size: 12px; padding: 7px 12px; }
+.loom-team-app .theme-switcher { margin: 0; min-width: 0; position: fixed; right: 20px; bottom: 18px; z-index: 50; display: flex; gap: 4px; padding: 5px; border: 1px solid #cbd5e1; border-radius: 12px; background: #fff; box-shadow: 0 4px 20px #0002; }
+.loom-team-app .theme-switcher button { margin: 0; padding: 7px 13px; border: 1px solid transparent; border-radius: 8px; background: #fff; color: #334155; font-size: 12px; line-height: 20px; box-shadow: none; transition: none; }
+.loom-team-app .theme-switcher button:hover { background: #e8edf5; border-color: #cbd5e1; }
+.loom-team-app .theme-switcher button[aria-pressed="true"] { background: #172c48; border-color: #172c48; color: #fff; }
+.loom-team-app .theme-switcher button:focus-visible { outline: 2px solid #245edb; outline-offset: 2px; }
+.loom-team-app .team-main { padding-bottom: 76px; }
 @media (max-width: 700px) {
   .loom-team-app .team-topbar { gap: 8px; }
   .loom-team-app .workspace-picker { min-width: 0; flex: 1; }

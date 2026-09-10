@@ -166,6 +166,18 @@ export function TeamApp() {
   return (
     <div className="loom-team-app" data-theme={theme}>
       <style>{theme === "blue" ? blueStyles : darkStyles}</style>
+      <fieldset className="theme-switcher" aria-label="界面风格">
+        {(["blue", "dark"] as const).map((choice) => (
+          <button key={choice} type="button" aria-label={choice === "blue" ? "切换到蓝白版" : "切换到深色版"} aria-pressed={theme === choice} onClick={() => {
+            try {
+              localStorage.setItem("loom-ui-theme", choice);
+              setTheme(choice);
+            } catch (err) {
+              setError(`无法保存界面偏好：${message(err)}`);
+            }
+          }}>{choice === "blue" ? "蓝白" : "深色"}</button>
+        ))}
+      </fieldset>
       <aside className="team-sidebar">
         <a className="team-brand" href="./team.html">
           <span className="loom-mark" aria-hidden="true">
@@ -234,15 +246,7 @@ export function TeamApp() {
           </select>
         </div>
 <span className="workspace-context">{page === "local" || page === "activity" ? "ON THIS DEVICE" : "SHARED WORKSPACE"}</span>
-          <button type="button" className="theme-switch" aria-label={theme === "dark" ? "切换到蓝白版" : "切换到深色版"} onClick={() => {
-            const nextTheme = theme === "dark" ? "blue" : "dark";
-            try {
-              localStorage.setItem("loom-ui-theme", nextTheme);
-              setTheme(nextTheme);
-            } catch (err) {
-              setError(`无法保存界面偏好：${message(err)}`);
-            }
-          }}>{theme === "dark" ? "◐ 蓝白版" : "◑ 深色版"}</button>
+
         </header>
         {error && (
           <div role="alert" className="team-alert">

@@ -1,5 +1,3 @@
-import methodBridge from "../assets/loom-method-bridge.png";
-import paperSteps from "../assets/loom-paper-steps.png";
 import { StudioWelcome } from "./StudioWelcome";
 import { Updates } from "./Updates";
 import { LocalActivity } from "./LocalActivity";
@@ -159,8 +157,9 @@ export function TeamApp() {
           <span className="loom-mark" aria-hidden="true">
             ▥
           </span>{" "}
-          loom<span className="team-brand-tag">TEAM STUDIO</span>
+          loom<span className="brand-extension">.team</span>
         </a>
+        <div className="nav-section-label">WORKSPACE</div>
         <nav aria-label="主导航">
           {(
             [
@@ -188,6 +187,7 @@ export function TeamApp() {
             </button>
           ))}
         </nav>
+        <div className="sidebar-manifest"><span>SHARED KNOW-HOW</span><p>好方法，<br />值得团队共享。</p><small>技能在你的工具中运行。</small></div>
         <div className="team-account">
           <span className="account-dot" />
           {user?.email ?? (user ? "已登录" : "尚未登录")}
@@ -369,7 +369,6 @@ export function TeamApp() {
         ) : (
           <section className="team-content">
             <div className="page-heading illustrated-heading">
-              <img className="workspace-art" src={page === "updates" ? paperSteps : methodBridge} alt="" aria-hidden="true" />
               <div>
                 <span className="eyebrow">
                   {page === "updates"
@@ -378,8 +377,8 @@ export function TeamApp() {
                 </span>
                 <h1>
                   {page === "updates"
-                    ? "跟上团队的改进。"
-                    : "团队的好方法，\n都在这里。"}
+                    ? <>每一次更新，<span className="heading-accent">都向前一步。</span></>
+                    : <>团队的好方法，<span className="heading-accent">都在这里。</span></>}
                 </h1>
                 <p className="lead">
                   {page === "updates"

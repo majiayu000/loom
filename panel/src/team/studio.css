@@ -1,157 +1,134 @@
-/* Loom studio: the working canvas sits inside a quiet midnight frame. */
-body { background: #0d1b30; }
-.loom-team-app { --ink: #172c48; --muted: #67798e; --line: #dfe7ef; --paper: #f7f9fc; --blue: #245edb; flex-direction: column; min-height: 100vh; padding: 0 14px 14px; background: #0d1b30; font-family: "Avenir Next", "PingFang SC", sans-serif; }
-.loom-team-app button { border-radius: 10px; }
-.loom-team-app .team-account button { border-color: #ffffff24; background: transparent; color: #bccde4; border-radius: 20px; }
-.loom-team-app input, .loom-team-app select, .loom-team-app textarea { border-color: #dbe4f0; border-radius: 9px; background: #fff; }
-.loom-team-app .local-filters button { border-radius: 20px; }
-.loom-team-app .local-tabs button { border-radius: 24px; font-size: 12px; }
-.studio-caption > span { display: block; font: 9px "SFMono-Regular", Consolas, monospace; letter-spacing: 2px; color: #416894; margin-bottom: 20px; }
-.studio-caption p { font-size: 15px; letter-spacing: 2px; color: #355b84; }
-.loom-team-app .team-sidebar { position: sticky; top: 0; z-index: 20; width: 100%; height: 82px; padding: 14px 20px; display: flex; flex-direction: row; align-items: center; gap: 24px; border: 0; background: #0d1b30; color: #d4e0f3; }
-.loom-team-app .team-brand { color: #f5f8ff; font-size: 32px; letter-spacing: -2px; gap: 8px; flex-shrink: 0; }
-.loom-team-app .loom-mark { color: #84afff; font-size: 34px; }
-.loom-team-app .team-brand-tag { font-size: 7px; color: #90a6c2; max-width: 38px; line-height: 1.5; letter-spacing: 1px; margin: 5px 0 0 6px; }
-.loom-team-app .team-sidebar nav { display: flex; margin: auto; padding: 5px; gap: 3px; border: 1px solid #ffffff1c; border-radius: 40px; background: #192941; }
-.loom-team-app .team-sidebar nav button { border-radius: 30px; color: #b6c6dd; font-size: 12px; padding: 9px 15px; white-space: nowrap; gap: 0; }
-.loom-team-app .team-sidebar nav button > span { display: none; }
-.loom-team-app .team-sidebar nav button:hover { background: #263a56; color: white; }
-.loom-team-app .team-sidebar nav button.active { background: #f1f6ff; color: #193c79; border-color: transparent; box-shadow: 0 2px 10px #0002; }
-.loom-team-app .team-account { margin: 0; padding: 0; border: 0; font-size: 10px; max-width: 180px; line-height: 1.5; }
-.loom-team-app .account-dot { background: #82aaf2; width: 5px; height: 5px; }
-.loom-team-app .team-main { background: var(--paper); border-radius: 24px; overflow: clip; min-height: calc(100vh - 96px); }
-.loom-team-app .team-topbar { height: 66px; padding: 0 36px; gap: 22px; border-color: #e4eaf2; }
-.loom-team-app .workspace-picker { margin: 0; display: flex; align-items: center; gap: 12px; }
-.loom-team-app .workspace-picker label { margin: 0; font-size: 10px; white-space: nowrap; }
-.loom-team-app .workspace-picker select { border: 0; padding: 6px 22px 6px 6px; font-size: 12px; width: auto; max-width: 240px; background: transparent; }
-.workspace-context { font: 9px "SFMono-Regular", Consolas, monospace; letter-spacing: 1.5px; color: #8b9aae; margin-left: auto; }
-.loom-team-app .surface-tag { border: 0; background: #e9eff7; color: #57728e; border-radius: 20px; font-size: 8px; padding: 6px 10px; }
-.loom-team-app .team-content { max-width: 1360px; padding: 38px 42px 64px; }
-.loom-team-app h1 { font-family: "Iowan Old Style", "Songti SC", Georgia, serif; font-weight: 500; letter-spacing: -1.2px; font-size: clamp(32px, 3.7vw, 52px); }
-.loom-team-app .eyebrow { font-size: 9px; letter-spacing: 1.7px; color: #5e7fa5; }
-.loom-team-app .primary { border-radius: 28px; padding: 11px 22px; box-shadow: 0 4px 14px #245edb15; }
-.loom-team-app input:focus, .loom-team-app textarea:focus { border-color: #5b8bdc; }
-.loom-team-app .team-card { border-color: #e0e7ef; border-radius: 18px; box-shadow: 0 5px 24px #143b6503; }
-.loom-team-app .page-heading { position: relative; padding: 28px 32px; border: 1px solid #dce6f4; border-radius: 20px; background: radial-gradient(ellipse at 85% 0%, #dbeafa, transparent 60%), #f0f5fd; margin-bottom: 24px; }
+/* Catalog edition: quiet charcoal, precise rules, pink type, amber actions. */
+:root { color-scheme: dark; }
+body { background: #090909; }
+.loom-team-app { --ink: #ededed; --muted: #a1a1a1; --line: #2a2a2a; --paper: #090909; --blue: #ffb21a; background: var(--paper); font: 14px/1.65 "Avenir Next", "PingFang SC", sans-serif; }
+.loom-team-app button { background: #161616; border-color: var(--line); border-radius: 6px; }
+.loom-team-app button:hover { background: #222; border-color: #555; }
+.loom-team-app .primary { color: #141006; background: #ffb21a; border-color: #ffb21a; font-weight: 650; box-shadow: none; border-radius: 6px; padding: 10px 18px; }
+.loom-team-app .primary:hover { background: #ffc34d; border-color: #ffc34d; }
+.loom-team-app input, .loom-team-app select, .loom-team-app textarea { color: var(--ink); background: #111; border-color: #343434; border-radius: 5px; }
+.loom-team-app :focus-visible { outline: 2px solid #f5b5e6; outline-offset: 3px; }
+.loom-team-app input[type="checkbox"] { accent-color: #ffb21a; }
+.loom-team-app .team-sidebar { width: 222px; padding: 25px 16px 20px; background: #111; border-right: 1px solid var(--line); }
+.loom-team-app .team-brand { font: 700 29px/1.4 "SFMono-Regular", Menlo, monospace; letter-spacing: -1.5px; gap: 0; padding: 0 8px 28px; color: #f1f1f1; }
+.loom-team-app .loom-mark { display: none; }
+.brand-extension { color: #f5b5e6; }
+.nav-section-label { color: #898989; font: 9px/1.6 "SFMono-Regular", monospace; letter-spacing: 1.8px; padding: 21px 12px 12px; border-top: 1px solid var(--line); }
+.loom-team-app .team-sidebar nav { gap: 5px; }
+.loom-team-app .team-sidebar nav button { font-size: 13px; border-radius: 5px; padding: 11px 12px; gap: 12px; }
+.loom-team-app .team-sidebar nav button.active { background: #242024; border-color: #393039; color: #f5b5e6; box-shadow: none; }
+.loom-team-app .team-sidebar nav button.active > span:first-child, .loom-team-app .nav-arrow { color: #f5b5e6; }
+.sidebar-manifest { margin-top: auto; padding: 24px 12px; border-bottom: 1px solid var(--line); }
+.sidebar-manifest > span { font: 9px monospace; letter-spacing: 1.3px; color: #888; }
+.sidebar-manifest p { font-size: 19px; line-height: 1.6; margin: 14px 0; font-weight: 500; }
+.sidebar-manifest small { color: #999; font-size: 10px; }
+.loom-team-app .team-account { border: 0; padding: 20px 10px 0; font-size: 10px; }
+.account-dot { background: #ffb21a; }
+.loom-team-app .team-topbar { height: 72px; padding: 0 38px; background: #0c0c0c; gap: 18px; }
+.loom-team-app .workspace-picker { display: flex; align-items: center; gap: 13px; margin: 0; }
+.loom-team-app .workspace-picker label { white-space: nowrap; margin: 0; font-size: 10px; }
+.loom-team-app .workspace-picker select { width: auto; max-width: 220px; border: 0; background: transparent; padding: 6px; font-size: 12px; }
+.workspace-context { margin-left: auto; font: 9px monospace; letter-spacing: 1.2px; color: #888; }
+.loom-team-app .surface-tag { font-size: 8px; background: #171717; color: #aaa; border-radius: 4px; }
+.loom-team-app .team-content { max-width: 1450px; padding: 38px; }
+.loom-team-app h1 { font-family: "Avenir Next", "PingFang SC", sans-serif; font-size: clamp(30px, 3.6vw, 48px); font-weight: 650; letter-spacing: -1.5px; line-height: 1.3; }
+.loom-team-app .eyebrow { color: #9b9b9b; font-size: 9px; letter-spacing: 1.8px; }
+.loom-team-app .page-heading { position: relative; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; min-height: 218px; padding: 8px 0 32px; margin-bottom: 24px; gap: 24px; }
 .loom-team-app .page-heading h1 { margin-bottom: 14px; }
+.heading-accent { display: block; color: #f5b5e6; }
 .loom-team-app .page-heading .lead { font-size: 13px; }
-.loom-team-app .library-toolbar { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 8px 14px; margin-bottom: 24px; }
-.loom-team-app .skill-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
-.loom-team-app .skill-card { border-radius: 18px; min-height: 230px; border-color: #e0e7f0; box-shadow: none; transition: transform .2s, border-color .2s, box-shadow .2s; }
-.loom-team-app .skill-card:hover { transform: translateY(-3px); border-color: #8eb1e4; box-shadow: 0 10px 30px #244a7910; background: #fff; }
-.loom-team-app .skill-card-top { color: #7b93b1; }
-.loom-team-app .skill-number { color: #2c61a9; }
-.loom-team-app .skill-card-bottom { border-color: #e7eef7; }
-.loom-team-app .empty-state { border-radius: 18px; border-color: #c9d9ed; background: #eff5fb66; min-height: 240px; }
-.loom-team-app .team-alert, .loom-team-app .team-notice { margin: 16px 36px; border-radius: 12px; }
-.loom-team-app .local-workspace { padding-top: 30px; }
-.loom-team-app .local-page-heading h1 { font-family: "Avenir Next", "PingFang SC", sans-serif; font-size: 30px; font-weight: 550; }
-.loom-team-app .local-disclosure { border-radius: 12px; border-color: #e0e7f0; }
-.loom-team-app .local-library { margin-top: 22px; }
-.loom-team-app .local-skill-rows { border-radius: 16px; border-color: #e0e7ef; }
-.loom-team-app .local-skill-row { border-radius: 0; padding: 15px 20px; }
-.loom-team-app .local-skill-row:hover { background: #f2f7ff; }
-.loom-team-app .local-status { border-radius: 20px; padding: 3px 9px; }
-.loom-team-app .local-tools .card { border-radius: 14px; }
-.loom-team-app .local-tabs { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
-.loom-team-app .login-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(310px, .8fr); align-items: stretch; gap: 0; padding: 18px; max-width: 1500px; }
-.studio-welcome { position: relative; min-height: 600px; overflow: hidden; border-radius: 18px; background: #dceafb; isolation: isolate; }
-.studio-art { position: absolute; inset: 0; z-index: -1; overflow: hidden; background: radial-gradient(ellipse at 70% 20%, #f3f8ff, #dbeafa 65%, #c8dff6); }
-.studio-art img { width: 100%; height: 100%; object-fit: cover; object-position: center 30%; animation: garden-drift 20s ease-in-out infinite alternate; }
-.studio-art::after { content: ""; position: absolute; inset: 0; background: linear-gradient(0deg, #edf5ffb3, transparent 60%); }
-.studio-art-top { display: flex; justify-content: space-between; padding: 25px 28px; color: #34557f; font: 9px "SFMono-Regular", Consolas, monospace; letter-spacing: 1.4px; }
-.studio-caption { position: absolute; bottom: 96px; left: 36px; right: 30px; }
-.loom-team-app .studio-caption h1 { font-family: "Iowan Old Style", "Baskerville", Georgia, serif; font-size: clamp(46px, 5.3vw, 78px); line-height: .98; letter-spacing: -3px; font-weight: 400; color: #193d76; margin-bottom: 22px; }
-.studio-caption h1 em { font-weight: 400; }
-.studio-art-bottom { position: absolute; bottom: 20px; left: 28px; right: 28px; display: flex; align-items: center; justify-content: space-between; gap: 15px; padding-top: 15px; border-top: 1px solid #779bc33b; color: #55769b; font-size: 10px; }
-.loom-team-app .studio-art-bottom button { border-radius: 50%; width: 30px; height: 30px; padding: 0; background: #ffffff55; color: #315b8d; border-color: #8daac64d; }
-.is-paused .studio-art img { animation-play-state: paused; }
-@keyframes garden-drift { from { transform: scale(1); } to { transform: scale(1.045) translateY(-1%); } }
-.studio-art-top > span { background: #f4f9ffe8; padding: 7px 10px; border: 1px solid #ffffff80; border-radius: 4px; }
-.loom-team-app .login-card { max-width: none; margin: 30px 0; padding: 30px 42px; border: 0; border-radius: 0; background: transparent; box-shadow: none; align-self: center; }
-.loom-team-app .login-card > .eyebrow { font-size: 8px; line-height: 1.8; margin-bottom: 22px; }
-.loom-team-app .login-card h2 { font-family: "Iowan Old Style", "Songti SC", Georgia, serif; font-size: 34px; line-height: 1.4; font-weight: 500; white-space: pre-line; margin-bottom: 26px; letter-spacing: -.6px; }
-.login-section-label { font-size: 14px; font-weight: 550; margin-bottom: 8px; }
-.loom-team-app .login-card > p { font-size: 12px; margin-bottom: 25px; line-height: 1.9; }
-.loom-team-app .login-card input { padding: 12px 14px; }
-.loom-team-app .login-card > button.primary { padding: 12px 20px; margin: 6px 0 28px; }
-.loom-team-app .login-card details { padding-top: 18px; }
-.loom-team-app .login-card > small { display: block; font-size: 10px; line-height: 1.8; color: #8a99aa; }
-@media (max-width: 1100px) {
-  .loom-team-app .team-sidebar { gap: 14px; padding-inline: 10px; }
-  .loom-team-app .team-sidebar nav button { padding: 8px 11px; font-size: 11px; }
-  .loom-team-app .team-account { max-width: 140px; font-size: 9px; }
-  .loom-team-app .team-brand-tag { display: none; }
-  .loom-team-app .login-card { padding-inline: 30px; }
-  .loom-team-app .studio-caption h1 { font-size: 57px; }
-  .loom-team-app .team-content { padding: 30px; }
-}
-@media (max-width: 800px) {
-  .loom-team-app { padding: 0 8px 8px; }
-  .loom-team-app .team-sidebar { height: auto; flex-wrap: wrap; padding: 14px 8px; gap: 12px; }
-  .loom-team-app .team-sidebar nav { order: 3; width: 100%; justify-content: center; overflow-x: auto; }
-  .loom-team-app .team-account { display: flex; margin-left: auto; max-width: 180px; }
-  .loom-team-app .team-main { border-radius: 18px; }
-  .loom-team-app .team-topbar { padding: 0 20px; height: 58px; }
-  .workspace-context { display: none; }
-  .loom-team-app .surface-tag { margin-left: auto; }
-  .loom-team-app .login-layout { grid-template-columns: 1fr; padding: 10px; }
-  .studio-welcome { min-height: 380px; }
-  .studio-caption { bottom: 76px; left: 28px; }
-  .loom-team-app .studio-caption h1 { font-size: 58px; }
-  .studio-art img { object-position: center 32%; }
-  .studio-art::after { background: linear-gradient(0deg, #edf5fff5, #edf5ffe6 45%, #edf5ff55 70%, transparent); }
-  .loom-team-app .login-card { margin: 12px 0; padding: 28px 20px; }
-  .loom-team-app .team-content { padding: 26px 20px; }
+.loom-team-app .page-heading > button { flex-shrink: 0; align-self: flex-end; }
+.loom-team-app .library-toolbar { background: #111; border: 1px solid var(--line); border-radius: 6px; padding: 7px 12px; margin-bottom: 24px; gap: 8px; }
+.loom-team-app .library-toolbar input { background: transparent; }
+.loom-team-app .search-label span { font-size: 20px; }
+.loom-team-app .archive-toggle { font-size: 11px; color: var(--muted); }
+.loom-team-app .skill-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.loom-team-app .skill-card { min-height: 230px; background: #131313; border: 1px solid #303030; padding: 22px; border-radius: 7px; box-shadow: none; transition: border-color .18s, background .18s; }
+.loom-team-app .skill-card:hover { background: #191619; border-color: #80627b; }
+.skill-card-top { align-items: center; justify-content: flex-start; gap: 10px; margin-bottom: 26px; }
+.skill-card-top > span:last-child { margin-left: auto; }
+.skill-emblem { display: grid; place-items: center; height: 32px; width: 32px; border: 1px solid #52434f; border-radius: 5px; color: #f5b5e6; background: #292127; font-size: 22px; }
+.emblem-1 { color: #ffbd38; background: #2a2418; border-color: #4f432a; }
+.emblem-2 { color: #bdd69b; background: #20271b; border-color: #3d4933; }
+.loom-team-app .skill-card h2 { font-size: 17px; }
+.loom-team-app .skill-card-bottom { border-color: var(--line); font-size: 10px; }
+.loom-team-app .team-card { background: #121212; border-color: var(--line); border-radius: 7px; }
+.loom-team-app .empty-state { min-height: 250px; background: #101010; border-color: #363636; border-radius: 6px; }
+.paper-book { display: block; width: 42px; height: 48px; border: 1px solid #83647c; border-radius: 3px; background: repeating-linear-gradient(0deg, transparent 0 9px, #4f3c4b 9px 10px), #211b20; transform: rotate(-8deg); margin: 12px; }
+.paper-book i { display: none; }
+.loom-team-app .team-alert { background: #2a1916; border-color: #774338; color: #f3c3b5; }
+.loom-team-app .team-notice { background: #182319; border-color: #3a5c40; color: #c0ddc4; }
+.loom-team-app .team-alert, .loom-team-app .team-notice { margin: 18px 38px; }
+.loom-team-app .skill-glyph, .loom-team-app .badge { color: #f5b5e6; background: #2a2028; }
+.loom-team-app .example, .loom-team-app .operation-result { background: #1a1a1a; }
+.loom-team-app .local-tools { --bg-2: #202020; --ok: #a2cfad; --warn: #e0b868; --err: #f0a399; }
+.loom-team-app .local-tools .card, .loom-team-app .local-tools .op-log-row, .loom-team-app .local-disclosure, .loom-team-app .local-skill-rows { background: #121212; border-color: var(--line); border-radius: 6px; }
+.loom-team-app .local-skill-row { background: #121212; }
+.loom-team-app .local-skill-row:hover { background: #1f1b1e; }
+.loom-team-app .local-page-heading { min-height: 112px; border-bottom: 1px solid var(--line); padding-bottom: 26px; }
+.loom-team-app .local-page-heading h1 { font-size: 32px; }
+.loom-team-app .local-filters button[aria-pressed="true"], .loom-team-app .local-tabs button[aria-pressed="true"] { color: #f5b5e6; background: #2b2129; border-color: #674c61; }
+.loom-team-app .local-status { color: #bbb; background: #262626; }
+.loom-team-app .local-status-present { color: #acd4ac; background: #203020; }
+.loom-team-app .local-status-attention { color: #f2c775; background: #332a18; }
+.loom-team-app .local-registry-notice { color: #f2c775; }
+.loom-team-app .login-layout { padding: 0; gap: 0; max-width: 1500px; grid-template-columns: minmax(0, 1.15fr) minmax(310px, .85fr); align-items: stretch; min-height: calc(100vh - 72px); }
+.studio-welcome { padding: 58px 38px 32px; overflow: hidden; position: relative; background: repeating-linear-gradient(0deg, transparent 0 3px, #ffffff03 3px 4px), radial-gradient(ellipse at 85% 85%, #33293255, transparent 65%); border-right: 1px solid var(--line); }
+.loom-team-app .studio-welcome h1 { font-size: clamp(34px, 3.8vw, 57px); margin: 24px 0; line-height: 1.28; }
+.studio-welcome h1 > span { color: #f5b5e6; display: block; }
+.welcome-description { font-size: 13px; line-height: 2; color: #aaa; }
+.method-preview { border: 1px solid #3b3439; background: #131113; border-radius: 7px; margin-top: 48px; box-shadow: 0 20px 70px #0004; }
+.method-file { padding: 12px 16px; border-bottom: 1px solid #302a2e; display: flex; gap: 10px; font: 11px monospace; color: #ded1db; }
+.method-file-tag { margin-left: auto; font-size: 8px; color: #978590; }
+.method-code { padding: 22px 16px; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px 10px; font: 11px/1.8 "SFMono-Regular", "PingFang SC", monospace; }
+.method-code > span { color: #70616b; }
+.method-code strong { color: #efb8df; font-weight: 500; }
+.method-code i { color: #a49a9f; font-style: normal; }
+.method-code b { color: #e3c17c; font-weight: 400; }
+.method-footer { padding: 12px 16px; border-top: 1px solid #302a2e; color: #a2989f; font-size: 10px; }
+.method-light { display: inline-block; width: 5px; height: 5px; background: #d3ed99; border-radius: 50%; margin-right: 8px; }
+.welcome-footnote { font: 8px monospace; letter-spacing: 1.5px; color: #8d8289; margin-top: 32px; }
+.loom-team-app .login-card { background: transparent; border: 0; border-radius: 0; padding: 40px 32px; margin: 0; align-self: center; max-width: none; }
+.loom-team-app .login-card > .eyebrow { font-size: 8px; line-height: 1.8; }
+.loom-team-app .login-card h2 { font-size: 26px; line-height: 1.5; font-weight: 600; margin: 20px 0 26px; }
+.login-section-label { font-size: 13px; font-weight: 500; }
+.loom-team-app .login-card p { font-size: 12px; margin-bottom: 24px; }
+.loom-team-app .login-card > small { font-size: 10px; }
+.loom-team-app .login-card details { margin-top: 10px; }
+@media (max-width: 1150px) {
+  .loom-team-app .team-sidebar { width: 195px; padding-inline: 12px; }
+  .loom-team-app .team-content, .loom-team-app .team-topbar { padding-inline: 28px; }
   .loom-team-app .skill-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .loom-team-app .page-heading { padding: 22px; }
+  .studio-welcome { padding-inline: 28px; }
+  .loom-team-app .login-card { padding-inline: 26px; }
 }
-@media (max-width: 480px) {
-  .loom-team-app .team-sidebar nav { justify-content: flex-start; }
-  .loom-team-app .team-sidebar nav button { flex-shrink: 0; padding: 8px 12px; }
-  .loom-team-app .workspace-picker { gap: 6px; }
+@media (max-width: 900px) {
+  .loom-team-app .login-layout { grid-template-columns: 1fr; }
+  .studio-welcome { border-right: 0; border-bottom: 1px solid var(--line); padding-top: 36px; }
+  .method-preview { margin-top: 26px; max-width: 500px; }
+  .loom-team-app .login-card { max-width: 560px; width: 100%; padding: 32px 28px; }
+  .workspace-context { display: none; }
+}
+@media (max-width: 700px) {
+  .loom-team-app .team-sidebar { width: 100%; height: auto; padding: 16px 18px 10px; }
+  .loom-team-app .team-brand { font-size: 24px; padding: 0 2px 15px; }
+  .nav-section-label, .sidebar-manifest, .loom-team-app .team-account { display: none; }
+  .loom-team-app .team-sidebar nav { gap: 3px; }
+  .loom-team-app .team-sidebar nav button { padding: 8px 10px; font-size: 12px; }
+  .loom-team-app .team-topbar { height: 54px; padding: 0 20px; }
   .loom-team-app .workspace-picker label { display: none; }
-  .loom-team-app .workspace-picker select { max-width: 210px; }
+  .loom-team-app .workspace-picker select { max-width: 230px; }
+  .loom-team-app .team-content { padding: 25px 20px; }
+  .loom-team-app .page-heading { min-height: 230px; padding: 8px 0 24px; gap: 22px; }
+  .loom-team-app .page-heading > button { align-self: flex-start; }
   .loom-team-app .skill-grid { grid-template-columns: 1fr; }
-  .loom-team-app .studio-caption h1 { font-size: 49px; }
-  .studio-art-top { font-size: 8px; padding-inline: 22px; }
-  .studio-caption p { font-size: 12px; letter-spacing: 1px; }
+  .loom-team-app .local-page-heading { flex-wrap: wrap; gap: 16px; }
+  .loom-team-app .team-alert, .loom-team-app .team-notice { margin-inline: 20px; }
+  .loom-team-app .login-layout { min-height: 0; }
+  .studio-welcome { padding-inline: 22px; }
+  .loom-team-app .login-card { padding-inline: 22px; }
+  .loom-team-app .library-toolbar button { font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .studio-art img { animation: none; }
   .loom-team-app .skill-card { transition: none; }
-  .loom-team-app .skill-card:hover { transform: none; }
-}
-
-/* Paper and thread motifs extend the welcome artwork into the working pages. */
-.loom-team-app .illustrated-heading { isolation: isolate; overflow: hidden; min-height: 245px; padding-right: 290px; }
-.workspace-art { position: absolute; right: -12px; top: 0; width: 340px; height: 100%; object-fit: contain; mix-blend-mode: multiply; z-index: -1; pointer-events: none; mask-image: radial-gradient(ellipse 46% 55% at center, black 48%, transparent 100%); }
-.loom-team-app .illustrated-heading > button { position: absolute; right: 28px; bottom: 24px; box-shadow: 0 3px 16px #f0f5fd; }
-.loom-team-app .illustrated-heading > div { min-width: 0; }
-.loom-team-app .illustrated-heading .lead { max-width: 480px; }
-.skill-emblem { width: 34px; height: 34px; display: grid; place-items: center; color: #2d61b6; background: #eaf1fc; border: 1px solid #d4e1f5; border-radius: 10px; font-size: 23px; }
-.emblem-1 { border-radius: 50% 50% 8px 50%; transform: rotate(-12deg); background: #edf5f9; }
-.emblem-2 { border-radius: 3px 12px 3px 12px; background: #e1edff; box-shadow: 3px 3px 0 #f0f5fc, 4px 4px 0 #d8e5f7; }
-.loom-team-app .skill-card-top { align-items: center; justify-content: flex-start; gap: 10px; }
-.loom-team-app .skill-card-top > span:last-child { margin-left: auto; }
-.paper-book { position: relative; display: block; width: 88px; height: 64px; margin: 6px auto 12px; }
-.paper-book i { position: absolute; width: 46px; height: 54px; left: 16px; top: 2px; border: 1px solid #adc6e9; border-radius: 3px 8px 5px 3px; background: linear-gradient(145deg, #fcfdff 35%, #d5e5fa); box-shadow: 0 4px 10px #1a468515; transform: rotate(-14deg); }
-.paper-book i:nth-child(2) { left: 27px; transform: rotate(3deg); background: #e4eefb; }
-.paper-book i:nth-child(3) { left: 38px; transform: rotate(18deg); background: repeating-linear-gradient(0deg, transparent 0 10px, #d9e7f8 10px 11px), #f7faff; }
-.loom-team-app .version-row { position: relative; margin-left: 8px; padding-left: 24px; border-left: 1px solid #c5d8f0; }
-.loom-team-app .version-row::before { content: ""; position: absolute; left: -5px; top: 26px; width: 8px; height: 8px; border: 2px solid #f7f9fc; border-radius: 50%; background: #4d7ec7; box-shadow: 0 0 0 1px #b1c9eb; }
-@media (max-width: 800px) {
-  .loom-team-app .illustrated-heading { padding-right: 22px; padding-bottom: 90px; }
-  .workspace-art { width: 260px; opacity: .22; }
-  .loom-team-app .illustrated-heading > button { left: 22px; right: auto; bottom: 22px; }
-}
-
-/* Small local illustration keeps the inventory close to the page title. */
-.loom-team-app .local-page-heading { position: relative; isolation: isolate; min-height: 132px; }
-.local-workshop-art { position: absolute; z-index: -1; right: 170px; top: -14px; width: 165px; height: 155px; mask-image: radial-gradient(ellipse at center, black 45%, transparent 73%); object-fit: contain; mix-blend-mode: multiply; pointer-events: none; }
-@media (max-width: 1000px) {
-  .local-workshop-art { right: 120px; opacity: .18; }
-}
-@media (max-width: 600px) {
-  .local-workshop-art { right: 0; top: 10px; width: 140px; opacity: .14; }
 }

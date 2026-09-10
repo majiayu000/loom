@@ -1,5 +1,4 @@
 import { useState } from "react";
-import pocketWorkshop from "../assets/loom-pocket-workshop.png";
 import { LocalDetail } from "./LocalDetail";
 import { LocalSkillList, type LocalSkill } from "./LocalSkillList";
 import {
@@ -439,7 +438,6 @@ export function LocalSkills({ run }: { run: Runner }) {
   return (
     <section className="team-content local-workspace">
       <header className="local-page-heading">
-        <img className="local-workshop-art" src={pocketWorkshop} alt="" aria-hidden="true" />
         <div><span className="eyebrow">ON YOUR MACHINE</span><h1>本机技能</h1><p className="lead">浏览、检查和管理这台设备上的技能。</p></div>
         {isDesktop() && <button type="button" className="primary" disabled={busy} onClick={() => void act(read)}>{busy ? "正在读取…" : result ? "刷新技能" : "读取本机技能"}</button>}
       </header>

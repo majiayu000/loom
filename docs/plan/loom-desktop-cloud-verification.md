@@ -85,3 +85,9 @@
 ## 2026-09-09 调试版钥匙串弹窗
 
 原代码每次云端调用重新读取钥匙串，当前 App 为 ad-hoc 签名。debug 构建改为仅在内存保存刷新令牌，应用配置目录仅持久化公开连接配置；release 保留 Keychain。未删除旧凭据，未开放钥匙串 ACL。12 项原生测试通过，其中覆盖令牌不落盘及退出登录清除内存令牌；前端类型检查、构建及 App 打包通过。重启后通过原生 UI 读取确认正常显示邮箱登录页，无钥匙串模态弹窗；开发版重启需要重新登录。日志 `keychain-test.log` / `keychain-bundle.log`。
+
+## 2026-09-10 深色目录版预览
+
+蓝白版保留于提交 `682916d`（`codex/desktop-cloud`）及 `~/Applications/Loom-Previews/Loom-Blue.app`。新界面位于 `codex/getdesign-dark-preview`，参考 getdesign.md 首页的黑灰表面、固定侧栏、粉色标题与黄色主按钮，沿用现有业务组件。独立预览包为 `~/Applications/Loom-Previews/Loom-Dark.app`。
+
+类型检查、224 项前端测试、4 个变动文件 lint、构建与 App 打包通过。`.git/codex/studio-ui/dark-check.mjs` 使用视觉验收样本检查登录、团队、本机、更新、设置页面和搜索；390px 页面无横向溢出，无脚本错误。原生窗口已确认加载深色版邮箱登录页。未把视觉样本写入真实团队数据库。

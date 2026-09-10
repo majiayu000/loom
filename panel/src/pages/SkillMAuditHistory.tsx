@@ -31,6 +31,8 @@ interface AuditHistoryRow {
 interface SkillMAuditHistoryProps {
   live: boolean;
   refreshKey: string | null;
+  loadOperations?: typeof api.ops;
+  sourceLabel?: string;
 }
 
 interface HistoryState {
@@ -45,7 +47,7 @@ const INITIAL_HISTORY_STATE: HistoryState = {
   data: null,
 };
 
-export function SkillMAuditHistory({ live, refreshKey }: SkillMAuditHistoryProps) {
+export function SkillMAuditHistory({ live, refreshKey, loadOperations = api.ops, sourceLabel = "本机仓库操作记录" }: SkillMAuditHistoryProps) {
   const [offset, setOffset] = useState(0);
   const [textFilter, setTextFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<AuditStatusFilter>("all");
@@ -61,7 +63,7 @@ export function SkillMAuditHistory({ live, refreshKey }: SkillMAuditHistoryProps
     const controller = new AbortController();
     setState((current) => ({ ...current, loading: true, error: null }));
 
-    api.ops({ limit: HISTORY_PAGE_SIZE, offset }, controller.signal)
+    loadOperations({ limit: HISTORY_PAGE_SIZE, offset }, controller.signal)
       .then((response) => {
         if (controller.signal.aborted) return;
         if (!response.ok || !response.data) {
@@ -84,7 +86,7 @@ export function SkillMAuditHistory({ live, refreshKey }: SkillMAuditHistoryProps
       });
 
     return () => controller.abort();
-  }, [live, offset, refreshKey]);
+  }, [live, offset, refreshKey, loadOperations]);
 
   const data = state.data;
   const operations = data?.operations ?? [];
@@ -135,7 +137,7 @@ export function SkillMAuditHistory({ live, refreshKey }: SkillMAuditHistoryProps
         <span className="op-detail">
           {summary ?? (state.loading ? "Loading audit history..." : "Audit history")}
         </span>
-        <span className="op-note">{state.error ?? "Fetched from /api/v1/ops, not the overview snapshot."}</span>
+        <span className="op-note">{state.error ?? sourceLabel}</span>
         <span />
         <button type="button"
           className="btn-ghost xs"

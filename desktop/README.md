@@ -27,6 +27,10 @@ bunx @tauri-apps/cli@2.11.4 build --bundles app
 | `local_skills` | `{root?}` | `loom --json skill list` |
 | `inspect_skill` / `deps_skill` | `{root?,skill,agent?,workspace?}` | `skill inspect` / `skill deps` JSON |
 | `visibility_skill` | `{root?,skill,agent,workspace?}` | `skill visibility` JSON |
+| `diagnose_skill` | `{root?,skill}` | `skill diagnose`，只读诊断 |
+| `history_skill` | `{root?,skill}` | `skill history --limit 30 --include-diff-stat` |
+| `diff_skill` | `{root?,skill,from,to}` | `skill diff`，比较本机 Git 修订 |
+| `local_operations` | `{root?,offset}` | `ops list --activity --limit 100 --offset`，本机活动分页 |
 | `preview_install` / `apply_install` | `{root?,source,name}` | `skill install local:<source> --name <name>`，预览追加 `--dry-run` |
 | `preview_activate` / `apply_activate` | `{root?,skill,agent,workspace?}` | `skill activate --agent`，有 workspace 为 project，否则 user；预览追加 `--dry-run` |
 | `initialize_registry` | `{root?}` | 显式初始化本地 registry，不隐式覆盖已有目录 |
@@ -48,6 +52,8 @@ Supabase 邮件模板必须发送 OTP（`{{ .Token }}`），该实现不是浏�
 
 ## 当前边界
 
+团队 UI 的本机技能详情复用原版详情与诊断组件；本机活动复用原版操作记录的筛选、分页和错误处理。无需云端登录即可读取。安装位置、诊断和 Git 修订仅描述所选本机仓库，不代表团队设备状态，也不改变团队推荐版本。原有高级配置入口仍保留在原版面板中。
+
 本地 install 只导入 registry，activate 是独立步骤；界面应先显示各自预览并分别提交，结果不得合并伪装成跨目标事务。引擎仍执行自身组织策略、信任与冲突检查，native 不提供绕过标志，也不会运行 Skill 脚本。当前 install/activate dry-run 不提供冻结计划 token，apply 会重新执行引擎检查；不宣称具备“预览后内容变化必定失效”的新事务保证。
 
 团队包有真实 team 来源身份，包括服务 origin、team/skill/version ID 与摘要。原生只在本地临时目录保存下载输入，引擎在预览返回前把候选内容存入 registry 的事务目录；apply 不依赖下载临时目录仍存在。更新会预览所有已有投影目标，使用引擎现有事务与恢复日志更新来源、provenance、lock 和投影。来源身份不能被临时路径伪装为 local provider。首次导入不自动激活。
@@ -55,3 +61,5 @@ Supabase 邮件模板必须发送 OTP（`{{ .Token }}`），该实现不是浏�
 本次只构建 macOS Apple Silicon 的未签名本地 App。真实托管 OTP、Keychain 端到端、干净机器 Git 缺失、各 Agent 会话可见性、签名公证与团队内测尚未验收。认证、凭证和进程调用发布前需要人工审查。测试与产物证据见 [实施验收记录](../docs/plan/loom-desktop-cloud-verification.md)。
 
 POST 云端请求携带 Idempotency-Key，调用者可传入稳定 `idempotencyKey` 以便超时后重试；不传则每次 native 调用生成 UUID，内部 401 重试复用同一值。
+
+本地 debug 构建不访问系统钥匙串：refresh token 仅保存在进程内存，退出 App 后需重新登录。服务地址和 public key 保存在应用配置目录的 `development-cloud-config.json`，不包含登录令牌。release 构建仍使用系统凭证库。

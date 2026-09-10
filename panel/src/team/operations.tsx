@@ -1,4 +1,7 @@
 import { useState } from "react";
+import pocketWorkshop from "../assets/loom-pocket-workshop.png";
+import { LocalDetail } from "./LocalDetail";
+import { LocalSkillList, type LocalSkill } from "./LocalSkillList";
 import {
   isDesktop,
   native,
@@ -401,14 +404,6 @@ export function InstallSkill({
   );
 }
 
-interface LocalSkill {
-  skill_id: string;
-  description?: string;
-  source_path?: string;
-  source_status?: string;
-  trust?: string;
-  warnings?: string[];
-}
 export function LocalSkills({ run }: { run: Runner }) {
   const [root, setRoot] = useState("");
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
@@ -442,16 +437,17 @@ export function LocalSkills({ run }: { run: Runner }) {
     );
   };
   return (
-    <section className="team-content">
-      <span className="eyebrow">ON YOUR MACHINE</span>
-      <h1>
-        你的技能，
-        <br />
-        留在你的电脑上。
-      </h1>
-      <p className="lead">检查本机技能，然后决定哪些值得分享。</p>
+    <section className="team-content local-workspace">
+      <header className="local-page-heading">
+        <img className="local-workshop-art" src={pocketWorkshop} alt="" aria-hidden="true" />
+        <div><span className="eyebrow">ON YOUR MACHINE</span><h1>本机技能</h1><p className="lead">浏览、检查和管理这台设备上的技能。</p></div>
+        {isDesktop() && <button type="button" className="primary" disabled={busy} onClick={() => void act(read)}>{busy ? "正在读取…" : result ? "刷新技能" : "读取本机技能"}</button>}
+      </header>
       {isDesktop() ? (
-        <div className="team-card">
+        <div>
+          {!selected && <details className="local-disclosure">
+            <summary>仓库设置 <span>{root || "使用默认仓库"}</span></summary>
+            <div className="local-disclosure-body">
           <label>
             Registry 目录（留空使用 Loom 默认目录）
             <input
@@ -470,14 +466,6 @@ export function LocalSkills({ run }: { run: Runner }) {
           </label>
           <button
             type="button"
-            className="primary"
-            disabled={busy}
-            onClick={() => void act(read)}
-          >
-            读取本机技能
-          </button>
-          <button
-            type="button"
             disabled={busy}
             onClick={() =>
               void act(async () => {
@@ -492,8 +480,11 @@ export function LocalSkills({ run }: { run: Runner }) {
           >
             初始化 Registry
           </button>
-          <section className="activation">
-            <h2>导入已有技能目录</h2>
+            </div>
+          </details>}
+          {(!selected || selected.source_status === "missing") && <details className="local-disclosure local-import">
+            <summary>导入已有技能目录 <span>添加到当前仓库 ＋</span></summary>
+            <div className="local-disclosure-body">
             <p className="subtle">
               选择包含 SKILL.md
               的完整目录，导入当前仓库。导入后由你决定是否激活到项目。
@@ -595,52 +586,24 @@ export function LocalSkills({ run }: { run: Runner }) {
               </div>
             )}
             {importNotice && <p role="status">{importNotice}</p>}
-          </section>
-          {result && (
-            <>
-              <p>
-                {result.registry_available === false
-                  ? "此目录尚未初始化 registry。"
-                  : `共 ${(result.skills as LocalSkill[]).length} 个技能`}
-              </p>
-              {(result.skills as LocalSkill[]).map((s) => (
-                <button
-                  type="button"
-                  className="skill-card"
-                  key={s.skill_id}
-                  onClick={() =>
-                    void act(async () => {
-                      setSelected(s);
-                      setInspection(null);
-                      if (s.source_status === "missing") return;
-                      setInspection(
-                        requireSuccess(
-                          await native<Envelope>("inspect_skill", {
-                            root: root || null,
-                            skill: s.skill_id,
-                          }),
-                        ),
-                      );
-                    })
-                  }
-                >
-                  <h3>{s.skill_id}</h3>
-                  <p>{s.description}</p>
-                  <small>
-                    {s.source_status === "missing"
-                      ? "尚未导入当前仓库"
-                      : s.source_status}{" "}
-                    · {s.source_path}
-                  </small>
-                </button>
-              ))}
-            </>
-          )}
+            </div>
+          </details>}
+          {result && <div hidden={selected !== null}>
+            {result.registry_available === false && <p className="local-registry-notice">此目录尚未初始化 registry。请展开仓库设置完成初始化。</p>}
+            <LocalSkillList skills={result.skills as LocalSkill[]} busy={busy} onSelect={s => void act(async () => {
+              setSelected(s);
+              setInspection(null);
+              if (s.source_status === "missing") return;
+              setInspection(requireSuccess(await native<Envelope>("inspect_skill", { root: root || null, skill: s.skill_id })));
+            })} />
+          </div>}
+          {!result && <div className="empty-state local-unread"><span className="paper-book" aria-hidden="true"><i /><i /><i /></span><h2>你的本机技能库</h2><p>点击“读取本机技能”开始。只读取本机信息，无需登录。</p></div>}
           {selected && (
-            <section>
+            <section className="local-selected">
+              <button type="button" className="text-button" disabled={busy} onClick={() => { setSelected(null); setInspection(null); }}>← 返回本机技能列表</button>
               <h2>{selected.skill_id}</h2>
               <p>{selected.description}</p>
-              {inspection && <Evidence value={inspection} />}
+              {selected.source_status !== "missing" && <LocalDetail key={`${root}:${selected.skill_id}`} root={root} skill={selected.skill_id} inspection={inspection} />}
               {selected.source_status === "missing" ? (
                 <p>
                   尚未导入当前仓库。请使用“导入已有技能目录”，选择目录并确认导入。

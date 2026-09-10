@@ -1,3 +1,4 @@
+#[cfg(not(debug_assertions))]
 use keyring::Entry;
 use reqwest::{Client, Method, Response};
 use serde::{Deserialize, Serialize};
@@ -13,17 +14,19 @@ pub struct CloudConfig {
     pub auth_url: String,
     pub auth_public_key: String,
 }
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 struct Saved {
     config: CloudConfig,
     refresh_token: Option<String>,
 }
 #[derive(Default)]
 pub struct CloudState(Mutex<Option<String>>);
+#[cfg(not(debug_assertions))]
 fn entry() -> Result<Entry> {
     Entry::new("ai.skillloom.desktop", "cloud-session")
         .map_err(|e| format!("系统凭证库不可用：{e}"))
 }
+#[cfg(not(debug_assertions))]
 fn load() -> Result<Saved> {
     match entry()?.get_password() {
         Ok(raw) => serde_json::from_str(&raw).map_err(|_| "系统凭证库中的 Loom 配置损坏".into()),
@@ -31,11 +34,62 @@ fn load() -> Result<Saved> {
         Err(e) => Err(format!("无法读取系统凭证库：{e}")),
     }
 }
+#[cfg(not(debug_assertions))]
 fn save(saved: &Saved) -> Result<()> {
     entry()?
         .set_password(&serde_json::to_string(saved).map_err(|e| e.to_string())?)
         .map_err(|e| format!("无法保存系统凭证库：{e}"))
 }
+// Ad-hoc development builds change identity on rebuild. Keep their tokens in
+// process memory so development never prompts for access to production Keychain.
+#[cfg(debug_assertions)]
+static DEVELOPMENT_SESSION: std::sync::OnceLock<std::sync::Mutex<(std::path::PathBuf, Saved)>> =
+    std::sync::OnceLock::new();
+
+#[cfg(debug_assertions)]
+pub fn initialize_development_session(dir: std::path::PathBuf) -> Result<()> {
+    std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建服务配置目录：{e}"))?;
+    let path = dir.join("development-cloud-config.json");
+    let config = match std::fs::read(&path) {
+        Ok(raw) => serde_json::from_slice(&raw).map_err(|e| format!("服务配置损坏：{e}"))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => CloudConfig::default(),
+        Err(e) => return Err(format!("无法读取服务配置：{e}")),
+    };
+    DEVELOPMENT_SESSION
+        .set(std::sync::Mutex::new((
+            path,
+            Saved {
+                config,
+                refresh_token: None,
+            },
+        )))
+        .map_err(|_| "开发会话已初始化".to_string())
+}
+
+#[cfg(debug_assertions)]
+fn load() -> Result<Saved> {
+    let session = DEVELOPMENT_SESSION
+        .get()
+        .ok_or("开发会话尚未初始化")?
+        .lock()
+        .map_err(|_| "开发会话锁损坏")?;
+    Ok(session.1.clone())
+}
+
+#[cfg(debug_assertions)]
+fn save(saved: &Saved) -> Result<()> {
+    let mut session = DEVELOPMENT_SESSION
+        .get()
+        .ok_or("开发会话尚未初始化")?
+        .lock()
+        .map_err(|_| "开发会话锁损坏")?;
+    // Persist public service configuration only, never access or refresh tokens.
+    let raw = serde_json::to_vec(&saved.config).map_err(|e| e.to_string())?;
+    std::fs::write(&session.0, raw).map_err(|e| format!("无法保存服务配置：{e}"))?;
+    session.1 = saved.clone();
+    Ok(())
+}
+
 fn base(value: &str) -> Result<Url> {
     let url = Url::parse(value).map_err(|_| "服务地址无效".to_string())?;
     let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
@@ -319,6 +373,36 @@ pub async fn logout(state: State<'_, CloudState>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(debug_assertions)]
+    #[test]
+    fn development_session_persists_config_without_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        initialize_development_session(dir.path().to_path_buf()).unwrap();
+        let saved = Saved {
+            config: CloudConfig {
+                cloud_api_url: "https://example.com".into(),
+                ..Default::default()
+            },
+            refresh_token: Some("test-refresh-secret".into()),
+        };
+        save(&saved).unwrap();
+        assert_eq!(
+            load().unwrap().refresh_token.as_deref(),
+            Some("test-refresh-secret")
+        );
+        let raw =
+            std::fs::read_to_string(dir.path().join("development-cloud-config.json")).unwrap();
+        assert!(!raw.contains("test-refresh-secret"));
+        assert!(!raw.contains("refresh_token"));
+        let restored: CloudConfig = serde_json::from_str(&raw).unwrap();
+        assert_eq!(restored.cloud_api_url, "https://example.com");
+        save(&Saved {
+            config: restored,
+            refresh_token: None,
+        })
+        .unwrap();
+        assert!(load().unwrap().refresh_token.is_none());
+    }
     #[test]
     fn rejects_credential_and_remote_http_origins() {
         for s in [

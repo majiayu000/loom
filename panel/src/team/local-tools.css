@@ -1,0 +1,87 @@
+.local-tools {
+  --ink-0: var(--ink); --ink-1: var(--ink); --ink-2: var(--muted); --ink-3: var(--muted);
+  --line-soft: var(--line); --line-hi: var(--line); --bg-2: #f2f4f6;
+  --ok: #36724f; --warn: #8b5d1b; --err: #b13f3f; --accent: var(--blue);
+  --font-mono: "SFMono-Regular", Consolas, monospace;
+  min-width: 0;
+}
+.local-tools .local-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0; }
+.local-tools .local-tabs button[aria-pressed="true"] { background: var(--blue); color: white; }
+.local-tools .kv { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, 3fr); gap: 8px; }
+.local-tools .card, .local-tools .op-log-row { border: 1px solid var(--line); border-radius: 10px; background: white; margin: 12px 0; }
+.local-tools .card-head, .local-tools .card-body { padding: 16px; overflow-x: auto; }
+.local-tools .card-head { display: flex; justify-content: space-between; gap: 12px; }
+.local-tools .tbl { width: 100%; border-collapse: collapse; overflow-wrap: anywhere; }
+.local-tools .tbl td { padding: 10px; border-top: 1px solid var(--line); }
+.local-tools .chip, .local-tools .op-pill { padding: 3px 8px; border-radius: 5px; background: var(--bg-2); }
+.local-tools .op-row { padding: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.local-tools .op-log-row { display: block; }
+.local-tools .op-row-main { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; cursor: pointer; }
+.local-tools .op-main-subject { flex: 1; min-width: 120px; overflow-wrap: anywhere; }
+.local-tools .op-time, .local-tools .op-note { font-size: 12px; color: var(--muted); }
+.local-tools .op-expanded { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; overflow-wrap: anywhere; }
+.local-tools .op-kv-grid { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 6px; }
+.local-tools .op-kv-grid code { white-space: pre-wrap; }
+.local-tools .op-done { color: var(--ok); } .local-tools .op-failed { color: var(--err); }
+.local-tools .op-pending { color: var(--warn); }
+.local-tools .revision-selectors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.local-tools .revision-selectors select { width: 100%; }
+.local-tools .revision-list { padding-left: 24px; overflow-wrap: anywhere; }
+.local-tools .revision-list small { display: block; color: var(--muted); }
+.local-tools .local-diff { max-height: 480px; overflow: auto; padding: 16px; border: 1px solid var(--line); background: var(--bg-2); font-size: 12px; }
+@media (max-width: 700px) {
+  .local-tools .revision-selectors { grid-template-columns: 1fr; }
+}
+
+/* Device library: compact rows keep large registries useful at desktop sizes. */
+.loom-team-app .local-workspace { padding-top: 28px; }
+.local-page-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 24px; }
+.local-page-heading .eyebrow { margin-bottom: 8px; }
+.loom-team-app .local-page-heading h1 { font-size: 32px; letter-spacing: -1px; margin-bottom: 8px; }
+.local-page-heading .lead { margin: 0; font-size: 13px; }
+.local-page-heading > button { flex-shrink: 0; }
+.local-disclosure { border: 1px solid var(--line); border-radius: 8px; background: white; margin-bottom: 10px; }
+.local-disclosure > summary { padding: 12px 16px; cursor: pointer; font-size: 13px; font-weight: 500; }
+.local-disclosure-body { padding: 20px; border-top: 1px solid var(--line); }
+.local-disclosure-body > button { margin-bottom: 14px; }
+.local-disclosure-body .team-notice { display: block; margin: 16px 0; }
+.local-library { margin-top: 24px; }
+.local-library-toolbar { display: flex; gap: 20px; align-items: center; }
+.loom-team-app .local-search { flex: 1; margin: 0; }
+.local-search > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.local-total { white-space: nowrap; color: var(--muted); font-size: 12px; }
+.local-filters { display: flex; gap: 8px; padding: 16px 0; flex-wrap: wrap; }
+.loom-team-app .local-filters button { display: flex; align-items: center; gap: 8px; background: transparent; border-color: transparent; padding: 6px 10px; font-size: 12px; }
+.local-filters button span { font: 11px "SFMono-Regular", Consolas, monospace; opacity: .65; }
+.loom-team-app .local-filters button[aria-pressed="true"] { background: #e7edff; color: #2143ba; border-color: #ccd8ff; }
+.local-list-heading, .loom-team-app .local-skill-row { display: grid; grid-template-columns: minmax(0, 1fr) 132px 18px; gap: 20px; align-items: center; }
+.local-list-heading { padding: 8px 18px; color: var(--muted); font-size: 11px; }
+.local-skill-rows { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: white; }
+.local-skill-rows:empty { display: none; }
+.loom-team-app .local-skill-row { width: 100%; text-align: left; padding: 14px 18px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.loom-team-app .local-skill-row:last-child { border-bottom: 0; }
+.loom-team-app .local-skill-row:focus-visible { outline-offset: -3px; }
+.local-skill-copy { min-width: 0; display: grid; gap: 4px; }
+.local-skill-copy strong { font-size: 14px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.local-skill-copy > span { color: var(--muted); font-size: 12px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.local-disclosure > summary > span { float: right; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; font-weight: 400; }
+.local-status { font-size: 11px; justify-self: start; border-radius: 4px; padding: 3px 7px; background: #f0f2f3; color: var(--muted); }
+.local-status-present { color: #356148; background: #edf5ef; }
+.local-status-attention { color: #8a591b; background: #fff3df; }
+.local-row-arrow { color: #81909a; }
+.local-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; color: var(--muted); font-size: 12px; }
+.local-pagination > div { display: flex; align-items: center; gap: 12px; }
+.local-pagination button { font-size: 12px; padding: 6px 10px; }
+.local-unread { margin-top: 24px; }
+.local-registry-notice { color: #8a591b; margin-top: 20px; }
+.local-selected > h2 { font-size: 26px; overflow-wrap: anywhere; margin: 16px 0 8px; }
+.local-selected > p { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.local-tools .card-head { align-items: center; }
+@media (max-width: 700px) {
+  .local-page-heading { align-items: flex-start; }
+  .local-page-heading .lead { max-width: 220px; }
+  .local-list-heading, .loom-team-app .local-skill-row { grid-template-columns: minmax(0, 1fr) 102px; gap: 12px; }
+  .local-row-arrow { display: none; }
+  .local-pagination { flex-wrap: wrap; }
+  .local-disclosure > summary > span { max-width: 45%; }
+}

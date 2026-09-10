@@ -146,6 +146,8 @@ function RuntimeRow({ agent, status }: { agent: string; status: SkillInspectRunt
         <div className="mono" style={rowPathStyle}>
           {status.target_path ?? status.materialized_path ?? "no target path"}
         </div>
+        {status.materialized_path && <div style={rowPathStyle}>技能位置：{status.materialized_path}</div>}
+        {status.binding_id && <div style={rowPathStyle}>绑定：{status.binding_id}</div>}
         <div style={chipRowStyle}>
           <StatusChip label={state.label} tone={state.tone} />
           <StatusChip label={`truth ${status.truth_level}`} tone="muted" />
@@ -214,8 +216,11 @@ function runtimeState(status: SkillInspectRuntimeStatus): { label: string; tone:
   if (status.active_rule_present && !status.projected_to_target) {
     return { label: "missing projection", tone: "warn" };
   }
-  if (status.projected_to_target || matchesStatus(status.visible_to_agent, ["visible", "true"])) {
+  if (matchesStatus(status.visible_to_agent, ["visible", "true"])) {
     return { label: "visible", tone: "ok" };
+  }
+  if (status.projected_to_target) {
+    return { label: "文件已投影 · 会话未验证", tone: "muted" };
   }
   if (matchesStatus(status.visible_to_agent, ["not_checked"])) {
     return { label: "not checked", tone: "muted" };

@@ -16,6 +16,24 @@ const CACHE_TTL: Duration = Duration::from_secs(300);
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
 const MAX_JWKS_BYTES: usize = 1024 * 1024;
 
+fn validate_jwks_url(url: &reqwest::Url) -> anyhow::Result<()> {
+    let loopback = url
+        .host_str()
+        .and_then(|host| {
+            host.trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .ok()
+        })
+        .is_some_and(|ip| ip.is_loopback());
+    anyhow::ensure!(
+        (url.scheme() == "https" || (url.scheme() == "http" && loopback))
+            && url.username().is_empty()
+            && url.password().is_none(),
+        "JWKS URL must use HTTPS (HTTP is allowed only for loopback IPs), without credentials"
+    );
+    Ok(())
+}
+
 /// A single configured authority. Token-provided URLs never select a key source.
 pub struct JwksCache {
     source: Source,
@@ -27,7 +45,7 @@ struct CacheState {
     attempted_at: Option<Instant>,
 }
 enum Source {
-    Https {
+    Http {
         client: reqwest::Client,
         url: reqwest::Url,
     },
@@ -40,7 +58,7 @@ enum Source {
 impl Source {
     async fn fetch(&self) -> anyhow::Result<JwkSet> {
         match self {
-            Self::Https { client, url } => {
+            Self::Http { client, url } => {
                 let mut response = client.get(url.clone()).send().await?.error_for_status()?;
                 anyhow::ensure!(
                     response
@@ -72,12 +90,9 @@ impl Source {
 impl JwksCache {
     pub async fn from_url(url: &str) -> anyhow::Result<Self> {
         let url = reqwest::Url::parse(url)?;
-        anyhow::ensure!(
-            url.scheme() == "https" && url.username().is_empty() && url.password().is_none(),
-            "JWKS URL must use HTTPS without embedded credentials"
-        );
-        // Disable redirects so a configured HTTPS endpoint cannot redirect to HTTP.
-        let source = Source::Https {
+        validate_jwks_url(&url)?;
+        // Never follow redirects, including redirects from a loopback authority.
+        let source = Source::Http {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .redirect(reqwest::redirect::Policy::none())
@@ -194,6 +209,25 @@ pub(super) async fn auth(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn jwks_transport_rejects_remote_http_and_credentials() {
+        for raw in [
+            "https://auth.example.test/jwks",
+            "http://127.0.0.1:5574/jwks",
+            "http://[::1]:5574/jwks",
+        ] {
+            assert!(super::validate_jwks_url(&reqwest::Url::parse(raw).unwrap()).is_ok());
+        }
+        for raw in [
+            "http://auth.example.test/jwks",
+            "http://127.0.0.1.example.test/jwks",
+            "http://192.168.1.1/jwks",
+            "http://user:pass@127.0.0.1/jwks",
+            "ftp://127.0.0.1/jwks",
+        ] {
+            assert!(super::validate_jwks_url(&reqwest::Url::parse(raw).unwrap()).is_err());
+        }
+    }
     use super::*;
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};

@@ -145,6 +145,61 @@ pub async fn choose_file(app: AppHandle) -> Result<Option<String>> {
 pub async fn local_skills(app: AppHandle, root: Option<String>) -> Result<Value> {
     run(&app, root, vec!["skill".into(), "list".into()]).await
 }
+#[tauri::command]
+pub async fn local_operations(app: AppHandle, root: Option<String>, offset: u32) -> Result<Value> {
+    run(
+        &app,
+        root,
+        vec![
+            "ops".into(),
+            "list".into(),
+            "--activity".into(),
+            "--limit".into(),
+            "100".into(),
+            "--offset".into(),
+            offset.to_string(),
+        ],
+    )
+    .await
+}
+#[tauri::command]
+pub async fn diagnose_skill(app: AppHandle, root: Option<String>, skill: String) -> Result<Value> {
+    atom(&skill)?;
+    run(&app, root, vec!["skill".into(), "diagnose".into(), skill]).await
+}
+#[tauri::command]
+pub async fn history_skill(app: AppHandle, root: Option<String>, skill: String) -> Result<Value> {
+    atom(&skill)?;
+    run(
+        &app,
+        root,
+        vec![
+            "skill".into(),
+            "history".into(),
+            skill,
+            "--limit".into(),
+            "30".into(),
+            "--include-diff-stat".into(),
+        ],
+    )
+    .await
+}
+fn diff_args(skill: String, from: String, to: String) -> Result<Vec<String>> {
+    for value in [&skill, &from, &to] {
+        atom(value)?;
+    }
+    Ok(vec!["skill".into(), "diff".into(), skill, from, to])
+}
+#[tauri::command]
+pub async fn diff_skill(
+    app: AppHandle,
+    root: Option<String>,
+    skill: String,
+    from: String,
+    to: String,
+) -> Result<Value> {
+    run(&app, root, diff_args(skill, from, to)?).await
+}
 fn read_args(
     op: &str,
     skill: String,
@@ -282,6 +337,14 @@ pub async fn apply_activate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn revision_arguments_cannot_become_options_or_shell_commands() {
+        assert!(diff_args("demo".into(), "--output=/tmp/other".into(), "HEAD".into()).is_err());
+        assert_eq!(
+            diff_args("demo".into(), "HEAD~1".into(), "HEAD; touch /tmp/no".into()).unwrap()[4],
+            "HEAD; touch /tmp/no"
+        );
+    }
     #[test]
     fn option_injection_is_rejected() {
         for value in ["", "--root", "x\ny"] {

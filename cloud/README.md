@@ -15,10 +15,10 @@
 | `LOOM_ARTIFACT_DIR` | 私有持久卷绝对路径 |
 | `LOOM_AUTH_ISSUER` | JWT 精确 issuer |
 | `LOOM_AUTH_AUDIENCE` | JWT audience |
-| `LOOM_AUTH_JWKS_URL` | HTTPS JWKS 地址；启动加载，未知 kid 与 5 分钟 TTL 触发刷新 |
+| `LOOM_AUTH_JWKS_URL` | HTTPS JWKS 地址（本机回环 IP 可使用 HTTP）；启动加载，未知 kid 与 5 分钟 TTL 触发刷新 |
 | `LOOM_CORS_ORIGINS` | 逗号分隔的精确网页 origin，禁止 `*` |
 
-运行 `cargo run --manifest-path cloud/Cargo.toml --release`。启动自动应用迁移；`GET /v1/health` 检查数据库连通性。生产入口必须提供 TLS。Auth 必须使用 RS256 或 ES256 JWT，验证签名、kid、issuer、audience、exp、sub；不存在开发登录或可信身份头。验证 `nbf` 并禁用时间宽限；JWKS 仅从配置 HTTPS 地址读取，禁止重定向，超时 10 秒、最大 1 MiB。未知 kid 触发刷新，互斥锁合并并发请求；全局至少间隔 30 秒，缓存最长 5 分钟。刷新失败明确 503，过期缓存不继续授权；冷却期间新轮换 key 可能需最多 30 秒后重试。数据库不得通过 Supabase Data API 对客户端开放；迁移撤销 PUBLIC 表权限，部署者还需撤销其平台上 anon/authenticated 等显式角色授权。不要向浏览器发放数据库凭证。
+运行 `cargo run --manifest-path cloud/Cargo.toml --release`。启动自动应用迁移；`GET /v1/health` 检查数据库连通性。生产入口必须提供 TLS。Auth 必须使用 RS256 或 ES256 JWT，验证签名、kid、issuer、audience、exp、sub；不存在开发登录或可信身份头。验证 `nbf` 并禁用时间宽限；JWKS 仅从配置地址读取，远程必须 HTTPS，本机回环 IP 允许 HTTP，禁止重定向，超时 10 秒、最大 1 MiB。未知 kid 触发刷新，互斥锁合并并发请求；全局至少间隔 30 秒，缓存最长 5 分钟。刷新失败明确 503，过期缓存不继续授权；冷却期间新轮换 key 可能需最多 30 秒后重试。数据库不得通过 Supabase Data API 对客户端开放；迁移撤销 PUBLIC 表权限，部署者还需撤销其平台上 anon/authenticated 等显式角色授权。不要向浏览器发放数据库凭证。
 
 邮箱邀请要求 JWT 顶层 `email_verified: true` 与 `email`。使用 Supabase 时，在 Auth 项目执行 [supabase-email-hook.sql](supabase-email-hook.sql)，并在 Authentication → Hooks 启用 `public.loom_access_token_hook`；如已有 hook，应把已确认邮箱判断合入已有函数。此脚本需部署者审阅后手动执行，不属于 Loom 自动迁移。它只读取 `auth.users.email_confirmed_at` 和实际邮箱，不信任用户 metadata，并保留原有 claims。配置完成后重新登录取得新 JWT；未配置时接受邀请明确返回 403。接入方式依据 [Supabase Custom Access Token Hook](https://supabase.com/docs/guides/auth/auth-hooks/custom-access-token-hook) 与 [权限说明](https://supabase.com/docs/guides/auth/auth-hooks)。API 不保存浏览器会话。
 
@@ -50,6 +50,32 @@ Cursor 是最后一条资源 UUID，服务端在当前租户范围解析它对�
 
 ## 验证
 
+本机独立测试 PostgreSQL 已初始化在仓库 `.git/codex/local-team/pgdata`，只监听 `127.0.0.1:5572`，数据库 `loom_team_test`，用户 `loom_test`。使用 trust 认证，仅用于本机可丢弃测试数据，不用于真实团队数据。复跑测试：
+
+```sh
+LOOM_TEST_DATABASE_URL=postgresql://loom_test@127.0.0.1:5572/loom_team_test cargo test --manifest-path cloud/Cargo.toml --locked
+```
+
+在仓库根目录停止或重新启动此测试库：
+
+```sh
+pg_ctl -D .git/codex/local-team/pgdata stop
+pg_ctl -D .git/codex/local-team/pgdata -l .git/codex/local-team/postgres.log -o '-h 127.0.0.1 -p 5572 -k /tmp' start
+```
+
+这只启动数据库。App 的邮箱登录 / 注册依赖 Supabase Auth，验证码请求已指定 `create_user: true`，首次验证自动创建账号；数据库集成测试不能替代真实邮箱注册和桌面登录联调。未配置 Auth/JWKS 时，生产 API 不会绕过身份校验启动。
+
 `cargo fmt --manifest-path cloud/Cargo.toml -- --check`
 
 设置 `LOOM_TEST_DATABASE_URL` 指向可丢弃 PostgreSQL 数据库，再运行 `cargo test --manifest-path cloud/Cargo.toml`。测试不会跳过缺失数据库：未配置直接失败。测试注入身份只存在 `#[cfg(test)]` 模块内，生产 HTTP 路由始终校验 JWT。覆盖归档边界、真实数据库迁移、邮箱绑定/重复邀请、移除后权限、owner 约束、创建幂等、并发发布推荐冲突、不可变重试、跨租户下载和篡改检测，以及签名 JWT 的未来 nbf 拒绝、JWKS 轮换/并发刷新限频与固定版本元数据隔离。测试库包含随机测试数据，应整库丢弃。
+
+## 当前本地团队联调环境
+
+- 团队 API：`http://127.0.0.1:5576`，使用原生 PG 的 `loom_team_local` 数据库，与自动测试库隔离。
+- Supabase Auth 网关：`http://127.0.0.1:5574`，认证数据库位于专用 Docker volume。
+- 测试收件箱：`http://127.0.0.1:5575`，所有验证码留在本机，不投递外部邮箱。
+- Docker Compose 配置：`.git/codex/local-team/compose.json`；App 的三项连接配置：同目录 `app-config.json`。包含本地私有配置的文件不得提交或公开。
+
+运行 `docker compose -f .git/codex/local-team/compose.json up -d` 可恢复认证和收件箱；团队 API 的启动环境见 `api-config.json`，日志 `api.log`，进程号 `api.pid`。PG 的启停见上文。团队服务和认证均使用真实 JWT 签名校验，未启用模拟登录。
+
+测试账号 `owner@loom.test` 与 `member@loom.test` 已完成邮箱验证，已创建双成员的“Loom 本地测试团队”；每次登录仍需读取最新验证码。原生 App 已完成发送验证码、验证和进入团队的实测。测试证据 `smoke-result.json`，本机 JWKS 边界与原有后端共 6 项测试通过。认证配置参考 [Supabase 自托管 Auth Hook](https://supabase.com/docs/guides/self-hosting/self-hosted-auth-hooks)，收件箱使用 [Mailpit](https://mailpit.axllent.org/docs/api-v1/)。

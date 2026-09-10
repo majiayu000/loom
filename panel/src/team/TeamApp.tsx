@@ -1,4 +1,8 @@
+import methodBridge from "../assets/loom-method-bridge.png";
+import paperSteps from "../assets/loom-paper-steps.png";
+import { StudioWelcome } from "./StudioWelcome";
 import { Updates } from "./Updates";
+import { LocalActivity } from "./LocalActivity";
 import { SkillDetail } from "./SkillDetail";
 import { TeamForms, TeamSettings } from "./TeamSettings";
 import { PublishForm } from "./PublishForm";
@@ -17,7 +21,7 @@ import {
 } from "./client";
 import type { Config, Skill, Team } from "./client";
 
-type Page = "team" | "local" | "updates" | "settings";
+type Page = "team" | "local" | "updates" | "settings" | "activity";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -155,9 +159,48 @@ export function TeamApp() {
           <span className="loom-mark" aria-hidden="true">
             ▥
           </span>{" "}
-          loom<span className="team-brand-tag">TEAMSPACE</span>
+          loom<span className="team-brand-tag">TEAM STUDIO</span>
         </a>
-        <div className="workspace-picker">
+        <nav aria-label="主导航">
+          {(
+            [
+              ["team", "团队技能", "01"],
+              ["local", "本机技能", "02"],
+              ["updates", "版本更新", "03"],
+              ["activity", "本机活动", "04"],
+              ["settings", "团队设置", "05"],
+            ] as const
+          ).map(([key, title, index]) => (
+            <button
+              type="button"
+              key={key}
+              className={page === key ? "active" : ""}
+              aria-current={page === key ? "page" : undefined}
+              onClick={() => {
+                setPage(key);
+                setDetail(null);
+                setPublishing(false);
+              }}
+            >
+              <span>{index}</span>
+              {title}
+              <span className="nav-arrow">↗</span>
+            </button>
+          ))}
+        </nav>
+        <div className="team-account">
+          <span className="account-dot" />
+          {user?.email ?? (user ? "已登录" : "尚未登录")}
+          {user && (
+            <button type="button" onClick={() => void logout()} disabled={busy}>
+              退出
+            </button>
+          )}
+        </div>
+      </aside>
+      <main className="team-main">
+        <header className="team-topbar">
+                  <div className="workspace-picker">
           <label htmlFor="team-picker">当前工作空间</label>
           <select
             id="team-picker"
@@ -176,57 +219,7 @@ export function TeamApp() {
             ))}
           </select>
         </div>
-        <nav aria-label="主导航">
-          {(
-            [
-              ["team", "团队技能", "01"],
-              ["local", "本机技能", "02"],
-              ["updates", "版本更新", "03"],
-              ["settings", "团队设置", "04"],
-            ] as const
-          ).map(([key, title, index]) => (
-            <button
-              type="button"
-              key={key}
-              className={page === key ? "active" : ""}
-              onClick={() => {
-                setPage(key);
-                setDetail(null);
-                setPublishing(false);
-              }}
-            >
-              <span>{index}</span>
-              {title}
-              <span className="nav-arrow">↗</span>
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-note">
-          <span className="eyebrow">SHARED KNOW-HOW</span>
-          <p>
-            好用的方法，
-            <br />
-            值得整个团队拥有。
-          </p>
-          <small>
-            技能在你的工具中运行。
-            <br />
-            文件由你决定何时安装。
-          </small>
-        </div>
-        <div className="team-account">
-          <span className="account-dot" />
-          {user?.email ?? (user ? "已登录" : "尚未登录")}
-          {user && (
-            <button type="button" onClick={() => void logout()} disabled={busy}>
-              退出
-            </button>
-          )}
-        </div>
-      </aside>
-      <main className="team-main">
-        <header className="team-topbar">
-          <span>{selectedTeam?.name ?? "你的团队工作空间"}</span>
+<span className="workspace-context">{page === "local" || page === "activity" ? "ON THIS DEVICE" : "SHARED WORKSPACE"}</span>
           <span className="surface-tag">{isDesktop() ? "DESKTOP" : "WEB"}</span>
         </header>
         {error && (
@@ -249,26 +242,11 @@ export function TeamApp() {
         )}
         {page === "local" ? (
           <LocalSkills run={run} />
+        ) : page === "activity" ? (
+          <LocalActivity />
         ) : !user ? (
           <section className="login-layout">
-            <div>
-              <span className="eyebrow">A LIBRARY BUILT BY YOUR TEAM</span>
-              <h1>
-                让好方法，
-                <br />
-                成为共同习惯。
-              </h1>
-              <p className="lead">
-                分享你已经用顺手的技能。
-                <br />
-                同事在自己的 AI 工具中，接着用。
-              </p>
-              <div className="onboarding-steps">
-                <span>01 分享方法</span>
-                <span>02 安装技能</span>
-                <span>03 一起改进</span>
-              </div>
-            </div>
+            <StudioWelcome />
             <form
               className="team-card login-card"
               onSubmit={(e) => {
@@ -290,8 +268,10 @@ export function TeamApp() {
                 });
               }}
             >
-              <h2>进入团队空间</h2>
-              <p>使用邮箱验证码登录，无需共享模型账户。</p>
+              <span className="eyebrow">YOUR NEXT GOOD IDEA STARTS HERE</span>
+              <h2>一起，把经验<br />变成好方法。</h2>
+              <h3 className="login-section-label">登录 / 注册团队账号</h3>
+              <p>使用邮箱验证码登录。首次验证会自动创建账号，无需设置密码。</p>
               <label>
                 工作邮箱
                 <input
@@ -350,7 +330,7 @@ export function TeamApp() {
               </details>
               <small>
                 {isDesktop()
-                  ? "登录信息由本机系统凭证库保存。"
+                  ? "登录会话由桌面应用管理。"
                   : "网页登录状态仅保留在当前页面，刷新后需重新登录。"}
               </small>
             </form>
@@ -388,7 +368,8 @@ export function TeamApp() {
           />
         ) : (
           <section className="team-content">
-            <div className="page-heading">
+            <div className="page-heading illustrated-heading">
+              <img className="workspace-art" src={page === "updates" ? paperSteps : methodBridge} alt="" aria-hidden="true" />
               <div>
                 <span className="eyebrow">
                   {page === "updates"
@@ -446,7 +427,7 @@ export function TeamApp() {
               </div>
             ) : !skills.length && !error ? (
               <div className="empty-state">
-                <span className="empty-symbol">＋</span>
+                <span className="paper-book" aria-hidden="true"><i /><i /><i /></span>
                 <h2>
                   {search ? "没有找到匹配的技能" : "第一个好方法，由你分享。"}
                 </h2>
@@ -484,6 +465,7 @@ export function TeamApp() {
                     onClick={() => void selectSkill(s)}
                   >
                     <span className="skill-card-top">
+                      <span className={`skill-emblem emblem-${i % 3}`} aria-hidden="true">✧</span>
                       <span className="skill-number">
                         {String(i + 1).padStart(2, "0")}
                       </span>

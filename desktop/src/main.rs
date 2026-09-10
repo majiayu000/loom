@@ -1,9 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#[cfg(debug_assertions)]
+use tauri::Manager;
 mod cloud;
 mod local;
 mod packages;
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(debug_assertions)]
+            cloud::initialize_development_session(app.path().app_config_dir()?)
+                .map_err(std::io::Error::other)?;
+            Ok(())
+        })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(cloud::CloudState::default())
@@ -12,6 +20,10 @@ fn main() {
             local::choose_directory,
             local::choose_file,
             local::local_skills,
+            local::local_operations,
+            local::diagnose_skill,
+            local::history_skill,
+            local::diff_skill,
             local::inspect_skill,
             local::deps_skill,
             local::visibility_skill,

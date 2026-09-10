@@ -41,3 +41,47 @@
 最终桌面产物位于 `desktop/target/debug/bundle/macos/Loom.app`。已用真实 Tauri 窗口验证无需登录进入本机页面、通过包内 CLI 初始化 `/tmp/loom-desktop-smoke-20260908` 并读取本机清单。清单包含已发现但未导入的 Agent 技能，界面提供显式目录导入和预览确认。包内 CLI 与本次源码构建的 sidecar SHA-256 一致，见 `native-smoke.json`；最终构建日志 `desktop-final-bundle.log`。托管认证与团队网络全链路不在此原生冒烟结果内。
 
 线程日志校验脚本只登记旧宿主的 `multi_agent_v1.spawn_agent`；本次在调用进程内登记实际的 `collaboration.spawn_agent` 后使用原 helper 追加，保留其余证据校验、隐私清理和文件锁；未修改安装的 Skill 文件。
+
+## 2026-09-08 原版功能接入团队 UI
+
+本机技能接入原版 `SkillInspectSections`、`SkillDiagnosePanel`，展示来源、安装位置和诊断；新增本机历史与差异入口。独立“本机活动”页面复用 `SkillMAuditHistory` 的分页、筛选和错误处理。新增四个受限只读 native 命令，不提供任意 shell 调用。文件投影成功不再被显示为已验证 Agent 会话可见。
+
+本轮证据位于 `.git/codex/ui-integration/`：前端 33 个测试文件、223 项通过，原生 11 项通过；TypeScript、新增文件 lint、生产构建和 macOS App 打包通过。新增测试覆盖实际安装位置、历史差异参数、切换标签后的过期请求，以及显式读取活动和引擎失败提示。
+
+使用隔离仓库 `/tmp/loom-ui-integration-20260908/registry`，直接创建并提交两次测试技能修订；未修改用户默认仓库。真实 CLI 的 inspect、diagnose、history、diff、ops list 均返回成功，JSON 保存在 `fixture-*.json`。普通无固定摘要的目录安装被原有策略拒绝，测试未绕过策略，不将本轮结果作为安装流程验收。
+
+重新打开本次构建的原生 App 后，验证无需登录进入本机页面、读取测试技能详情、诊断 8 项通过、显示 First revision 到 Second revision 的真实 Git diff，以及本机活动展示 5 条记录。原版高级配置暂留原面板；本轮不是全部旧功能迁移，也不覆盖云端托管登录验收。
+
+产物仍为 `desktop/target/debug/bundle/macos/Loom.app`；包内 CLI 与构建 sidecar 的 SHA-256 均为 `01469675cb6dda686cefb8635bf6b6c4370910d63c8f908688ff66a27f13e05a`。本轮日志为 `native-tests.log`、`frontend-tests.log`、`typecheck.log`、`lint.log`、`build.log`、`engine-build.log` 和 `bundle.log`。
+
+## 2026-09-08 大列表布局调整
+
+实际窗口读取默认仓库后有 209 个条目，原界面的导入表单占满首屏且逐条使用大卡片。已将本机页标题压缩、仓库设置和导入表单默认折叠，改为每页 20 条的紧凑列表，提供全量名称/描述/路径搜索及全部、已导入、未导入、需检查筛选。详情页收起列表和设置，返回时保留筛选状态；异常条目仍明确展示，不改写本地技能文件。
+
+本轮 `.git/codex/ui-polish/` 记录 TypeScript 检查、224 项前端测试、4 个变动文件 lint、生产构建与 App 打包成功。原生窗口复核默认仓库显示 101 个已导入、107 个未导入、1 个需检查；搜索 frontend 并限定已导入返回 3 项，可打开真实技能详情。测试覆盖跨页搜索和状态变化后重置分页。包内 CLI 与 sidecar SHA-256 均为 `b588abfc78ac9416d903b3183f11bcd59071b040b3f4df73a2a87882c597691e`。
+
+## 2026-09-08 Studio 视觉重构
+
+参考 andidea.jp 的深色框架、蓝白画布和胶囊导航，将团队 App 改为顶部导航、工作区选择栏及统一圆角内容面板。欢迎页使用自主绘制的 SVG 编织线条与衬线标题，提供暂停和减少动态效果支持；未使用参考站的图片或视频素材。团队、本机、详情、设置沿用现有业务组件，列表仍保留搜索、状态筛选和每页 20 条。
+
+`.git/codex/studio-ui/` 保存视觉和测试证据：1180×800 团队、本机页面，390×844 欢迎页无横向溢出，浏览器无脚本错误；测试时通过桥接读取本地真实 API 与 CLI 数据，截图不代表浏览器具备真实桌面权限。224 项前端测试通过，TypeScript、变动文件 lint 与生产构建通过。欢迎动效暂停切换已实测。原生 App 重新打包在原路径。
+
+新版原生窗口已打开，真实 Keychain 会话恢复成功，当前账号 `owner@loom.test` 位于“Loom 本地测试团队”。不是模拟浏览器登录状态。
+
+欢迎页现已替换为 imagegen 生成的原创蓝白花鸟丝带插画，素材 `panel/src/assets/loom-blue-garden.png`，保留原生成文件。图片随前端打包，不依赖远程图床；轻微缩放动效可暂停并遵循减少动态效果设置。1180px 和 390px 宽度已检查图片加载、标题可读性与横向溢出；截图为 `generated-art-login.png` 和 `generated-art-mobile.png`。
+
+## 2026-09-09 工作区视觉元素
+
+新增 imagegen 原创纸带、书册、薄片插画 `panel/src/assets/loom-paper-weave.png`，用于团队和更新页头；技能卡片加入轻量装饰印记，团队空状态及本机未读取状态加入折页手册，真实版本历史行增加连接线和节点。全部元素为装饰，不作为业务状态或权限证据。
+
+224 项前端测试、类型检查、3 个变动源文件 lint 和生产构建通过。`.git/codex/studio-ui/elements-*.png` 是明确使用视觉验收数据的 1180px / 390px 截图，窄屏无横向溢出；不把截图中的示例技能写入团队数据库。桌面构建证据为 `elements-engine.log` / `elements-bundle.log`。
+
+## 2026-09-09 三幅页面插画
+
+新增 imagegen 原创蓝白纸艺三幅：团队页 `loom-method-bridge.png` 方法之桥、本机页 `loom-pocket-workshop.png` 口袋工坊、更新页 `loom-paper-steps.png` 向上纸阶。图片随包分发，本机页采用小尺寸装饰，保持列表入口紧凑；窄屏降低装饰对比度，图片不承载业务信息。
+
+类型检查、224 项前端测试、变动文件 lint 和前端构建通过。`.git/codex/studio-ui/new-art-check.mjs` 使用明确的视觉验收样本，检查团队、更新、本机页面 1180px / 390px 展示；团队与本机无横向溢出。截图及 `new-art-*.log` 保存在同目录。
+
+## 2026-09-09 调试版钥匙串弹窗
+
+原代码每次云端调用重新读取钥匙串，当前 App 为 ad-hoc 签名。debug 构建改为仅在内存保存刷新令牌，应用配置目录仅持久化公开连接配置；release 保留 Keychain。未删除旧凭据，未开放钥匙串 ACL。12 项原生测试通过，其中覆盖令牌不落盘及退出登录清除内存令牌；前端类型检查、构建及 App 打包通过。重启后通过原生 UI 读取确认正常显示邮箱登录页，无钥匙串模态弹窗；开发版重启需要重新登录。日志 `keychain-test.log` / `keychain-bundle.log`。

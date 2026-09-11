@@ -204,9 +204,9 @@ pub(in crate::panel) async fn registry_skill_use(
     let scope = req.scope.unwrap_or(UseScope::Project);
     // Treat whitespace-only paths as absent so raw API values like "   " still
     // return ARG_INVALID instead of resolving relative to the panel process CWD.
-    let workspace = req.workspace.filter(|path| {
-        !path.as_os_str().is_empty() && !path.to_string_lossy().trim().is_empty()
-    });
+    let workspace = req
+        .workspace
+        .filter(|path| !path.as_os_str().is_empty() && !path.to_string_lossy().trim().is_empty());
     if matches!(scope, UseScope::Project) && workspace.is_none() {
         let request_id = uuid::Uuid::new_v4().to_string();
         return (

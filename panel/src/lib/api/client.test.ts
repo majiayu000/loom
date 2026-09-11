@@ -69,7 +69,11 @@ describe("api v1 routes", () => {
     await api.skillReleaseAnchor("demo");
     await api.skillRelease("demo", { version: "v1" });
     await api.skillRollback("demo", { to: "HEAD~1" });
-    await api.skillUse("demo", { agents: ["claude"], apply: false });
+    await api.skillUse("demo", {
+      agents: ["claude"],
+      workspace: "/tmp/workspace",
+      apply: false,
+    });
     await convergenceApi.plan("demo", { agent: "claude", require_runtime: true });
     await convergenceApi.apply({
       plan_id: "plan-1",

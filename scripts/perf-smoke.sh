@@ -11,7 +11,7 @@ if [[ ! -x "$bin" ]]; then
   RUSTFLAGS="$perf_rustflags ${RUSTFLAGS:-}" cargo build --release --locked
 fi
 
-# Hard ceiling: 6296 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 6297 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -100,7 +100,8 @@ fi
 # Managed-target alias reconciliation adds the final 8 KiB tranche while
 # keeping the release binary under a fixed, reviewable ceiling. Durable
 # convergence recovery and telemetry ingestion add the final 24 KiB tranche.
-max_bin_bytes=$((6296 * 1024))
+# Project-scope panel use workspace validation adds the final 1 KiB tranche.
+max_bin_bytes=$((6297 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

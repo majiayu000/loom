@@ -354,7 +354,7 @@ export interface ProjectBody {
 export interface UseSkillBody {
   agents: string[];
   scope?: "project";
-  workspace?: string;
+  workspace: string;
   profile?: string;
   method?: "symlink" | "copy" | "materialize";
   target_root?: string;

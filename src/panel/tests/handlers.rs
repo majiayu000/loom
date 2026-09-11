@@ -136,6 +136,80 @@ async fn registry_skill_use_returns_plan_without_mutation() {
     cleanup_root(root);
 }
 
+#[tokio::test]
+async fn registry_skill_use_rejects_missing_project_workspace() {
+    let (root, state) = make_test_state();
+
+    let (status, Json(payload)) = registry_skill_use(
+        AxumPath("demo".to_string()),
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state),
+        Json(UseRequest {
+            agents: vec![AgentKind::Claude],
+            scope: None,
+            workspace: None,
+            profile: Some("panel".to_string()),
+            method: Some(ProjectionMethod::Copy),
+            target_root: None,
+            adopt: false,
+            apply: false,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
+    assert_eq!(payload["ok"], json!(false));
+    assert_eq!(payload["error"]["code"], json!("ARG_INVALID"));
+    assert_eq!(
+        payload["error"]["message"],
+        json!("workspace is required for project-scope skill use")
+    );
+    assert!(
+        !root.join("targets").exists(),
+        "rejected panel use must not create targets"
+    );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn registry_skill_use_rejects_whitespace_only_project_workspace() {
+    let (root, state) = make_test_state();
+
+    let (status, Json(payload)) = registry_skill_use(
+        AxumPath("demo".to_string()),
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state),
+        Json(UseRequest {
+            agents: vec![AgentKind::Claude],
+            scope: None,
+            workspace: Some(std::path::PathBuf::from("   ")),
+            profile: Some("panel".to_string()),
+            method: Some(ProjectionMethod::Copy),
+            target_root: None,
+            adopt: false,
+            apply: false,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
+    assert_eq!(payload["ok"], json!(false));
+    assert_eq!(payload["error"]["code"], json!("ARG_INVALID"));
+    assert_eq!(
+        payload["error"]["message"],
+        json!("workspace is required for project-scope skill use")
+    );
+    assert!(
+        !root.join("targets").exists(),
+        "whitespace-only workspace must not create targets"
+    );
+
+    cleanup_root(root);
+}
+
 #[test]
 fn v1_registry_ops_returns_bounded_newest_first_rows() {
     let (root, state) = make_test_state();

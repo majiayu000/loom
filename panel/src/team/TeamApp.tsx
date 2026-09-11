@@ -9,6 +9,7 @@ import { SkillDetail } from "./SkillDetail";
 import { TeamForms, TeamSettings } from "./TeamSettings";
 import { PublishForm } from "./PublishForm";
 import { LocalSkills } from "./operations";
+import { AskChat } from "./AskChat";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   isDesktop,
@@ -531,6 +532,20 @@ export function TeamApp() {
           </section>
         )}
       </main>
+      <AskChat
+        skills={skills}
+        signedIn={Boolean(user)}
+        onOpenSkill={(skill) => {
+          const found = skills.find((item) => item.id === skill.id);
+          if (!found) {
+            setError("打不开这个技能：目录里已经找不到它。");
+            return;
+          }
+          setPage("team");
+          setPublishing(false);
+          selectSkill(found);
+        }}
+      />
     </div>
   );
 }

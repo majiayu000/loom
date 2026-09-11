@@ -43,6 +43,16 @@ async function login() {
 }
 
 describe("team first-run", () => {
+  it("keeps the Ask launcher on the login surface", async () => {
+    render(<TeamApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ask" }));
+    expect(screen.getByRole("dialog", { name: "Ask" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "怎么登录" }));
+    expect(screen.getByRole("dialog", { name: "Ask" })).toHaveTextContent(
+      /验证码即可登录/,
+    );
+  });
+
   it("carries a selected installed alias through update preview and project activation", async () => {
     const skill = {
       id: "s1",

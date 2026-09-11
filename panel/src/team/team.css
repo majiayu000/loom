@@ -737,7 +737,7 @@ body {
 .loom-team-app .theme-switcher button:hover { background: #e8edf5; border-color: #cbd5e1; }
 .loom-team-app .theme-switcher button[aria-pressed="true"] { background: #172c48; border-color: #172c48; color: #fff; }
 .loom-team-app .theme-switcher button:focus-visible { outline: 2px solid #245edb; outline-offset: 2px; }
-.loom-team-app .team-main { padding-bottom: 76px; }
+.loom-team-app .team-main { padding-bottom: 120px; }
 @media (max-width: 700px) {
   .loom-team-app .team-topbar { gap: 8px; }
   .loom-team-app .workspace-picker { min-width: 0; flex: 1; }

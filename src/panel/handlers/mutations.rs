@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::cli::{
     AddArgs, Command, ImportObservedArgs, OrphanCleanArgs, ProjectionMethod, SkillOrphanCommand,
     SkillTrashCommand, TargetCommand, TargetOwnership, TrashAddArgs, TrashPurgeArgs,
-    TrashRestoreArgs, UseArgs, WorkspaceBindingCommand, WorkspaceCommand,
+    TrashRestoreArgs, UseArgs, UseScope, WorkspaceBindingCommand, WorkspaceCommand,
 };
 use crate::commands::CommandFailure;
 use crate::core::lifecycle::{
@@ -201,6 +201,20 @@ pub(in crate::panel) async fn registry_skill_use(
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "use") {
         return response;
     }
+    let scope = req.scope.unwrap_or(UseScope::Project);
+    let workspace = req.workspace.filter(|path| !path.as_os_str().is_empty());
+    if matches!(scope, UseScope::Project) && workspace.is_none() {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(error_envelope(
+                "use",
+                &request_id,
+                "ARG_INVALID",
+                "workspace is required for project-scope skill use",
+            )),
+        );
+    }
     run_panel_command(
         &state,
         "use",
@@ -208,8 +222,8 @@ pub(in crate::panel) async fn registry_skill_use(
         Command::Use(UseArgs {
             skill: skill_name,
             agents: req.agents,
-            scope: req.scope.unwrap_or(crate::cli::UseScope::Project),
-            workspace: req.workspace,
+            scope,
+            workspace,
             profile: req.profile.unwrap_or_else(|| "default".to_string()),
             method: req.method.unwrap_or(ProjectionMethod::Symlink),
             target_root: req.target_root,

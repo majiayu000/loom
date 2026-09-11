@@ -269,13 +269,16 @@ describe("SkillsPage — use flow", () => {
     renderPage({ onMutation });
 
     fireEvent.click(screen.getByRole("button", { name: "Projections (0)" }));
+    fireEvent.change(screen.getByPlaceholderText("workspace path"), {
+      target: { value: "/repo/apply" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
       expect(api.skillUse).toHaveBeenCalledWith("my-skill", {
         agents: ["claude"],
         scope: "project",
-        workspace: undefined,
+        workspace: "/repo/apply",
         profile: "default",
         method: "symlink",
         adopt: false,

@@ -25,7 +25,8 @@ export function UseSkillForm({
   const [adopt, setAdopt] = useState(false);
   const [planSummary, setPlanSummary] = useState("");
   const useSkill = useMutation();
-  const disabled = readOnly || useSkill.busy || agents.length === 0;
+  const workspacePath = workspace.trim();
+  const disabled = readOnly || useSkill.busy || agents.length === 0 || workspacePath.length === 0;
 
   const toggleAgent = (agent: string) => {
     setAgents((current) =>
@@ -34,13 +35,16 @@ export function UseSkillForm({
   };
 
   const runUse = (apply: boolean) => {
+    if (workspacePath.length === 0) {
+      return;
+    }
     useSkill.run(
       apply ? "use apply" : "use plan",
       () =>
         api.skillUse(skillName, {
           agents,
           scope: "project",
-          workspace: workspace.trim() || undefined,
+          workspace: workspacePath,
           profile: profile.trim() || "default",
           method,
           adopt,
@@ -115,7 +119,7 @@ export function UseSkillForm({
             onChange={(event) => setAdopt(event.currentTarget.checked)}
             disabled={readOnly || useSkill.busy}
           />
-          Adopt an existing observed skill when identities match
+          Adopt the existing agent skills directory as a managed Loom target
         </label>
       </div>
       {planSummary && <div className="mono dim" style={{ fontSize: 11, marginTop: 8 }}>{planSummary}</div>}

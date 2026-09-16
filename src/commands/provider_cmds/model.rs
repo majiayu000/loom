@@ -4,6 +4,8 @@ mod install;
 mod locator;
 #[path = "preview_limits.rs"]
 mod preview_limits;
+#[path = "remote.rs"]
+mod remote;
 #[path = "store.rs"]
 mod store;
 

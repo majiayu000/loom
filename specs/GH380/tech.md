@@ -1,8 +1,9 @@
 # GH380 Tech Spec: Provider Catalog And Safe Install
 
+September 2026: configured GitHub catalog search uses `gh api` with explicit network consent and bounded results. Locator preview fetches a temporary Git checkout, resolves the commit, and runs existing lint/safety inspection without executing scripts or installing files. `tests/provider_remote.rs` covers search failures, argument boundaries, commit resolution and source preservation.
 Issue: https://github.com/majiayu000/loom/issues/380
 Product spec: `specs/GH380/product.md`
-Status: Blocked design packet
+Status: Local/GitHub install and live catalog search/preview implemented
 
 ## Current State
 
@@ -224,3 +225,5 @@ Use `Refs #380` for design-only or partial provider slices. Use `Fixes #380`
 only after provider config, preview, dry-run install, pinned install,
 provenance/lockfile, trust defaults, and policy gates are implemented and
 verified.
+
+Search uses the [GitHub code search API](https://cli.github.com/manual/gh_search_code) through the installed GitHub CLI and its existing authentication. The first 30 matches are returned with total_count, truncated and incomplete_results; network or authentication failures are errors. Search results are advisory and unpinned; preview returns a resolved immutable locator.

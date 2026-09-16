@@ -255,7 +255,7 @@ fn provider_install_source(
     }
 }
 
-fn github_install_source(
+pub(super) fn github_install_source(
     ctx: &AppContext,
     locator: &ParsedLocator,
     staging_root: &Path,

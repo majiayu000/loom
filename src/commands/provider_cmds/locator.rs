@@ -259,7 +259,7 @@ impl App {
                 ));
             }
             return Ok((
-                json!({"query": args.query, "provider": provider.record.id, "results": [], "warnings": ["network provider search is advisory and not implemented in this foundation slice"]}),
+                super::remote::search(&self.ctx, &provider, &args.query)?,
                 Meta::default(),
             ));
         }
@@ -297,7 +297,7 @@ impl App {
         args: &CatalogPreviewArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let locator = parse_locator(&self.ctx, &args.locator, args.source_ref.as_deref())?;
-        Ok((preview_for_locator(&locator)?, Meta::default()))
+        Ok((preview_for_locator(&self.ctx, &locator)?, Meta::default()))
     }
 }
 
@@ -383,7 +383,10 @@ fn catalog_result_for_locator(
     }))
 }
 
-fn preview_for_locator(locator: &ParsedLocator) -> std::result::Result<Value, CommandFailure> {
+fn preview_for_locator(
+    ctx: &AppContext,
+    locator: &ParsedLocator,
+) -> std::result::Result<Value, CommandFailure> {
     match locator.provider_kind() {
         ProviderKind::Local => {
             let path = locator.source_path().expect("local source path");
@@ -395,20 +398,7 @@ fn preview_for_locator(locator: &ParsedLocator) -> std::result::Result<Value, Co
                 "warnings": ["preview inspected files without executing scripts"],
             }))
         }
-        ProviderKind::Github => Ok(json!({
-            "locator": locator.raw,
-            "source": locator.source_json(),
-            "preview": {
-                "metadata": {"name": locator_name(locator), "description": null, "license": null},
-                "file_tree": [],
-                "scripts": [],
-                "provenance": {"provider": locator.provider_id(), "pinned": locator.pinned, "requested_ref": locator.requested_ref},
-                "lint": {"status": "not_run", "reason": "remote preview fetch is deferred"},
-                "safety": {"status": "not_run", "reason": "remote preview fetch is deferred"},
-            },
-            "suggested_install": format!("loom skill install '{}' --name {} --dry-run", locator.raw, locator_name(locator)),
-            "warnings": ["remote preview did not execute code; fetch-backed inspection is deferred in this slice"],
-        })),
+        ProviderKind::Github => super::remote::preview(ctx, locator),
     }
 }
 
@@ -673,7 +663,7 @@ pub(super) fn fetch_plan(locator: &ParsedLocator) -> Value {
     }
 }
 
-fn locator_name(locator: &ParsedLocator) -> String {
+pub(super) fn locator_name(locator: &ParsedLocator) -> String {
     if !locator.subdir.is_empty() {
         return Path::new(&locator.subdir)
             .file_name()

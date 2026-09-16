@@ -3,7 +3,7 @@
 Updated: 2026-07-26
 Status: Implemented
 
-Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.10.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
+Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `2.0.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
 
 ## 1. Purpose
 
@@ -632,19 +632,19 @@ Rules:
 ### 11.0.5 `skill author draft`, `skill author extract`, `skill author rewrite`, `skill author tune-description`, `skill author generate-evals`, and `skill author apply-patch`
 
 ```bash
-loom --json --root <root> skill author draft <skill-id> --from-session <path|id> [--agent <agent>] [--provider mock] [--dry-run]
-loom --json --root <root> skill author extract <skill-id> --from-diff <path> [--provider mock] [--dry-run]
-loom --json --root <root> skill author rewrite <skill-id> --instruction <text> [--provider mock] [--dry-run]
-loom --json --root <root> skill author tune-description <skill-id> [--description <text>] [--provider mock] [--dry-run]
-loom --json --root <root> skill author generate-evals <skill-id> [--task <text>] [--provider mock] [--dry-run]
+loom --json --root <root> skill author draft <skill-id> --from-session <path|id> [--agent <agent>] [--provider mock|codex-cli] [--dry-run]
+loom --json --root <root> skill author extract <skill-id> --from-diff <path> [--provider mock|codex-cli] [--dry-run]
+loom --json --root <root> skill author rewrite <skill-id> --instruction <text> [--provider mock|codex-cli] [--dry-run]
+loom --json --root <root> skill author tune-description <skill-id> [--description <text>] [--provider mock|codex-cli] [--dry-run]
+loom --json --root <root> skill author generate-evals <skill-id> [--task <text>] [--provider mock|codex-cli] [--dry-run]
 loom --json --root <root> skill author apply-patch <patch-id> --idempotency-key <key>
 ```
 
 Authoring generation commands create reviewable patch artifacts under
 `state/patches/` by default and never mutate `skills/<skill-id>` source files.
-`--dry-run` previews the same artifact shape without writing patch files. The
-only enabled provider is deterministic `mock`; hosted/network providers are not
-available in this slice. `skill author apply-patch` validates the patch id and
+`--dry-run` previews mock artifacts or the Codex generation request without starting a model.
+`--provider codex-cli` explicitly calls the locally configured Codex model in a temporary
+read-only workspace and validates returned JSON, patch paths, and hunks before saving. `skill author apply-patch` validates the patch id and
 idempotency key, revalidates the reviewed source digest/ref, applies the patch
 to an isolated staging copy, runs strict lint, safety, and mock eval gates, then
 materializes and commits the source change only after those gates pass.
@@ -711,9 +711,9 @@ Rules:
 ### 11.1.2 `package plan`, `package build`, and `package verify`
 
 ```bash
-loom --json --root <root> package plan <skill:<skill>|skillset:<skillset>> --format agent-skills-archive [--agent <agent>] [--output-plan <path>]
+loom --json --root <root> package plan <skill:<skill>|skillset:<skillset>> --format agent-skills-archive|codex-plugin|claude-plugin|npm|github-release [--agent <agent>] [--output-plan <path>]
 loom --json --root <root> package build <plan-artifact> --output <path> --idempotency-key <key>
-loom --json --root <root> package verify <artifact> [--format agent-skills-archive]
+loom --json --root <root> package verify <artifact> [--format agent-skills-archive|codex-plugin|claude-plugin|npm|github-release]
 ```
 
 Package planning is read-only. Package build writes only the requested outbound artifact and records command audit, but it does not mutate registry source, target directories, active projections, provider state, or operation backlog. Package verify is read-only.
@@ -721,7 +721,7 @@ Package planning is read-only. Package build writes only the requested outbound 
 Rules:
 
 1. `package plan` resolves `skill:<id>`, `skillset:<id>`, or a bare id only when it is unambiguous
-2. the first implemented format is `agent-skills-archive`; `codex-plugin`, `claude-plugin`, `npm`, and `github-release` return typed unsupported results until adapter metadata is wired
+2. supported formats are `agent-skills-archive`, `codex-plugin`, `claude-plugin`, `npm`, and `github-release`. Native metadata is regenerated and checked during verification. Plugin/npm versions identify the source snapshot as `0.0.0-source-<digest-prefix>`; npm uses gzip and a `package/` root without install scripts. GitHub Release exports assets and metadata locally, without publishing
 3. plans include source kind, source id, source ref, source digest, Loom version, gate status, and a redacted file manifest
 4. plan/build/verify reject private registry state, local absolute paths, user-specific config, symlinks, hardlinks, and secret-looking material
 5. build requires an idempotency key, loads a reviewed plan artifact, revalidates source digest and package gates, stages output, writes manifest/provenance/checksums, and rejects output inside packaged source or private registry state
@@ -759,10 +759,10 @@ loom --json --root <root> provision plan --target devcontainer [--workspace <pat
 loom --json --root <root> provision doctor --target devcontainer|codespaces|remote [--workspace <path>] [--agent <agent>] [--plan <plan-id|plan-artifact>]
 loom --json --root <root> provision apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-token>...]
 loom --json --root <root> provision export <plan-id|plan-artifact> --format devcontainer|shell|tar --output <path>
-loom --json --root <root> provision import <artifact> --dry-run
+loom --json --root <root> provision import <artifact> --output <new-directory> [--dry-run]
 ```
 
-Remote provisioning is plan-first. The implemented slices generate a read-only devcontainer plan and doctor report, reviewed shell/tar export artifacts, import dry-runs, durable reviewed plan-id replay, and gated apply for reviewed target files. They must not copy secrets, mutate registry state outside the apply idempotency record, or deploy remote environments. `--output-plan` and `provision export --format shell|tar --output <path>` write only explicitly requested local artifacts.
+Remote provisioning is plan-first. Devcontainer, Codespaces, and Remote plans support reviewed local file apply, shell/tar export, directory export for container configuration, and explicit import into a new directory. They must not copy secrets, mutate registry state outside the apply idempotency record, or deploy remote environments. `--output-plan` and `provision export --format shell|tar --output <path>` write only explicitly requested local artifacts.
 
 Rules:
 
@@ -773,10 +773,10 @@ Rules:
 5. `provision doctor` is read-only and reports missing/different generated files, adapter paths, dependency readiness, secrets, policy, and next actions
 6. `provision export --format shell` loads a reviewed plan id or artifact path, writes a deterministic shell artifact with digest metadata, and must not include secret values
 7. `provision export --format tar` writes a deterministic portable artifact containing the reviewed plan, generated file previews, registry skill source files, materialized active-view files, manifest metadata, and checksums without secret values
-8. `provision import <artifact> --dry-run` validates shell/tar artifact metadata/digests and reports review-only planned files without executing scripts, extracting archives, or writing target files
+8. `provision import <artifact> --output <new-directory> [--dry-run]` validates shell/tar artifact metadata/digests and reports review-only planned files without executing scripts, extracting archives, or writing target files
 9. `provision apply <plan-id|plan-artifact>` requires an idempotency key and reviewed approval tokens when policy requires them; it revalidates guard digests, reviewed registry head reachability, credential-redacted registry clone URL, target preimages, target paths, and generated content digests before atomic writes, and repeated apply with the same key is idempotent
 10. `provision plan` persists a durable reviewed plan under `state/provision/plans/<plan_id>.json`; `apply`, `export`, and `doctor --plan` load that durable plan id or an explicit reviewed artifact path without regenerating reviewed content from current registry state
-11. non-dry-run `provision import` and `provision export --format devcontainer` remain deferred until their artifact validation and write gates are implemented
+11. `provision import --output <new-directory>` verifies the artifact and atomically creates a new directory containing generated configuration, registry sources, and relative active views. Existing output paths and unsafe destinations are rejected. Shell imports materialize the reviewed script only. No scripts are executed. `provision export --format devcontainer` creates a new directory containing reviewed Devcontainer/Codespaces configuration; Remote plans generate `.loom/loom-setup.sh`. All three targets support approved local file apply, without SSH or remote deployment
 
 ### 11.1.5 `policy org`, `approval`, and `roles`
 

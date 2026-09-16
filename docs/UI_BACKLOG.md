@@ -3,6 +3,8 @@
 Status date: 2026-04-24
 Scope: `panel/` landing + registry panel
 
+Historical snapshot, not a current completion checklist. As checked against the September 2026 code, Ops retry/purge, Sync, History diagnose/repair, and the command palette are wired in `panel/src/pages/panel/`, `panel/src/lib/api/client.ts`, and `panel/src/components/panel/ControlRoomShell.tsx`. The desktop/team UI and blue/dark switch are covered separately in [desktop/cloud verification](plan/loom-desktop-cloud-verification.md). The entries below retain the original audit context; remaining acceptance details need individual verification.
+
 This backlog converts the current UI completion audit into implementation work.
 Priority is driven by product leverage, user trust, and closeness to existing code.
 

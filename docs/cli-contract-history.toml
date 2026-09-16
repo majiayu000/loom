@@ -77,3 +77,9 @@ version = "1.11.0"
 skill_range = ">=1.9.0,<2.0.0"
 change = "add authenticated team artifact plan input with durable install and update provenance"
 migration_note = "Team clients require 1.11.0 for plan team-install and consume provenance.team from skill inspect; submit the reviewed digest to the existing apply command. Existing 1.x commands remain available."
+
+[[contract]]
+version = "2.0.0"
+skill_range = ">=2.0.0,<3.0.0"
+change = "add explicit Codex authoring, workflow apply, and skillset task runners"
+migration_note = "Select codex-cli explicitly, review generated patches before apply, and execute reviewed workflow plans with an idempotency key and the displayed approvals. Skillset fixtures remain not_run until a runner is selected."

@@ -10,21 +10,21 @@ loom --json --root <root> instruction scan [--agent <agent>] [--workspace <path>
 loom --json --root <root> instruction show <instruction-id> [--workspace <path>]
 loom --json --root <root> instruction classify <path>
 loom --json --root <root> instruction doctor [--agent <agent>] [--workspace <path>] [--skill <skill>]
-loom --json --root <root> instruction migrate-plan <instruction-id> [--workspace <path>] --to <skill|reference|keep-instruction> [--name <skill>] --dry-run
+loom --json --root <root> instruction migrate-plan <instruction-id> [--workspace <path>] --to <skill|reference|keep-instruction> [--name <skill>] [--dry-run]
 ```
 
-Read-only command group.
+Scan/show/classify/doctor are read-only; migrate-plan writes patch artifacts only when `--dry-run` is omitted.
 
 Rules:
 
 1. scans known native instruction surfaces such as `AGENTS.md`, `CLAUDE.md`, Cursor rules, Windsurf files, and Copilot instructions without registering them as skills
 2. `show` and `migrate-plan` resolve ids against `--workspace` when supplied, matching ids produced by `scan --workspace`
 3. Copilot scans include active `AGENTS.md` surfaces; `.github/instructions/*.instructions.md` surfaces are path-specific, not always-on, and include parsed `applyTo` patterns when present
-4. returns paths, adapter metadata, scope, precedence notes, signals, and warnings, but not raw instruction content
+4. scan/show/classify/doctor return paths, adapter metadata, scope, precedence notes, signals, and warnings without raw content; migration includes the reviewed extraction patch
 5. unsupported adapters or unknown instruction surfaces are reported explicitly when requested by the agent filter or classification path
 6. `doctor --skill <skill>` compares instruction signals with one registry skill and reports duplicate guidance, conflicts, shadowing risks, prompt-budget risks, and missing adapter metadata
-7. `migrate-plan` requires `--dry-run`; apply is deferred and non-dry-run migration returns `POLICY_BLOCKED`
-8. migration plans contain reviewable `would_write` entries only and must not edit instruction files, skill files, registry state, Git refs, live targets, or operation backlog
+7. `migrate-plan --dry-run` previews an extraction patch; omitting `--dry-run` saves that patch for review. Apply through `skill author apply-patch` with an idempotency key, reusing lint, safety, source guards, and rollback. Sensitive input is rejected, and source instructions remain unchanged
+8. migration previews contain `would_write` entries and full patch content without file writes; non-dry-run saves patch artifacts only. Skill extraction creates a new entrypoint; reference extraction requires an existing skill. Neither phase rewrites source instruction files or activates the extracted skill
 9. portable skill lint remains strict: `AGENTS.md`, `CLAUDE.md`, `.mdc`, and custom instruction files are not accepted as `SKILL.md`
 
 ### 11.1.6 `skill provenance`
@@ -235,7 +235,7 @@ loom --json --root <root> skillset show <skillset-id>
 loom --json --root <root> skillset lint <skillset-id>
 loom --json --root <root> skillset activate <skillset-id> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
 loom --json --root <root> skillset deactivate <skillset-id> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
-loom --json --root <root> skillset eval <skillset-id> --agent <agent> [--baseline no-skill|single-skills]
+loom --json --root <root> skillset eval <skillset-id> --agent <agent> [--baseline no-skill|single-skills] [--runner mock|codex-cli]
 loom --json --root <root> skillset release <skillset-id> <version>
 loom --json --root <root> skillset rollback <skillset-id> --to <version|ref>
 ```
@@ -255,15 +255,15 @@ Rules:
 9. `skillset activate --dry-run` returns a per-member activation plan without target writes
 10. `skillset activate` and `skillset deactivate` reuse the single-skill activation/deactivation path for each member
 11. required member activation failures fail closed with typed errors; partial activation failures include rollback results and recovery commands
-12. `skillset eval` aggregates member offline eval reports and reports detected `skillsets/<id>/evals/` fixtures as deferred end-to-end work
+12. `skillset eval` aggregates member offline eval reports. `--runner mock|codex-cli` additionally runs `skillsets/<id>/evals/tasks.jsonl` and `triggers.jsonl` through the existing isolated eval harness, with all available members supplied together. `--baseline no-skill` compares against no bundle source; `--baseline single-skills` runs the same tasks separately with each member. Reports distinguish synthetic mock results, bundle results, and baseline results; baseline failures do not fail the bundle. Required member or bundle failures return `EVAL_FAILED`. Every included member passes the existing safety gate before execution. `--dry-run` requires `--runner` and starts no agent. Codex requires `--agent codex` and the existing `LOOM_EVAL_ALLOW_CODEX_CLI=1` opt-in. Without `--runner`, detected bundle fixtures report `not_run`; absent fixtures report `not_configured`. Results are returned in the command envelope; sources and active targets remain unchanged.
 13. `skillset release` tags the current skillset definition as `release/skillset/<id>/<version>`
 14. `skillset rollback --to <version|ref>` restores only that skillset definition from the resolved ref and does not check out member skill source files
 
-### 11.3.7 `workflow create`, `workflow show`, `workflow plan`, and `workflow preflight`
+### 11.3.7 `workflow create`, `workflow show`, `workflow plan`, `workflow preflight`, and `workflow apply`
 
 ```bash
 loom --json --root <root> workflow create <workflow-id> --file <workflow.json> [--dry-run]
-loom --json --root <root> workflow create <workflow-id> --from-skillset <skillset-id> --dry-run
+loom --json --root <root> workflow create <workflow-id> --from-skillset <skillset-id> [--dry-run]
 loom --json --root <root> workflow show <workflow-id>
 loom --json --root <root> workflow plan <workflow-id> --agent <agent> --workspace <path>
 loom --json --root <root> workflow preflight <plan-id>
@@ -279,8 +279,8 @@ Rules:
 4. blocked or quarantined skill trust fails with `POLICY_BLOCKED`; workflow planning must not silently skip unsafe nodes
 5. plans record root, registry head, workflow digest, skill source digests, ordered node ids, activation steps, required approvals, risks, and `safe_to_run=false`
 6. `workflow preflight` rechecks stored plan guards against the current registry root, Git head, workflow digest, and skill digests
-7. `workflow run` is hidden from the public command surface until workflow apply gates are implemented; if invoked for compatibility, `--dry-run` returns `status=deferred`, and non-dry-run returns `ARG_INVALID` with `status=deferred`, `hidden=true`, and `safe_to_run=false`
-8. `--from-skillset` is preview-only until workflow apply semantics are implemented
+7. Execute a reviewed plan with `loom workflow apply <plan-id> --idempotency-key <key> --inputs <inputs.json> --approve <approval-names>`. The JSON file supplies named string inputs. Apply requires a Codex plan, a separate Git worktree root, active member skills, current plan guards, and the approvals listed by the plan. `--dry-run` revalidates without starting Codex; the hidden `workflow run` surface remains disabled.
+8. `--from-skillset` persists a workflow snapshot; `--dry-run` previews without writing. Members run in stored order as read-only nodes, each receiving the external `task` input and the previous node’s named result. Later skillset membership changes do not alter the saved workflow. Define mutating nodes explicitly with `--file`. Apply stores its execution record in the existing workflow plan, binds the idempotency key to input content, and returns completed results on replay. Failed or interrupted executions require inspection and a new reviewed plan; they never auto-retry. Before each mutating node, a separate Git index snapshots tracked and non-ignored files into `refs/loom/workflow-checkpoints/`; ignored files are outside checkpoint coverage. User changes and the real index are retained. These refs are manual recovery evidence, not an automatic rollback or a guarantee about arbitrary external side effects.
 
 ### 11.4 `skill project`
 

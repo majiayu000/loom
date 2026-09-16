@@ -11,7 +11,7 @@ use skillloom::cli_contract::{
 
 #[test]
 fn cli_contract_semver_is_exposed_and_declared() {
-    assert_eq!(current_contract_version().major, 1);
+    assert_eq!(current_contract_version().major, 2);
     assert!(parse_contract_version("").is_err());
     assert!(parse_contract_version("1.0").is_err());
     assert!(parse_contract_version("01.0.0").is_err());
@@ -26,7 +26,7 @@ fn cli_contract_semver_is_exposed_and_declared() {
 
     let metadata = std::fs::read_to_string("skills/loom-registry/loom.skill.toml")
         .expect("read shipped Skill metadata");
-    assert!(metadata.contains("cli_contract = \">=1.9.0,<2.0.0\""));
+    assert!(metadata.contains("cli_contract = \">=2.0.0,<3.0.0\""));
 }
 
 #[test]

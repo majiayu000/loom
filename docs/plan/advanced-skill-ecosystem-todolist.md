@@ -4,6 +4,8 @@ Date: 2026-06-30
 Status: Local planning TODO
 Route: implx fallback, design backlog only
 
+September 2026 status note: the issue states and unchecked tasks below are historical planning data, not current completion evidence. Per-feature contracts and source take precedence. Implementations now exist for skillsets, provider installs, org policy, compilation, telemetry, and MCP configuration. Explicit workflow apply and LLM authoring now reuse Codex CLI; live model quality and production delivery still require separate acceptance. Skillset fixture execution is available through `skillset eval --runner mock|codex-cli`; see `specs/GH377` and `docs/LOOM_CLI_CONTRACT_OPERATIONS.md` for its current boundary.
+
 ## Startup Evidence
 
 - Repository: `majiayu000/loom`

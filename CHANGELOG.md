@@ -5,6 +5,13 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+- Add deterministic Codex/Claude plugin, npm, and GitHub Release asset bundles with native metadata verification.
+- Turn instruction migration plans into reviewable extraction patches that reuse guarded apply while preserving source instructions.
+- Add new-directory configuration import/export and approved local Codespaces/Remote setup apply without running scripts or connecting to remote hosts.
+
+- CLI contract 2.0.0 adds explicit Codex CLI authoring, reviewed workflow apply with durable node outcomes and Git checkpoints, and skillset task comparisons with no-skill or single-skill baselines. Real model access remains explicit; deterministic process tests are not live model quality evidence.
+- Workflow creation from a skillset now persists a read-only serial snapshot with task and previous-node result inputs. Real Codex smoke acceptance covers authoring, workflow handoff, workspace writes and checkpoints, and bundle/no-skill comparison; see `docs/plan/codex-cli-verification.md`.
+
 ## [0.1.8] - 2026-08-20
 
 ### Changed

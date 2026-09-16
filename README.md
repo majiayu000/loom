@@ -224,20 +224,20 @@ The current lifecycle keeps source history on a smaller verb set: import with `a
 | `loom skill inspect --brief` | Show one skill from the shared inventory model | Inspect entrypoint, description, source status, projections, compatible targets, warnings, and next actions | Source + registry metadata (read-only) |
 | `loom skill inspect` | Show one skill lifecycle status card | Check source, lint, projection/runtime, quality, safety, and next actions without mutation | Source + registry metadata (read-only) |
 | `loom skill deps` | Check runtime dependency readiness | Report required tools, env vars, MCP servers, and network expectations before activation or use | Source + local environment (read-only) |
-| `loom skill compile` | Plan and verify derived compiled runtime artifacts | Return read-only dry-run plans, list known artifacts, and verify manifests, sidecars, digests, and gates without replacing `SKILL.md` | Source + compiled artifact state (read-only) |
+| `loom skill compile` | Build and verify derived compiled runtime artifacts | Preview with `--dry-run`, write deterministic artifacts without it, and list or verify existing artifacts without replacing `SKILL.md` | Source + compiled artifact state |
 | `loom skill activate` | Activate one skill for an agent without manual binding IDs | Create or repair the managed target, binding, rule, and projection selected by agent/scope/profile | Source + target + registry metadata |
 | `loom skill deactivate` | Deactivate one skill from an agent target | Remove the desired rule and only delete safe symlink projections; copy/materialize fail closed | Target + registry metadata |
 | `loom skill active list` | List desired active skills and realized projections | See active rules, projection health, missing targets, and explicit `not_checked` visibility claims | Registry metadata + target filesystem (read-only) |
 | `loom skill visibility` | Explain one skill's agent active-view visibility | For Codex, join source, active rules, projection symlink, config disables, runtime entries, external entries, and restart requirements | Source + registry metadata + target filesystem (read-only) |
 | `loom skill search` | Search, resolve, and explain skill candidates with deterministic scoring | Find likely skills by metadata; use `--for-task` for task resolution and `--explain` for recommendation details | Source + registry metadata (read-only) |
-| `loom skill author draft/extract/rewrite/tune-description/generate-evals` | Create guarded authoring patch artifacts with the deterministic mock provider | Review proposed source/eval diffs without mutating `skills/<skill>`; prompt material is redacted and size-bounded | Source + `state/patches` artifact output |
+| `loom skill author draft/extract/rewrite/tune-description/generate-evals` | Create guarded authoring patch artifacts with mock or the configured Codex CLI | Review proposed source/eval diffs without mutating `skills/<skill>`; prompt material is redacted and size-bounded | Source + `state/patches` artifact output |
 | `loom skill author apply-patch` | Apply a reviewed authoring patch through validation gates | Requires an idempotency key, revalidates source digest/ref, runs staging lint/safety/eval gates, commits only after validation, and supports idempotent replay | Patch artifact state + skill source |
 | `loom skill commit` | Commit source changes from the registry or a live projection | Preserve edits after Loom detects source-only, projection-only, or ambiguous drift; use `--from-source` / `--from-projection` only when needed | Source history |
 | `loom skill release --anchor` | Mark the current source revision without a semver tag | Create a named recovery point before risky work or review, without publishing a version | Source history |
 | `loom skill release <version>` | Tag a semver release | Publish a stable revision teammates can pull and compare | Source history |
 | `loom skill rollback` | Reset the source to an earlier revision with a recovery ref | Undo a bad commit or release without losing the pre-rollback state | Source history |
 | `loom skill diff` | Compare two source revisions | Review raw source changes or security-relevant deltas before promotion | Source history (read-only) |
-| `loom instruction scan/show/classify/doctor/migrate-plan` | Inspect native instruction surfaces without importing them as skills | Inventory `AGENTS.md`, `CLAUDE.md`, Cursor, Windsurf, and Copilot instruction files; diagnose overlap; emit dry-run migration plans only | Workspace files (read-only) |
+| `loom instruction scan/show/classify/doctor/migrate-plan` | Inspect native instruction surfaces without importing them as skills | Inventory `AGENTS.md`, `CLAUDE.md`, Cursor, Windsurf, and Copilot instruction files; diagnose overlap; prepare reviewed extraction patches for explicit apply | Workspace files (read-only) + patch artifacts |
 | `loom skill author new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
 | `loom provider add/list/remove` | Manage local or GitHub catalog provider records | Configure provider ids for advisory search/preview without storing credentials | Registry provider state |
 | `loom catalog search/show/preview` | Inspect provider locators without executing source code | See metadata, scripts, license/provenance hints, lint, safety, and install dry-run guidance | Provider source (read-only) |
@@ -258,7 +258,7 @@ The current lifecycle keeps source history on a smaller verb set: import with `a
 | `loom skillset create/add/remove/show/lint/activate/deactivate/eval/release/rollback` | Group existing registry skills into a named set | Organize coherent skill bundles, activate members together, aggregate member evals, and version skillset definitions | Registry skillset state + target projections |
 | `loom telemetry status/enable/disable/ingest/report/export/purge` | Manage local privacy-preserving telemetry | Opt in to redacted local event writes, ingest structured Claude/Codex invocation evidence, aggregate usage/value/cost/drift/risk, export redacted events, and purge selected telemetry state with dry-run confirmation | `state/telemetry` |
 | `loom skill used/feedback` | Record redacted local production usage and recommendation feedback | Hook agent wrappers and recommendation flows into local telemetry without storing raw prompts, output, errors, env values, or file contents | `state/telemetry` |
-| `loom workflow create/show/plan/preflight` | Define and guard a multi-skill DAG workflow | Agents need an auditable plan before coordinating several skills; execution remains hidden/deferred until apply gates land | Registry workflow state + source metadata |
+| `loom workflow create/show/plan/preflight/apply` | Define and guard a multi-skill DAG workflow | Review a frozen plan, explicitly apply it with Codex CLI, and inspect durable node results and recovery checkpoints | Registry workflow state + source metadata |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom plan converge` / `loom apply` | Persist a guarded use or convergence plan, then execute the reviewed plan with idempotency | Convergence requires the exact reviewed `plan_id` + `plan_digest`; local transaction evidence is preserved across restart/remote partial outcomes and remote transport runs last | Command audit + source/target/registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
@@ -358,11 +358,11 @@ loom skill deactivate <skill> --agent <agent> [--scope <user|project>] [--worksp
 loom skill active list --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>]
 loom skill visibility <skill> --agent codex [--workspace <path>] [--profile <profile>]
 loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>] [--workspace <path>] [--active] [--for-task] [--semantic] [--explain]
-loom skill author draft <skill> --from-session <path|id> [--agent <agent>] [--provider mock] [--dry-run]
-loom skill author extract <skill> --from-diff <path> [--provider mock] [--dry-run]
-loom skill author rewrite <skill> --instruction <text> [--provider mock] [--dry-run]
-loom skill author tune-description <skill> [--description <text>] [--provider mock] [--dry-run]
-loom skill author generate-evals <skill> [--task <text>] [--provider mock] [--dry-run]
+loom skill author draft <skill> --from-session <path|id> [--agent <agent>] [--provider mock|codex-cli] [--dry-run]
+loom skill author extract <skill> --from-diff <path> [--provider mock|codex-cli] [--dry-run]
+loom skill author rewrite <skill> --instruction <text> [--provider mock|codex-cli] [--dry-run]
+loom skill author tune-description <skill> [--description <text>] [--provider mock|codex-cli] [--dry-run]
+loom skill author generate-evals <skill> [--task <text>] [--provider mock|codex-cli] [--dry-run]
 loom skill author apply-patch <patch-id> --idempotency-key <key>
 loom skill author new <skill> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]
 loom skill add <path|git-url|github:owner/repo//subdir> --name <skill> [--ref <branch|tag|commit>] [--subdir <path>]
@@ -412,11 +412,11 @@ loom instruction scan [--agent <agent>] [--workspace <path>]
 loom instruction show <instruction-id> [--workspace <path>]
 loom instruction classify <path>
 loom instruction doctor [--agent <agent>] [--workspace <path>] [--skill <skill>]
-loom instruction migrate-plan <instruction-id> [--workspace <path>] --to <skill|reference|keep-instruction> [--name <skill>] --dry-run
+loom instruction migrate-plan <instruction-id> [--workspace <path>] --to <skill|reference|keep-instruction> [--name <skill>] [--dry-run]
 
-loom package plan <skill:<skill>|skillset:<skillset>> --format agent-skills-archive [--agent <agent>] [--output-plan <path>]
+loom package plan <skill:<skill>|skillset:<skillset>> --format agent-skills-archive|codex-plugin|claude-plugin|npm|github-release [--agent <agent>] [--output-plan <path>]
 loom package build <plan-artifact> --output <path> --idempotency-key <key>
-loom package verify <artifact> [--format agent-skills-archive]
+loom package verify <artifact> [--format agent-skills-archive|codex-plugin|claude-plugin|npm|github-release]
 
 loom mcp requirement list --skill <skill> [--agent <agent>]
 loom mcp plan --skill <skill> --agent <agent> [--workspace <path>] [--output-plan <path>]
@@ -429,7 +429,7 @@ loom provision plan --target devcontainer [--workspace <path>] [--agent codex] [
 loom provision doctor --target devcontainer|codespaces|remote [--workspace <path>] [--agent <agent>] [--plan <plan-id|plan-artifact>]
 loom provision apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-token>...]
 loom provision export <plan-id|plan-artifact> --format devcontainer|shell|tar --output <path>
-loom provision import <artifact> --dry-run
+loom provision import <artifact> --output <new-directory> [--dry-run]
 
 loom skillset create <skillset-id> [--description <text>]
 loom skillset add <skillset-id> <skill-id> [--role <role>] [--required|--optional]
@@ -438,12 +438,12 @@ loom skillset show <skillset-id>
 loom skillset lint <skillset-id>
 loom skillset activate <skillset-id> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
 loom skillset deactivate <skillset-id> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
-loom skillset eval <skillset-id> --agent <agent> [--baseline no-skill|single-skills]
+loom skillset eval <skillset-id> --agent <agent> [--baseline no-skill|single-skills] [--runner mock|codex-cli]
 loom skillset release <skillset-id> <version>
 loom skillset rollback <skillset-id> --to <version|ref>
 
 loom workflow create <workflow-id> --file <workflow.json> [--dry-run]
-loom workflow create <workflow-id> --from-skillset <skillset-id> --dry-run
+loom workflow create <workflow-id> --from-skillset <skillset-id> [--dry-run]
 loom workflow show <workflow-id>
 loom workflow plan <workflow-id> --agent <agent> --workspace <path>
 loom workflow preflight <plan-id>

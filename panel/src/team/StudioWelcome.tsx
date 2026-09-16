@@ -1,5 +1,5 @@
 import { useState } from "react";
-import garden from "../assets/loom-blue-garden.png";
+import garden from "../assets/loom-blue-garden.webp";
 
 export function StudioWelcome({ blue }: { blue: boolean }) {
   const [paused, setPaused] = useState(false);

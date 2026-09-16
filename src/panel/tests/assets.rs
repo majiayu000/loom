@@ -31,6 +31,7 @@ fn content_type_for_maps_known_panel_extensions() {
         "text/css; charset=utf-8"
     );
     assert_eq!(content_type_for(Path::new("favicon.svg")), "image/svg+xml");
+    assert_eq!(content_type_for(Path::new("art.webp")), "image/webp");
     assert_eq!(content_type_for(Path::new("font.woff2")), "font/woff2");
     assert_eq!(
         content_type_for(Path::new("artifact.bin")),

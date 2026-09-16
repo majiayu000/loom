@@ -1,7 +1,7 @@
 import blueStyles from "./studio-blue.css?inline";
 import darkStyles from "./studio.css?inline";
-import methodBridge from "../assets/loom-method-bridge.png";
-import paperSteps from "../assets/loom-paper-steps.png";
+import methodBridge from "../assets/loom-method-bridge.webp";
+import paperSteps from "../assets/loom-paper-steps.webp";
 import { StudioWelcome } from "./StudioWelcome";
 import { Updates } from "./Updates";
 import { LocalActivity } from "./LocalActivity";

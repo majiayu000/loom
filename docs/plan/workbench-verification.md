@@ -34,6 +34,12 @@
 
 首次推送后的 Windows 检查和 Team App 流水线通过（含 macOS App 构建）。Linux 的完整 trace 检查暴露过期工作流计划的重建提示遗漏 agent/workspace，现已修复并由公开 CLI 解析器校验；12 项工作流回归通过。macOS 的单项 trash 健康断言曾失败，本机单次及 24 次并发重复均未复现；保留原断言并补充完整 doctor 诊断，继续由 CI 验证。
 
+## 资源体积优化
+
+完整 CI 的 Windows、macOS 与 Team App 已通过，Linux 进一步暴露旧的发布体积门槛。四张团队插图保留原始 PNG，并以 `cwebp -q 82 -m 6` 生成 WebP 供界面引用，资源从 7,431,214 字节降至 445,478 字节；HTTP 增加对应 MIME 类型。移除源码已无引用的原型页面样式后，Panel gzip 包为 113,528 字节，低于原有 114,688 字节门槛。
+
+优化后 235 项前端测试及覆盖率检查、类型检查、Clippy 和 WebP MIME 回归通过；工作台、概览、技能列表、设置和蓝白团队页完成浏览器复验，图片加载正常且无页面异常。Linux 二进制大小仍由原有 6,448,128 字节门槛检查，未放宽阈值。
+
 ## 验收边界
 
 本轮没有重复真实模型调用；已有真实 Codex 编写、工作流交接和评测验收见 [Codex CLI 验收](codex-cli-verification.md)。本机包使用 debug 二进制，公开版本仍为 0.1.8；CLI contract 版本与产品 release 版本独立。

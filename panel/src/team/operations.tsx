@@ -1,4 +1,4 @@
-import pocketWorkshop from "../assets/loom-pocket-workshop.png";
+import pocketWorkshop from "../assets/loom-pocket-workshop.webp";
 import { useState } from "react";
 import { LocalDetail } from "./LocalDetail";
 import { LocalSkillList, type LocalSkill } from "./LocalSkillList";

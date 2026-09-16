@@ -163,6 +163,7 @@ pub(crate) fn content_type_for(path: &Path) -> &'static str {
         "svg" => "image/svg+xml",
         "json" => "application/json; charset=utf-8",
         "png" => "image/png",
+        "webp" => "image/webp",
         "jpg" | "jpeg" => "image/jpeg",
         "woff2" => "font/woff2",
         _ => "application/octet-stream",

@@ -157,6 +157,39 @@ pub(super) fn validate_patch_rel(
     Ok(parts.iter().collect::<PathBuf>())
 }
 
+pub(super) fn ensure_safe_registry_path(
+    ctx: &AppContext,
+    rel: &Path,
+) -> Result<(), CommandFailure> {
+    let mut current = ctx.root.clone();
+    for component in rel.components() {
+        let Component::Normal(part) = component else {
+            return Err(CommandFailure::new(
+                ErrorCode::PolicyBlocked,
+                "patch path contains unsafe path components",
+            ));
+        };
+        current.push(part);
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(map_io(err)),
+        };
+        if metadata.file_type().is_symlink()
+            || (current == ctx.root.join(rel) && !metadata.is_file())
+        {
+            return Err(CommandFailure::new(
+                ErrorCode::PolicyBlocked,
+                format!(
+                    "patch target '{}' must be a regular file without symlink ancestors",
+                    current.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn expected_changes(
     skill: &str,
     files: &[ReviewedPatchFile],
@@ -281,6 +314,7 @@ fn apply_file_patch(
     ctx: &AppContext,
     file: ParsedPatchFile,
 ) -> std::result::Result<ParsedPatchChange, CommandFailure> {
+    ensure_safe_registry_path(ctx, &file.rel)?;
     let target = ctx.root.join(&file.rel);
     let old = match file.kind {
         PatchChangeKind::Add if target.exists() => {

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,9 @@ use super::file_ops::copy_dir_recursive_without_symlinks;
 use super::helpers::{map_arg, map_git, map_io, validate_non_empty, validate_skill_name};
 use super::projections::maybe_autosync_or_queue;
 use super::skill_authoring::{sha256_digest, skill_source_digest, validate_patch_id};
-use super::skill_authoring_patch::{ParsedPatchChange, ReviewedPatchFile, parse_patch_changes};
+use super::skill_authoring_patch::{
+    ParsedPatchChange, ReviewedPatchFile, ensure_safe_registry_path, parse_patch_changes,
+};
 use super::skill_safety::{SafetyFinding, SkillSafetyReport, evaluate_skill_safety};
 use super::{App, CommandFailure, SkillLintMode, lint_skill_source};
 
@@ -132,9 +134,6 @@ impl App {
         let reviewed_files = reviewed_patch_files(&artifact);
         let changes =
             parse_patch_changes(&self.ctx, &artifact.skill, &patch_body, &reviewed_files)?;
-        for change in &changes {
-            ensure_safe_registry_path(&self.ctx, &change.rel)?;
-        }
 
         let staging_root = stage_patch_for_validation(&self.ctx, &artifact.skill, &changes)?;
         let staging_app = staging_app(&staging_root)?;
@@ -328,37 +327,6 @@ fn reviewed_commit_paths(changes: &[ParsedPatchChange]) -> Vec<String> {
         .iter()
         .map(|change| change.rel.to_string_lossy().to_string())
         .collect()
-}
-
-fn ensure_safe_registry_path(
-    ctx: &AppContext,
-    rel: &Path,
-) -> std::result::Result<(), CommandFailure> {
-    let mut current = ctx.root.clone();
-    for component in rel.components() {
-        let Component::Normal(part) = component else {
-            return Err(CommandFailure::new(
-                ErrorCode::PolicyBlocked,
-                "patch path contains unsafe path components",
-            ));
-        };
-        current.push(part);
-        if let Ok(meta) = fs::symlink_metadata(&current) {
-            if meta.file_type().is_symlink() {
-                return Err(CommandFailure::new(
-                    ErrorCode::PolicyBlocked,
-                    format!("patch target '{}' crosses a symlink", current.display()),
-                ));
-            }
-            if current == ctx.root.join(rel) && meta.is_dir() {
-                return Err(CommandFailure::new(
-                    ErrorCode::PolicyBlocked,
-                    format!("patch target '{}' is a directory", current.display()),
-                ));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn stage_patch_for_validation(

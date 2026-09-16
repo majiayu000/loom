@@ -160,7 +160,7 @@ cargo test
 
 ## Handoff Notes
 
-This implementation covers deterministic mock provider generation, redacted
+This implementation covers deterministic mock and explicit Codex CLI generation, redacted
 prompt material, reviewable patch artifacts, guarded staging validation,
 idempotent `apply-patch`, source commit, and high-risk generated-script
 blocking.

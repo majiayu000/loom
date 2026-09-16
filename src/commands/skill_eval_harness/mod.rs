@@ -3,6 +3,8 @@ mod codex_cli;
 mod report;
 mod runner;
 
+pub(crate) use codex_cli::execute_reviewed_prompt;
+
 use std::fs;
 use std::path::Path;
 

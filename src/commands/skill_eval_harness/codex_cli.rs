@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -47,7 +49,7 @@ impl SkillEvalRunner for CodexCliRunner {
         prepare_workspace(plan, case, &workspace)?;
         let before = WorkspaceSnapshot::capture(&workspace)?;
         let prompt = task_prompt(plan, case, variant);
-        let executed = execute_codex_jsonl(env, &workspace, &prompt)?;
+        let executed = execute_codex_jsonl(env, &workspace, &prompt, "workspace-write")?;
         let files_changed = before.changed_files(&workspace)?;
         let output = executed.final_output();
         let metrics = Metrics {
@@ -115,7 +117,8 @@ impl SkillEvalRunner for CodexCliRunner {
         ));
         fs::create_dir_all(&workspace)
             .map_err(|err| io_failure("eval_trigger_workspace_create", &workspace, err))?;
-        let executed = execute_codex_jsonl(env, &workspace, &trigger_prompt(plan, prompt))?;
+        let executed =
+            execute_codex_jsonl(env, &workspace, &trigger_prompt(plan, prompt), "read-only")?;
         let observed = parse_trigger_decision(&executed.final_output())?;
         Ok(HarnessTriggerResult {
             id: record
@@ -181,6 +184,7 @@ fn execute_codex_jsonl(
     env: &EvalRunEnvironment,
     workspace: &Path,
     prompt: &str,
+    sandbox: &str,
 ) -> std::result::Result<CodexExecution, CommandFailure> {
     let timeout = codex_timeout()?;
     let trace_id = Uuid::new_v4();
@@ -192,7 +196,10 @@ fn execute_codex_jsonl(
     let stderr = File::create(&stderr_path)
         .map_err(|err| io_failure("codex_trace_stderr_create", &stderr_path, err))?;
     let started = Instant::now();
-    let mut child = Command::new("codex")
+    let mut command = Command::new("codex");
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
         .arg("exec")
         .arg("--json")
         .arg("--cd")
@@ -200,7 +207,7 @@ fn execute_codex_jsonl(
         .arg("--skip-git-repo-check")
         .arg("--ephemeral")
         .arg("--sandbox")
-        .arg("workspace-write")
+        .arg(sandbox)
         .arg("--output-last-message")
         .arg(&last_message_path)
         .arg(prompt)
@@ -229,8 +236,32 @@ fn execute_codex_jsonl(
             break status;
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            #[cfg(unix)]
+            {
+                // Kill the whole CLI process group, including commands still writing the workspace.
+                let killed = unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+                if killed != 0
+                    && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+                {
+                    return Err(CommandFailure::new(
+                        ErrorCode::IoError,
+                        "could not terminate timed-out Codex process group",
+                    ));
+                }
+            }
+            #[cfg(not(unix))]
+            child.kill().map_err(|err| {
+                CommandFailure::new(
+                    ErrorCode::IoError,
+                    format!("could not terminate timed-out Codex: {err}"),
+                )
+            })?;
+            child.wait().map_err(|err| {
+                CommandFailure::new(
+                    ErrorCode::IoError,
+                    format!("could not reap timed-out Codex: {err}"),
+                )
+            })?;
             remove_trace_files(&[&stdout_path, &stderr_path, &last_message_path]);
             return Err(eval_failed(
                 "codex-cli runner timed out",
@@ -270,6 +301,54 @@ fn execute_codex_jsonl(
         exit_code: status.code().unwrap_or(-1),
         duration_ms: started.elapsed().as_millis() as u64,
     })
+}
+
+/// Use the existing CLI transport for an explicitly requested authoring/workflow call.
+pub(crate) fn execute_reviewed_prompt(
+    workspace: Option<&Path>,
+    prompt: &str,
+    mutates_workspace: bool,
+) -> std::result::Result<String, CommandFailure> {
+    let root = std::env::temp_dir().join(format!("loom-codex-{}", Uuid::new_v4()));
+    fs::create_dir(&root).map_err(|err| io_failure("codex_temp_create", &root, err))?;
+    let env = EvalRunEnvironment { root };
+    let result = execute_codex_jsonl(
+        &env,
+        workspace.unwrap_or(&env.root),
+        prompt,
+        if mutates_workspace {
+            "workspace-write"
+        } else {
+            "read-only"
+        },
+    )
+    .and_then(|execution| {
+        if execution.exit_code != 0 {
+            return Err(CommandFailure::new(
+                ErrorCode::IoError,
+                format!("Codex CLI exited with status {}", execution.exit_code),
+            ));
+        }
+        let output = execution.final_output();
+        if output.trim().is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::SchemaMismatch,
+                "Codex CLI returned no answer",
+            ));
+        }
+        Ok(output)
+    });
+    if let Err(err) = fs::remove_dir_all(&env.root) {
+        let mut failure = CommandFailure::new(
+            ErrorCode::IoError,
+            format!("Codex temporary files could not be removed: {err}"),
+        );
+        if let Err(original) = result {
+            failure.details = json!({"original_error": original.message});
+        }
+        return Err(failure);
+    }
+    result
 }
 
 fn codex_timeout() -> std::result::Result<Duration, CommandFailure> {

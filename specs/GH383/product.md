@@ -30,11 +30,11 @@ Production implementation is blocked by:
 Target command surface:
 
 ```bash
-loom skill draft <name> --from-session <path|id> [--agent <agent>] [--provider mock] [--dry-run]
-loom skill extract <name> --from-diff <path> [--provider mock] [--dry-run]
-loom skill rewrite <skill> --instruction "improve trigger precision" [--provider mock] [--dry-run]
-loom skill tune-description <skill> [--description <text>] [--provider mock] [--dry-run]
-loom skill generate-evals <skill> [--task <text>] [--provider mock] [--dry-run]
+loom skill draft <name> --from-session <path|id> [--agent <agent>] [--provider mock|codex-cli] [--dry-run]
+loom skill extract <name> --from-diff <path> [--provider mock|codex-cli] [--dry-run]
+loom skill rewrite <skill> --instruction "improve trigger precision" [--provider mock|codex-cli] [--dry-run]
+loom skill tune-description <skill> [--description <text>] [--provider mock|codex-cli] [--dry-run]
+loom skill generate-evals <skill> [--task <text>] [--provider mock|codex-cli] [--dry-run]
 loom skill apply-patch <patch-id> --idempotency-key <key>
 ```
 
@@ -117,8 +117,7 @@ revalidates source digest/ref, validates an isolated staging copy, runs strict
 lint, safety, and mock eval gates, materializes source only after gates pass,
 commits the changed skill path, and records idempotent replay metadata.
 
-Hosted/local LLM providers remain future work behind explicit opt-in. Generated
-skills are still never automatically activated or released.
+The explicit `codex-cli` provider now reuses local Codex authentication/model configuration and the existing process transport. It sends reviewed redacted input, requires JSON with a patch and file manifest, and reuses patch applicability checks before artifact creation. `--dry-run` previews without invoking Codex. Generated skills are never automatically applied, activated, or released.
 
 ## Acceptance Criteria
 

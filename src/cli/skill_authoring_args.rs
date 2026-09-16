@@ -28,6 +28,7 @@ pub enum SkillAuthorCommand {
 #[serde(rename_all = "kebab-case")]
 pub enum SkillAuthoringProviderArg {
     Mock,
+    CodexCli,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -43,7 +44,7 @@ pub struct SkillDraftArgs {
     #[arg(long, value_enum)]
     pub agent: Option<AgentKind>,
 
-    /// Authoring provider. Only deterministic mock is enabled in this slice.
+    /// Authoring provider. codex-cli explicitly uses the locally configured model.
     #[arg(long, value_enum, default_value_t = SkillAuthoringProviderArg::Mock)]
     pub provider: SkillAuthoringProviderArg,
 
@@ -61,7 +62,7 @@ pub struct SkillExtractArgs {
     #[arg(long)]
     pub from_diff: PathBuf,
 
-    /// Authoring provider. Only deterministic mock is enabled in this slice.
+    /// Authoring provider. codex-cli explicitly uses the locally configured model.
     #[arg(long, value_enum, default_value_t = SkillAuthoringProviderArg::Mock)]
     pub provider: SkillAuthoringProviderArg,
 
@@ -79,7 +80,7 @@ pub struct SkillRewriteArgs {
     #[arg(long)]
     pub instruction: String,
 
-    /// Authoring provider. Only deterministic mock is enabled in this slice.
+    /// Authoring provider. codex-cli explicitly uses the locally configured model.
     #[arg(long, value_enum, default_value_t = SkillAuthoringProviderArg::Mock)]
     pub provider: SkillAuthoringProviderArg,
 
@@ -97,7 +98,7 @@ pub struct SkillTuneDescriptionArgs {
     #[arg(long)]
     pub description: Option<String>,
 
-    /// Authoring provider. Only deterministic mock is enabled in this slice.
+    /// Authoring provider. codex-cli explicitly uses the locally configured model.
     #[arg(long, value_enum, default_value_t = SkillAuthoringProviderArg::Mock)]
     pub provider: SkillAuthoringProviderArg,
 
@@ -115,7 +116,7 @@ pub struct SkillGenerateEvalsArgs {
     #[arg(long)]
     pub task: Option<String>,
 
-    /// Authoring provider. Only deterministic mock is enabled in this slice.
+    /// Authoring provider. codex-cli explicitly uses the locally configured model.
     #[arg(long, value_enum, default_value_t = SkillAuthoringProviderArg::Mock)]
     pub provider: SkillAuthoringProviderArg,
 

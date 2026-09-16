@@ -22,6 +22,8 @@ use super::helpers::{
 };
 use super::{App, CommandFailure, redact_sensitive_string};
 
+mod codex;
+
 const PATCH_SCHEMA_VERSION: u32 = 1;
 const MOCK_CREATED_AT: &str = "2026-07-01T00:00:00Z";
 const MAX_PROMPT_SOURCE_BYTES: usize = 8192;
@@ -268,6 +270,9 @@ fn run_authoring_command(
     dry_run: bool,
     request: AuthoringRequest,
 ) -> std::result::Result<(Value, Meta), CommandFailure> {
+    if provider == SkillAuthoringProviderArg::CodexCli && dry_run {
+        return Ok((codex::preview(&request), Meta::default()));
+    }
     if !dry_run {
         ctx.ensure_not_loom_tool_repo_root().map_err(map_arg)?;
         ctx.ensure_state_layout().map_err(map_io)?;
@@ -275,11 +280,23 @@ fn run_authoring_command(
 
     let provider_name = match provider {
         SkillAuthoringProviderArg::Mock => "mock",
+        SkillAuthoringProviderArg::CodexCli => "codex-cli",
     };
-    let generated = MockAuthoringProvider.generate_patch(ctx, request.clone())?;
     let source_digest = skill_source_digest(ctx, &request.skill)?;
     let source_ref =
         gitops::resolve_ref(ctx, "HEAD").unwrap_or_else(|_| "working-tree".to_string());
+    let generated = match provider {
+        SkillAuthoringProviderArg::Mock => {
+            MockAuthoringProvider.generate_patch(ctx, request.clone())?
+        }
+        SkillAuthoringProviderArg::CodexCli => codex::generate_patch(ctx, &request)?,
+    };
+    if skill_source_digest(ctx, &request.skill)? != source_digest {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "skill source changed during patch generation; generate a fresh patch",
+        ));
+    }
     let patch_id = patch_id(
         &request,
         provider_name,
@@ -299,14 +316,14 @@ fn run_authoring_command(
         "source_ref": source_ref,
         "source_digest": source_digest,
         "provider": provider_name,
-        "created_at": MOCK_CREATED_AT,
+        "created_at": if provider == SkillAuthoringProviderArg::Mock { MOCK_CREATED_AT.to_string() } else { chrono::Utc::now().to_rfc3339() },
         "files": generated.files,
         "prompt_material": prompt_material,
         "validation_plan": generated.validation_plan,
         "risk_notes": generated.risk_notes,
         "patch_path": path_display_string(&patch_path),
         "artifact_path": path_display_string(&artifact_path),
-        "deferred_apply": true
+        "requires_review": true
     });
 
     if !dry_run {
@@ -732,7 +749,7 @@ fn base_risk_notes(action: &str) -> Vec<String> {
     vec![
         format!("{action} output is a reviewable artifact only"),
         "source files are not mutated by generation commands".to_string(),
-        "network and hosted model providers are disabled in this slice".to_string(),
+        "real model access requires an explicitly selected provider".to_string(),
         "scripts or destructive behavior require later apply-patch safety gates".to_string(),
     ]
 }

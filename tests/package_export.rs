@@ -283,7 +283,7 @@ fn package_plan_blocks_unsafe_sources_and_unsupported_formats() {
     write_fixture_skill(root.path(), "fixflow");
     let (output, env) = run_loom(
         root.path(),
-        &["package", "plan", "fixflow", "--format", "codex-plugin"],
+        &["package", "plan", "fixflow", "--format", "unknown-format"],
     );
     assert!(!output.status.success(), "unsupported format must fail");
     assert_eq!(env["error"]["code"], json!("ARG_INVALID"));

@@ -1,8 +1,10 @@
 # GH388 Tech Spec: Native Package Export Bridges
 
+September 2026: native metadata is generated from the reviewed source and digest, included in the file manifest and checksums, and compared against regenerated metadata on verification. npm uses gzip; other formats retain deterministic tar archives. Format references: [OpenAI](https://developers.openai.com/plugins/build/plugins), [Claude](https://code.claude.com/docs/en/plugins-reference), [npm tarball layout](https://docs.npmjs.com/cli/v8/commands/npm-install/).
+
 Issue: https://github.com/majiayu000/loom/issues/388
 Product spec: `specs/GH388/product.md`
-Status: Draft for implementation
+Status: Local native artifacts implemented; remote publication remains separate
 
 ## Design Summary
 

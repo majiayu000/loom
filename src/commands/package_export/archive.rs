@@ -1,6 +1,7 @@
+use flate2::{Compression, GzBuilder, read::GzDecoder};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Cursor, Read};
+use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -11,17 +12,13 @@ use crate::fs_util::rename_atomic;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
-use super::model::{
-    CopyFile, PackageFilePlan, PackageManifest, PackageTempDir, SUPPORTED_FORMAT, digest_bytes,
-};
+use super::formats::{FORMATS, generated_files};
+use super::model::{CopyFile, PackageFilePlan, PackageManifest, PackageTempDir, digest_bytes};
 use super::source::{
     collect_source_files, package_policy_blocked, reject_forbidden_content, source_digest,
     validate_package_relative_path,
 };
-use super::{
-    CommandFailure, PACKAGE_SCHEMA_VERSION, SkillLintMode, ensure_supported_format, map_io,
-    package_format_as_str,
-};
+use super::{CommandFailure, PACKAGE_SCHEMA_VERSION, SkillLintMode, map_io, package_format_as_str};
 use crate::commands::lint_skill_source;
 
 pub(super) fn build_archive(
@@ -56,6 +53,11 @@ pub(super) fn build_archive(
     for file in copy_files {
         entries.insert(file.archive_rel.clone(), file.bytes.clone());
     }
+    entries.extend(generated_files(
+        &manifest.format,
+        &manifest.source,
+        &manifest.source_digest,
+    )?);
     let checksums = checksums_bytes(&entries);
     entries.insert("checksums.txt".to_string(), checksums);
 
@@ -71,13 +73,25 @@ pub(super) fn build_archive(
         .map_err(map_io)?;
     }
     builder.finish().map_err(map_io)?;
+    drop(builder);
     if output.exists() {
         return Err(CommandFailure::new(
             ErrorCode::ArgInvalid,
             format!("package artifact already exists: {}", output.display()),
         ));
     }
-    rename_atomic(&temp_output, output).map_err(map_io)
+    if manifest.format == "npm" {
+        let compressed = staging.path.join("artifact.tgz");
+        let file = File::create(&compressed).map_err(map_io)?;
+        let mut encoder = GzBuilder::new()
+            .mtime(0)
+            .write(file, Compression::default());
+        io::copy(&mut File::open(&temp_output).map_err(map_io)?, &mut encoder).map_err(map_io)?;
+        encoder.finish().map_err(map_io)?;
+        rename_atomic(&compressed, output).map_err(map_io)
+    } else {
+        rename_atomic(&temp_output, output).map_err(map_io)
+    }
 }
 
 pub(super) fn verify_archive(
@@ -94,8 +108,16 @@ pub(super) fn verify_archive(
         ));
     }
     let temp = PackageTempDir::new("loom-package-verify").map_err(map_io)?;
+    let mut probe = File::open(&args.artifact).map_err(map_io)?;
+    let mut magic = [0u8; 2];
+    probe.read_exact(&mut magic).map_err(map_io)?;
     let file = File::open(&args.artifact).map_err(map_io)?;
-    let mut archive = Archive::new(file);
+    let reader: Box<dyn Read> = if magic == [0x1f, 0x8b] {
+        Box::new(GzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+    let mut archive = Archive::new(reader);
     let mut entries = BTreeMap::<String, Vec<u8>>::new();
     let mut root_name: Option<String> = None;
     for entry in archive.entries().map_err(map_io)? {
@@ -170,20 +192,19 @@ fn validate_manifest(
             ),
         ));
     }
-    if manifest.format != SUPPORTED_FORMAT {
+    if !FORMATS.contains(&manifest.format.as_str()) {
         return Err(CommandFailure::new(
             ErrorCode::ArgInvalid,
             format!("unsupported package artifact format '{}'", manifest.format),
         ));
     }
-    if let Some(expected) = expected {
-        ensure_supported_format(expected)?;
-        if manifest.format != package_format_as_str(expected) {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                "package artifact format does not match --format",
-            ));
-        }
+    if let Some(expected) = expected
+        && manifest.format != package_format_as_str(expected)
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "package artifact format does not match --format",
+        ));
     }
     for file in &manifest.files {
         reject_forbidden_content(ctx, &file.path, file.path.as_bytes())?;
@@ -237,12 +258,24 @@ fn verify_manifest_file_list(
     entries: &BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
 ) -> std::result::Result<(), CommandFailure> {
+    let generated = generated_files(&manifest.format, &manifest.source, &manifest.source_digest)?;
     let mut expected = BTreeMap::<String, &PackageFilePlan>::new();
     for file in &manifest.files {
         if expected.insert(file.path.clone(), file).is_some() {
             return Err(CommandFailure::new(
                 ErrorCode::StateCorrupt,
                 format!("manifest contains duplicate package path {}", file.path),
+            ));
+        }
+    }
+    for path in generated.keys() {
+        if expected
+            .get(path)
+            .is_none_or(|file| file.kind != "generated")
+        {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                format!("manifest missing native metadata {path}"),
             ));
         }
     }
@@ -273,7 +306,18 @@ fn verify_manifest_file_list(
                 format!("manifest checksum mismatch for {path}"),
             ));
         }
+        if let Some(expected_bytes) = generated.get(&path)
+            && (bytes != expected_bytes
+                || file.sha256 != digest_bytes(bytes)
+                || file.size != bytes.len() as u64)
+        {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                format!("native package metadata mismatch for {path}"),
+            ));
+        }
         if file.kind == "generated"
+            && !generated.contains_key(&path)
             && !matches!(
                 path.as_str(),
                 "manifest.json" | "provenance.json" | "checksums.txt"
@@ -325,7 +369,7 @@ fn verify_lint(
 }
 
 fn append_bytes(
-    builder: &mut Builder<File>,
+    builder: &mut Builder<impl Write>,
     archive_path: &Path,
     bytes: &[u8],
     mtime: u64,

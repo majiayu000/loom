@@ -1,4 +1,5 @@
 mod archive;
+mod formats;
 mod model;
 mod source;
 
@@ -19,9 +20,8 @@ use crate::types::ErrorCode;
 use super::helpers::{map_io, shell_arg, validate_non_empty};
 use super::{App, CommandFailure, SkillLintMode, lint_skill_source};
 use archive::{build_archive, verify_archive};
-use model::{
-    PACKAGE_SCHEMA_VERSION, PackageBuildMetadata, PackageManifest, PackagePlan, SUPPORTED_FORMAT,
-};
+use formats::{FORMATS, extend_plan, generated_files};
+use model::{PACKAGE_SCHEMA_VERSION, PackageBuildMetadata, PackageManifest, PackagePlan};
 use source::{
     collect_source_files, package_checks, package_policy_blocked, plan_files,
     reject_output_inside_sources, resolve_package_source, source_digest,
@@ -43,21 +43,39 @@ impl App {
         &self,
         args: &PackagePlanArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        ensure_supported_format(args.format)?;
         let source = resolve_package_source(&self.ctx, &args.source)?;
         let copy_files = collect_source_files(&self.ctx, &source)?;
         let checks = package_checks(&self.ctx, &source)?;
         let source_digest = source_digest(&source, &copy_files);
+        let format = package_format_as_str(args.format);
+        if let Some(agent) = &args.agent {
+            let expected = match args.format {
+                PackageFormatArg::CodexPlugin => Some("codex"),
+                PackageFormatArg::ClaudePlugin => Some("claude"),
+                _ => None,
+            };
+            if expected.is_some_and(|expected| expected != agent) {
+                return Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    "package format does not match --agent",
+                ));
+            }
+        }
+        let mut files = plan_files(&copy_files);
+        extend_plan(
+            &mut files,
+            &generated_files(format, &source, &source_digest)?,
+        );
         let plan = PackagePlan {
             schema_version: PACKAGE_SCHEMA_VERSION,
             plan_id: format!("pkgplan_{}", Uuid::new_v4().simple()),
             created_at: Utc::now(),
             source,
-            format: SUPPORTED_FORMAT.to_string(),
+            format: format.to_string(),
             loom_version: env!("CARGO_PKG_VERSION").to_string(),
             source_ref: gitops::head(&self.ctx).unwrap_or_else(|_| "working-tree".to_string()),
             source_digest,
-            files: plan_files(&copy_files),
+            files,
             checks,
             warnings: Vec::new(),
         };
@@ -73,8 +91,7 @@ impl App {
             json!({
                 "plan": plan,
                 "output_plan": args.output_plan.as_ref().map(|path| path.display().to_string()),
-                "supported_formats": [SUPPORTED_FORMAT],
-                "deferred_formats": ["codex-plugin", "claude-plugin", "npm", "github-release"],
+                "supported_formats": FORMATS,
             }),
             Meta::default(),
         ))
@@ -104,7 +121,16 @@ impl App {
         }
         let current_checks = package_checks(&self.ctx, &current_source)?;
         reject_output_inside_sources(&self.ctx, &args.output, &current_source)?;
-        let artifact_root = format!("loom-package-{}", plan.plan_id);
+        let artifact_root = if plan.format == "npm" {
+            "package".to_string()
+        } else {
+            format!("loom-package-{}", plan.plan_id)
+        };
+        let mut files = plan_files(&copy_files);
+        extend_plan(
+            &mut files,
+            &generated_files(&plan.format, &current_source, &current_digest)?,
+        );
         let manifest = PackageManifest {
             schema_version: PACKAGE_SCHEMA_VERSION,
             plan_id: plan.plan_id.clone(),
@@ -114,7 +140,7 @@ impl App {
             loom_version: plan.loom_version.clone(),
             source_ref: plan.source_ref.clone(),
             source_digest: plan.source_digest.clone(),
-            files: plan_files(&copy_files),
+            files,
             checks: current_checks,
             build: PackageBuildMetadata {
                 artifact_root: artifact_root.clone(),
@@ -148,7 +174,7 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let verify_args = PackageVerifyArgs {
             artifact: args.output.clone(),
-            format: Some(PackageFormatArg::AgentSkillsArchive),
+            format: None,
         };
         let verified = verify_archive(&self.ctx, &verify_args)?;
         let manifest = &verified["manifest"];
@@ -179,21 +205,6 @@ impl App {
     }
 }
 
-pub(super) fn ensure_supported_format(
-    format: PackageFormatArg,
-) -> std::result::Result<(), CommandFailure> {
-    if format == PackageFormatArg::AgentSkillsArchive {
-        return Ok(());
-    }
-    Err(CommandFailure::new(
-        ErrorCode::ArgInvalid,
-        format!(
-            "package format '{}' is not supported in this slice; use agent-skills-archive",
-            package_format_as_str(format)
-        ),
-    ))
-}
-
 fn ensure_plan_supported(plan: &PackagePlan) -> std::result::Result<(), CommandFailure> {
     if plan.schema_version != PACKAGE_SCHEMA_VERSION {
         return Err(CommandFailure::new(
@@ -204,7 +215,7 @@ fn ensure_plan_supported(plan: &PackagePlan) -> std::result::Result<(), CommandF
             ),
         ));
     }
-    if plan.format != SUPPORTED_FORMAT {
+    if !FORMATS.contains(&plan.format.as_str()) {
         return Err(CommandFailure::new(
             ErrorCode::ArgInvalid,
             format!("unsupported package plan format '{}'", plan.format),

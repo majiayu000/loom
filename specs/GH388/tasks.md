@@ -1,11 +1,13 @@
 # GH388 Tasks: Native Package Export Bridges
 
+September 2026: native local artifacts are implemented. `tests/package_native_formats.rs` covers all four added formats, deterministic rebuilds, existing-artifact replay, wrong-agent refusal, and native metadata tampering even when checksums are recomputed. Remote publishing remains outside this implementation.
+
 Issue: https://github.com/majiayu000/loom/issues/388
 Product spec: `specs/GH388/product.md`
 Tech spec: `specs/GH388/tech.md`
-Status: Draft for implementation
+Status: Implemented local package formats; publishing remains separate
 
-## Scope For First PR
+## Original Foundation Scope
 
 Implement only the package export foundation:
 
@@ -22,11 +24,11 @@ without adapter metadata, secret packaging, or active-state claims
 
 ## Tasks
 
-- [ ] `SP388-T1` Owner: implementation | Done when: package plan/build/verify CLI parses and command ids classify plan/verify as read-only and build as write/output-producing | Verify: `cargo test --test cli_surface`
-- [ ] `SP388-T2` Owner: implementation | Done when: package plan resolves skill/skillset source, provenance, gate status, file manifest, and forbidden-content findings without writes | Verify: `cargo test --test package_export`
-- [ ] `SP388-T3` Owner: implementation | Done when: portable archive build loads a durable plan or artifact, revalidates plan/source digest, stages output, writes manifest/checksums, redacts local provenance, rejects unsafe paths, and is deterministic | Verify: `cargo test --test package_export`
-- [ ] `SP388-T4` Owner: implementation | Done when: package verify detects checksum mismatch, stale source digest, forbidden paths/secrets, malformed metadata, and lint failures | Verify: `cargo test --test package_export`
-- [ ] `SP388-T5` Owner: implementation | Done when: Codex/Claude/npm/GitHub format adapters are gated by adapter metadata and return typed unsupported results until implemented | Verify: `cargo test --test package_export`
+- [x] `SP388-T1` Owner: implementation | Done when: package plan/build/verify CLI parses and command ids classify plan/verify as read-only and build as write/output-producing | Verify: `cargo test --test cli_surface`
+- [x] `SP388-T2` Owner: implementation | Done when: package plan resolves skill/skillset source, provenance, gate status, file manifest, and forbidden-content findings without writes | Verify: `cargo test --test package_export`
+- [x] `SP388-T3` Owner: implementation | Done when: portable archive build loads a durable plan or artifact, revalidates plan/source digest, stages output, writes manifest/checksums, redacts local provenance, rejects unsafe paths, and is deterministic | Verify: `cargo test --test package_export`
+- [x] `SP388-T4` Owner: implementation | Done when: package verify detects checksum mismatch, stale source digest, forbidden paths/secrets, malformed metadata, and lint failures | Verify: `cargo test --test package_export`
+- [x] `SP388-T5` Owner: implementation | Done when: Codex/Claude/npm/GitHub formats build deterministic artifacts and verify native metadata; unknown formats fail clearly | Verify: `cargo test --test package_native_formats`
 - [ ] `SP388-T6` Owner: implementation | Done when: CLI docs/specs cover package boundaries and repository checks pass | Verify: `git diff --check && cargo check --workspace --all-targets --all-features`
 
 ### SP388-T1: Add CLI Surface

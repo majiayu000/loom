@@ -1,8 +1,10 @@
 # GH388 Product Spec: Native Package Export Bridges
 
+September 2026: all five format values now build and verify local artifacts. Native plugin manifests follow their host layouts; npm uses a gzip tarball with a package root and no lifecycle scripts. GitHub Release produces a local asset bundle with release metadata, not a remote publication. Versions are deterministic source snapshot versions. Existing source, policy, and checksum gates remain active.
+
 Issue: https://github.com/majiayu000/loom/issues/388
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Draft for implementation
+Status: Local native artifacts implemented; remote publication remains separate
 Locale: en-US
 
 ## Goal
@@ -87,7 +89,7 @@ Bare source ids are allowed only when no skill/skillset collision exists. If a
 skill and skillset share an id, the command must require `skill:<id>`,
 `skillset:<id>`, or an equivalent `--source-kind` discriminator.
 
-Deferred commands and formats:
+Additional supported formats and deferred publication command:
 
 ```bash
 loom package plan <skill:<skill>|skillset:<skillset>> --format codex-plugin|claude-plugin|npm|github-release [--agent <agent>] [--json]

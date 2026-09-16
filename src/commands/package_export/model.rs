@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::sha256::{Sha256, to_hex};
 
 pub(super) const PACKAGE_SCHEMA_VERSION: u32 = 1;
-pub(super) const SUPPORTED_FORMAT: &str = "agent-skills-archive";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PackagePlan {

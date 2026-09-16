@@ -15,6 +15,8 @@ pub enum WorkflowCommand {
     Plan(WorkflowPlanArgs),
     #[command(about = "Revalidate a stored workflow plan")]
     Preflight(WorkflowPreflightArgs),
+    #[command(about = "Execute a reviewed workflow plan with the configured Codex CLI")]
+    Apply(WorkflowApplyArgs),
     #[command(
         hide = true,
         about = "Hidden deferred workflow execution compatibility surface"
@@ -64,6 +66,22 @@ pub struct WorkflowPlanArgs {
 pub struct WorkflowPreflightArgs {
     /// Workflow plan id returned by `workflow plan`.
     pub plan_id: String,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct WorkflowApplyArgs {
+    pub plan_id: String,
+    #[arg(long)]
+    pub idempotency_key: String,
+    /// JSON file containing the workflow's named external inputs.
+    #[arg(long)]
+    pub inputs: Option<PathBuf>,
+    /// Acknowledge the approval names displayed in the reviewed plan.
+    #[arg(long, value_delimiter = ',')]
+    pub approve: Vec<String>,
+    /// Revalidate and preview without invoking Codex or changing workspace files.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

@@ -1,3 +1,4 @@
+mod apply;
 mod model;
 mod store;
 mod validate;
@@ -29,6 +30,7 @@ use super::helpers::{
 };
 use super::provenance::skill_tree_digest;
 use super::skill_policy::{SkillPolicyReport, evaluate_skill_policy};
+use super::skillset_cmds::load_skillsets;
 use super::{App, CommandFailure};
 use model::{
     PLAN_PROTOCOL_VERSION, StoredWorkflowPlan, WORKFLOW_PLAN_SCHEMA, WorkflowEdge, WorkflowInput,
@@ -52,6 +54,7 @@ impl App {
             WorkflowCommand::Show(args) => self.cmd_workflow_show(args),
             WorkflowCommand::Plan(args) => self.cmd_workflow_plan(args),
             WorkflowCommand::Preflight(args) => self.cmd_workflow_preflight(args),
+            WorkflowCommand::Apply(args) => self.cmd_workflow_apply(args),
             WorkflowCommand::Run(args) => self.cmd_workflow_run(args),
         }
     }
@@ -67,12 +70,6 @@ impl App {
             return Err(validation_error(
                 "WORKFLOW_SOURCE_INVALID",
                 "provide exactly one of --file or --from-skillset",
-            ));
-        }
-        if has_skillset && !args.dry_run {
-            return Err(validation_error(
-                "SKILLSET_WORKFLOW_DRY_RUN_ONLY",
-                "--from-skillset is preview-only until workflow apply gates are implemented",
             ));
         }
 
@@ -152,6 +149,7 @@ impl App {
         args: &WorkflowPlanArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         validate_workflow_id(&args.workflow)?;
+        let _workspace_lock = self.ctx.lock_workspace().map_err(map_lock)?;
         let file = load_workflows(&self.ctx)?;
         let workflow = find_workflow(&file, &args.workflow)?.clone();
         let order = validate_workflow_definition(&workflow)?;
@@ -262,7 +260,7 @@ impl App {
         let checks = vec![
             json!({"id": "workflow_dag", "status": "pass", "nodes": order.len()}),
             json!({"id": "registry_head", "status": "pass", "head": registry_head}),
-            json!({"id": "autonomous_execution", "status": "blocked", "reason": "workflow execution is deferred"}),
+            json!({"id": "execution", "status": "requires_explicit_apply", "runner": "codex-cli"}),
         ];
         let payload = json!({
             "protocol_version": PLAN_PROTOCOL_VERSION,
@@ -295,7 +293,7 @@ impl App {
                 "workflow.plan",
                 [
                     format!("loom workflow preflight {}", shell_arg(&plan_id)),
-                    "execution remains agent-driven until workflow apply gates are implemented".to_string()
+                    format!("loom workflow apply {} --idempotency-key <key> --dry-run", shell_arg(&plan_id))
                 ],
             ),
         });
@@ -313,6 +311,7 @@ impl App {
             created_at: Utc::now(),
             ready,
             payload: payload.clone(),
+            execution: None,
         };
         save_workflow_plan(&self.ctx, stored)?;
         Ok((payload, Meta::default()))
@@ -386,7 +385,7 @@ impl App {
                 "next_actions": observe_next_actions(
                     "workflow.preflight",
                     if valid {
-                        vec!["manual execution remains deferred until workflow apply gates are implemented".to_string()]
+                        vec![format!("loom workflow apply {} --idempotency-key <key> --dry-run", shell_arg(&plan.plan_id))]
                     } else {
                         vec![format!("rerun loom workflow plan {}", shell_arg(&plan.workflow_id))]
                     },
@@ -480,31 +479,28 @@ fn workflow_from_skillset(
         )
     })?;
     validate_workflow_id(skillset)?;
-    let raw = fs::read_to_string(ctx.root.join("state/registry/skillsets.json")).map_err(map_io)?;
-    let file: Value = serde_json::from_str(&raw).map_err(map_io)?;
-    let Some(record) = file["skillsets"]
-        .as_array()
-        .and_then(|skillsets| skillsets.iter().find(|entry| entry["id"] == skillset))
-    else {
+    let file = load_skillsets(ctx)?;
+    let Some(record) = file.skillsets.iter().find(|entry| entry.id == skillset) else {
         return Err(CommandFailure::new(
             ErrorCode::SkillNotFound,
             format!("skillset '{}' not found", skillset),
         ));
     };
-    let members = record["members"].as_array().cloned().unwrap_or_default();
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
-    let mut previous = None;
-    for member in members {
-        let Some(skill_id) = member["skill_id"].as_str() else {
-            continue;
-        };
+    let mut previous: Option<String> = None;
+    for member in &record.members {
+        let skill_id = &member.skill_id;
         let id = node_id_from_skill(skill_id);
+        let mut requires = vec!["task".to_string()];
+        if let Some(from) = &previous {
+            requires.push(format!("{from}_result"));
+        }
         nodes.push(WorkflowNode {
             id: id.clone(),
             skill_id: skill_id.to_string(),
             kind: "skill".to_string(),
-            requires: Vec::new(),
+            requires,
             outputs: vec![format!("{id}_result")],
             mutates_workspace: false,
         });
@@ -516,10 +512,10 @@ fn workflow_from_skillset(
         requested_id,
         WorkflowInput {
             workflow_id: Some(requested_id.to_string()),
-            description: Some(format!("Workflow preview from skillset '{skillset}'")),
+            description: Some(format!("Workflow from skillset '{skillset}'")),
             nodes,
             edges,
-            external_inputs: Vec::new(),
+            external_inputs: vec!["task".to_string()],
             policy: Default::default(),
         },
         now,

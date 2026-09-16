@@ -99,7 +99,15 @@ pub(super) fn save_workflow_plan(
     plan: StoredWorkflowPlan,
 ) -> std::result::Result<(), CommandFailure> {
     let mut file = load_workflow_plans(ctx)?;
-    file.plans.push(plan);
+    if let Some(existing) = file
+        .plans
+        .iter_mut()
+        .find(|existing| existing.plan_id == plan.plan_id)
+    {
+        *existing = plan;
+    } else {
+        file.plans.push(plan);
+    }
     file.normalize();
     let path = workflow_plans_path(ctx);
     if let Some(parent) = path.parent() {

@@ -104,8 +104,8 @@ pub use telemetry::{
 pub use use_flow::{UseArgs, UseScope};
 pub use version::{DiffArgs, HistoryArgs, ReleaseArgs, RollbackArgs, SkillCommitArgs};
 pub use workflow::{
-    WorkflowCommand, WorkflowCreateArgs, WorkflowPlanArgs, WorkflowPreflightArgs, WorkflowRunArgs,
-    WorkflowShowArgs,
+    WorkflowApplyArgs, WorkflowCommand, WorkflowCreateArgs, WorkflowPlanArgs,
+    WorkflowPreflightArgs, WorkflowRunArgs, WorkflowShowArgs,
 };
 
 #[derive(Debug, Clone, Parser, Serialize)]

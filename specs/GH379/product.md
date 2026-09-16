@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/379
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Blocked design packet
+Status: Planning plus explicit Codex CLI apply
 Locale: zh-CN
 
 ## Goal
@@ -38,21 +38,19 @@ Target command surface:
 
 ```bash
 loom workflow create <name> --file <workflow.json>
-loom workflow create <name> --from-skillset <skillset> --dry-run
+loom workflow create <name> --from-skillset <skillset> [--dry-run]
 loom workflow plan <name|task-description> --agent <agent> --workspace <path> [--json]
 loom workflow preflight <plan-id>
 loom workflow run <name> --agent <agent> --workspace <path> [--dry-run]
 ```
 
-Deferred command:
+Explicit execution command:
 
 ```bash
-loom workflow apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
+loom workflow apply <plan-id> --idempotency-key <key> [--inputs <inputs.json>] [--approve <token[,token]>] [--dry-run]
 ```
 
-The first implementation should prioritize `workflow plan` and `workflow
-preflight`. `workflow apply` is deferred until those semantics are stable; when
-added, it must reuse durable plan/apply safety semantics.
+Planning and preflight remain separate from execution. Apply now reuses the stored workflow plan, workspace lock, source guards, safety checks, explicit approvals, and Codex CLI transport. Node execution records live in the plan file; same-key completed replay never starts an agent again. Interrupted or failed runs remain stopped. Git checkpoints preserve tracked and non-ignored preimages without touching the user index; they require manual recovery and do not cover ignored files or external services.
 
 ## Non-Goals
 

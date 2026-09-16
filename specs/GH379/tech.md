@@ -6,6 +6,8 @@ Status: Implemented; closeout evidence recorded
 
 ## Current State
 
+September 2026 implementation: `workflow apply` executes only explicitly reviewed Codex plans. It extends the existing `workflow_plans.json` record with execution identity, node status, outputs, and checkpoint refs. The workspace lock serializes plan creation and apply; current source guards, activation, safety and dependency readiness are checked before execution. The underlying Codex CLI uses its configured account/model and native sandbox. Checkpoints use a separate Git index and cover tracked/non-ignored files; failures retain changes and evidence for manual recovery. The original planning-only design below remains historical context.
+
 Loom already has durable `plan use` and top-level `apply` semantics in
 `src/commands/plan_cmds.rs`. Plans record registry head, source digest, risks,
 required approvals, idempotency key digest, and recovery commands.
@@ -85,7 +87,7 @@ Add a `workflow` command group:
 
 ```bash
 loom workflow create <name> --file <workflow.json>
-loom workflow create <name> --from-skillset <skillset> --dry-run
+loom workflow create <name> --from-skillset <skillset> [--dry-run]
 loom workflow show <name>
 loom workflow plan <name|task-description> --agent <agent> --workspace <path>
 loom workflow preflight <plan-id>

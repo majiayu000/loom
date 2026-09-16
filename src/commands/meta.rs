@@ -347,6 +347,10 @@ pub(crate) fn command_descriptor(command: &Command) -> CommandDescriptor {
             WorkflowCommand::Show(_) => desc("workflow.show", CommandMeta::NONE),
             WorkflowCommand::Plan(_) => desc("workflow.plan", CommandMeta::DURABLE_PREVIEW),
             WorkflowCommand::Preflight(_) => desc("workflow.preflight", CommandMeta::NONE),
+            WorkflowCommand::Apply(args) => desc(
+                "workflow.apply",
+                CommandMeta::durable_unless_dry_run(args.dry_run),
+            ),
             WorkflowCommand::Run(_) => desc("workflow.run", CommandMeta::NONE),
         },
         Command::Index(args) if args.action == "build" => desc("index.build", CommandMeta::NONE),

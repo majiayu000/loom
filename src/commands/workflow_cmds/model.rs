@@ -106,6 +106,16 @@ pub(super) struct StoredWorkflowPlan {
     pub created_at: DateTime<Utc>,
     pub ready: bool,
     pub payload: Value,
+    pub execution: Option<WorkflowExecution>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct WorkflowExecution {
+    pub key_digest: String,
+    pub inputs_digest: String,
+    pub status: String,
+    pub nodes: Vec<Value>,
+    pub error: Option<String>,
 }
 
 impl Default for WorkflowPolicy {

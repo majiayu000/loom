@@ -4,7 +4,7 @@ use std::{fs, process::Command};
 
 use serde_json::{Value, json};
 
-use common::{TestDir, run_loom, write_file, write_skill};
+use common::{TestDir, fake_codex_path, run_loom, run_loom_with_env, write_file, write_skill};
 
 fn write_demo_skills(root: &TestDir) {
     write_skill(
@@ -322,52 +322,326 @@ fn workflow_help_hides_run_surface_until_apply_gates_exist() {
 }
 
 #[test]
-fn workflow_create_from_skillset_is_preview_only() {
+fn workflow_create_from_skillset_previews_and_persists_snapshot() {
     let root = TestDir::new("workflow-from-skillset");
     write_demo_skills(&root);
     let (output, env) = run_loom(root.path(), &["skillset", "create", "review-pack"]);
-    assert!(
-        output.status.success(),
-        "skillset create should pass: {env}"
-    );
-    let (output, env) = run_loom(
-        root.path(),
-        &["skillset", "add", "review-pack", "review-helper"],
-    );
-    assert!(output.status.success(), "skillset add should pass: {env}");
-
-    let (output, env) = run_loom(
-        root.path(),
-        &[
-            "workflow",
-            "create",
-            "review-preview",
-            "--from-skillset",
-            "review-pack",
-        ],
-    );
-    assert!(!output.status.success(), "non-dry-run preview should fail");
-    assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
-
-    let (output, env) = run_loom(
-        root.path(),
-        &[
-            "workflow",
-            "create",
-            "review-preview",
-            "--from-skillset",
-            "review-pack",
-            "--dry-run",
-        ],
-    );
-    assert!(
-        output.status.success(),
-        "dry-run preview should pass: {env}"
-    );
-    assert_eq!(env["data"]["dry_run"], json!(true));
+    assert!(output.status.success(), "{env}");
+    for skill in ["review-helper", "test-writer"] {
+        let (output, env) = run_loom(root.path(), &["skillset", "add", "review-pack", skill]);
+        assert!(output.status.success(), "{env}");
+    }
+    let args = [
+        "workflow",
+        "create",
+        "review-preview",
+        "--from-skillset",
+        "review-pack",
+    ];
+    let mut preview_args = args.to_vec();
+    preview_args.push("--dry-run");
+    let (output, env) = run_loom(root.path(), &preview_args);
+    assert!(output.status.success(), "{env}");
+    assert_eq!(env["data"]["dry_run"], true);
+    let preview = env["data"]["workflow"].clone();
     assert_eq!(
-        env["data"]["workflow"]["ordered_node_ids"],
-        json!(["review-helper"])
+        preview["ordered_node_ids"],
+        json!(["review-helper", "test-writer"])
+    );
+    assert_eq!(preview["external_inputs"], json!(["task"]));
+    assert_eq!(
+        preview["nodes"][1]["requires"],
+        json!(["task", "review-helper_result"])
+    );
+    assert!(
+        preview["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|node| node["mutates_workspace"] == false)
     );
     assert!(!root.path().join("state/registry/workflows.json").exists());
+    let (output, env) = run_loom(root.path(), &args);
+    assert!(output.status.success(), "{env}");
+    assert!(env["data"]["commit"].is_string());
+    assert_eq!(env["data"]["workflow"]["nodes"], preview["nodes"]);
+    assert_eq!(env["data"]["workflow"]["edges"], preview["edges"]);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "remove", "review-pack", "test-writer"],
+    );
+    assert!(output.status.success(), "{env}");
+    let (output, env) = run_loom(root.path(), &["workflow", "show", "review-preview"]);
+    assert!(output.status.success(), "{env}");
+    assert_eq!(
+        env["data"]["nodes"], preview["nodes"],
+        "persisted workflow must not follow later membership edits"
+    );
+    let (output, env) = run_loom(root.path(), &args);
+    assert!(
+        !output.status.success(),
+        "duplicate workflow must fail: {env}"
+    );
+}
+
+#[test]
+fn workflow_from_skillset_rejects_missing_empty_and_malformed_sources() {
+    let root = TestDir::new("workflow-invalid-skillset");
+    let args = [
+        "workflow",
+        "create",
+        "generated",
+        "--from-skillset",
+        "empty",
+    ];
+    let (output, env) = run_loom(root.path(), &args);
+    assert!(!output.status.success(), "{env}");
+    assert_eq!(env["error"]["code"], "SKILL_NOT_FOUND");
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "empty"]);
+    assert!(output.status.success(), "{env}");
+    let (output, env) = run_loom(root.path(), &args);
+    assert!(!output.status.success(), "{env}");
+    assert_eq!(env["error"]["details"]["validation_code"], "WORKFLOW_EMPTY");
+    let path = root.path().join("state/registry/skillsets.json");
+    let mut state: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    state["skillsets"][0]["members"] = json!([{"required": true}]);
+    write_file(&path, &state.to_string());
+    let (output, env) = run_loom(root.path(), &args);
+    assert!(!output.status.success(), "{env}");
+    assert_eq!(env["error"]["code"], "STATE_CORRUPT");
+    assert!(!root.path().join("state/registry/workflows.json").exists());
+}
+
+fn workspace_git(workspace: &TestDir, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .current_dir(workspace.path())
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+fn executable_workflow() -> (TestDir, TestDir, String, String) {
+    let root = TestDir::new("workflow-apply");
+    let workspace = TestDir::new("workflow-apply-workspace");
+    workspace_git(&workspace, &["init"]);
+    workspace_git(&workspace, &["config", "user.name", "Test"]);
+    workspace_git(
+        &workspace,
+        &["config", "user.email", "test@example.invalid"],
+    );
+    write_file(&workspace.path().join("keep.txt"), "original\n");
+    workspace_git(&workspace, &["add", "keep.txt"]);
+    workspace_git(&workspace, &["commit", "-m", "initial"]);
+    write_demo_skills(&root);
+    create_review_workflow(&root);
+    for skill in ["review-helper", "test-writer"] {
+        let (output, value) = run_loom(
+            root.path(),
+            &[
+                "skill",
+                "activate",
+                skill,
+                "--agent",
+                "codex",
+                "--scope",
+                "project",
+                "--workspace",
+                workspace.path().to_str().unwrap(),
+            ],
+        );
+        assert!(output.status.success(), "{value}");
+    }
+    write_file(
+        &root.path().join("inputs.json"),
+        "{\"task\":\"Write the reviewed result\"}",
+    );
+    let (output, value) = run_loom(
+        root.path(),
+        &[
+            "workflow",
+            "plan",
+            "review-flow",
+            "--agent",
+            "codex",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+        ],
+    );
+    assert!(output.status.success(), "{value}");
+    let plan = value["data"]["plan_id"].as_str().unwrap().to_string();
+    let path = fake_codex_path(
+        root.path(),
+        r#"#!/bin/sh
+printf '%s\n' invoked >> "$LOOM_TEST_WORKFLOW_CALLS"
+case "$*" in
+  *"node: orient."*)
+    printf '%s\n' '{"type":"agent_message","content":"{\"plan\":\"Write result.txt\"}"}'
+    ;;
+  *"node: test."*)
+    printf '%s\n' 'reviewed result' > result.txt
+    if [ "$LOOM_TEST_WORKFLOW_FAIL" = 1 ]; then exit 1; fi
+    printf '%s\n' '{"type":"agent_message","content":"{\"tests\":\"result verified\"}"}'
+    ;;
+  *) exit 23 ;;
+esac
+"#,
+    );
+    (root, workspace, plan, path)
+}
+
+fn apply_workflow(
+    root: &TestDir,
+    path: &str,
+    plan: &str,
+    approve: bool,
+    dry_run: bool,
+    fail: bool,
+) -> (std::process::Output, Value) {
+    let inputs = root.path().join("inputs.json");
+    let calls = root.path().join("calls.txt");
+    let mut args = vec![
+        "workflow",
+        "apply",
+        plan,
+        "--idempotency-key",
+        "reviewed-run",
+        "--inputs",
+        inputs.to_str().unwrap(),
+    ];
+    if approve {
+        args.extend(["--approve", "approve-test"]);
+    }
+    if dry_run {
+        args.push("--dry-run");
+    }
+    run_loom_with_env(
+        root.path(),
+        &[
+            ("PATH", path),
+            ("LOOM_TEST_WORKFLOW_CALLS", calls.to_str().unwrap()),
+            ("LOOM_TEST_WORKFLOW_FAIL", if fail { "1" } else { "0" }),
+        ],
+        &args,
+    )
+}
+
+#[test]
+fn workflow_apply_requires_approval_and_replays_without_rerunning_nodes() {
+    let (root, workspace, plan, path) = executable_workflow();
+    let (output, value) = apply_workflow(&root, &path, &plan, false, true, false);
+    assert!(output.status.success(), "{value}");
+    assert_eq!(value["data"]["ready"], false);
+    assert!(!root.path().join("calls.txt").exists());
+    let (output, value) = apply_workflow(&root, &path, &plan, false, false, false);
+    assert!(!output.status.success(), "{value}");
+    assert!(!root.path().join("calls.txt").exists());
+    write_file(&workspace.path().join("keep.txt"), "user staged edit\n");
+    workspace_git(&workspace, &["add", "keep.txt"]);
+    let index = workspace_git(&workspace, &["write-tree"]);
+    let (output, value) = apply_workflow(&root, &path, &plan, true, false, false);
+    assert!(output.status.success(), "{value}");
+    assert_eq!(value["data"]["execution"]["status"], "completed");
+    assert_eq!(
+        fs::read_to_string(workspace.path().join("result.txt")).unwrap(),
+        "reviewed result\n"
+    );
+    assert_eq!(workspace_git(&workspace, &["write-tree"]), index);
+    let checkpoint = value["data"]["execution"]["nodes"][1]["checkpoint_ref"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        workspace_git(&workspace, &["show", &format!("{checkpoint}:keep.txt")]),
+        "user staged edit"
+    );
+    let (output, value) = apply_workflow(&root, &path, &plan, true, false, false);
+    assert!(output.status.success(), "{value}");
+    assert_eq!(value["data"]["replayed"], true);
+    assert_eq!(
+        fs::read_to_string(root.path().join("calls.txt"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+    write_file(
+        &root.path().join("inputs.json"),
+        "{\"task\":\"different input\"}",
+    );
+    let (output, _) = apply_workflow(&root, &path, &plan, true, false, false);
+    assert!(!output.status.success());
+}
+
+#[test]
+fn failed_workflow_retains_checkpoint_and_refuses_automatic_retry() {
+    let (root, workspace, plan, path) = executable_workflow();
+    let (output, value) = apply_workflow(&root, &path, &plan, true, false, true);
+    assert!(!output.status.success(), "{value}");
+    assert_eq!(value["error"]["details"]["execution"]["status"], "failed");
+    assert!(value["error"]["details"]["execution"]["nodes"][1]["checkpoint_ref"].is_string());
+    assert!(workspace.path().join("result.txt").exists());
+    let (output, _) = apply_workflow(&root, &path, &plan, true, false, false);
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(root.path().join("calls.txt"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn workflow_apply_rejects_stale_sources_before_starting_codex() {
+    let (root, _workspace, plan, path) = executable_workflow();
+    write_file(
+        &root.path().join("skills/review-helper/SKILL.md"),
+        "changed source\n",
+    );
+    let (output, value) = apply_workflow(&root, &path, &plan, true, false, false);
+    assert!(!output.status.success(), "{value}");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("stale")
+    );
+    assert!(!root.path().join("calls.txt").exists());
+}
+
+#[test]
+fn workflow_apply_checks_required_dependencies_before_starting_codex() {
+    let (root, workspace, _plan, path) = executable_workflow();
+    write_file(
+        &root.path().join("skills/review-helper/loom.skill.toml"),
+        "requires_tools = [\"loom-test-deliberately-unavailable-tool\"]\n",
+    );
+    let (output, value) = run_loom(
+        root.path(),
+        &[
+            "workflow",
+            "plan",
+            "review-flow",
+            "--agent",
+            "codex",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+        ],
+    );
+    assert!(output.status.success(), "{value}");
+    let plan = value["data"]["plan_id"].as_str().unwrap();
+    let (output, value) = apply_workflow(&root, &path, plan, true, false, false);
+    assert!(!output.status.success(), "{value}");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("dependencies")
+    );
+    assert!(!root.path().join("calls.txt").exists());
 }

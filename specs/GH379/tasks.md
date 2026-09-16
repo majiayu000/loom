@@ -5,6 +5,10 @@ Product spec: `specs/GH379/product.md`
 Tech spec: `specs/GH379/tech.md`
 Status: Implemented; closeout evidence recorded
 
+## September 2026 execution follow-up
+
+Implemented explicit `workflow apply`, named input handoff, displayed approval acknowledgement, source revalidation, durable node records, same-key replay, and Git checkpoint refs without changing the user index. `workflow create --from-skillset` now persists a read-only serial workflow snapshot with a `task` input and previous-node result handoff. `tests/workflow_cli.rs` covers conversion, malformed sources, snapshot independence, approval refusal, stale source refusal, input/key binding, completed replay, failure stop, and checkpoint contents. Real Codex smoke acceptance passed; see [verification](../../docs/plan/codex-cli-verification.md). Broad model quality and production delivery remain separate acceptance work.
+
 ## Scope For First PR
 
 Implement the planning-first workflow foundation:

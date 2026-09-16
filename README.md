@@ -550,3 +550,9 @@ The desktop and private team registry are available as a source-build preview:
 [desktop build and native bridge](desktop/README.md), [cloud setup](cloud/README.md),
 and [design and implementation scope](docs/plan/loom-desktop-cloud-design.md).
 The team UI is `panel/team.html`. This preview is not a signed desktop release or a hosted service.
+
+### Local skill workbench (source builds)
+
+The Panel **Workbench** and desktop **技能工作台** expose Codex authoring, skillset evaluation, workflow plans and execution, instruction extraction, distribution packages, and portable environment configuration. The Panel **Market** opens configured-provider search and remote inspection. GitHub search requires authenticated `gh`; remote previews resolve an immutable commit without executing skill scripts.
+
+Model calls and applicable writes require reviewing the preview or saved plan. Reports preserve the CLI result and artifact paths. Remote configuration remains an export/import package for explicit execution on the destination machine. These unreleased changes and their validation boundaries are recorded in [workbench verification](docs/plan/workbench-verification.md).

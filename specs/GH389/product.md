@@ -80,13 +80,13 @@ loom instruction doctor [--agent <agent>] [--workspace <path>] [--skill <skill>]
 loom instruction migrate-plan <instruction-id> --to skill|reference|keep-instruction [--name <skill>] --dry-run [--json]
 ```
 
-Deferred command:
+Application reuses the existing authoring patch command:
 
 ```bash
-loom instruction migrate-apply <plan-id> --idempotency-key <key>
+loom skill author apply-patch <patch-id> --idempotency-key <key>
 ```
 
-Apply is intentionally deferred until dry-run planning is proven.
+Omit migrate-plan --dry-run to save an extraction patch, then review and apply it. Original instruction files remain unchanged.
 
 ## Surfaces To Inventory
 

@@ -137,13 +137,11 @@ adapter metadata is unknown.
 2. generate a reviewable patch plan;
 3. for `extract-skill`, propose a draft skill name, `SKILL.md`, and optional
    `references/` file split;
-4. for `move-to-reference`, propose a target skill reference file and source
-   edits;
+4. for `move-to-reference`, propose a new target skill reference file and preserve the source;
 5. for `keep-instruction`, explain why no file changes are needed;
-6. write no files.
+6. dry-run writes no files; explicit generation stores a reviewable patch artifact.
 
-Apply is deferred. If later implemented, apply must use idempotency keys and
-protect high-context files such as `AGENTS.md` from silent modification.
+Patch application reuses author apply-patch with idempotency and existing path/source guards. Extraction adds a new skill or reference file and never changes the source instruction.
 
 ## Lint Boundary
 
@@ -189,8 +187,7 @@ state, native instruction files, or active projections.
 
 ## Risks
 
-1. Silent mutation of high-context instruction files. Mitigation: dry-run only
-   planning and explicit apply deferral.
+1. Silent mutation of high-context instruction files. Mitigation: source-preserving extraction and guarded, explicit patch application.
 2. Treating always-on instructions as skills. Mitigation: separate read model
    and lint boundary tests.
 3. False precedence claims. Mitigation: adapter metadata owns precedence notes

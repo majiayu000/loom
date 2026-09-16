@@ -5,6 +5,10 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+- CLI contract 2.1.0 connects the Panel and desktop skill workbench to 18 existing operations, with explicit preview and confirmation for model calls and applicable writes.
+- GitHub catalog search now uses authenticated `gh`; remote previews inspect temporary checkouts and return an immutable locator without installing or executing skills.
+- Repair release-contract fixtures and the missing team-install command example exposed by cross-platform CI.
+
 - Add deterministic Codex/Claude plugin, npm, and GitHub Release asset bundles with native metadata verification.
 - Turn instruction migration plans into reviewable extraction patches that reuse guarded apply while preserving source instructions.
 - Add new-directory configuration import/export and approved local Codespaces/Remote setup apply without running scripts or connecting to remote hosts.

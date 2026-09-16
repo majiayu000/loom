@@ -63,3 +63,7 @@ Supabase 邮件模板必须发送 OTP（`{{ .Token }}`），该实现不是浏�
 POST 云端请求携带 Idempotency-Key，调用者可传入稳定 `idempotencyKey` 以便超时后重试；不传则每次 native 调用生成 UUID，内部 401 重试复用同一值。
 
 本地 debug 构建不访问系统钥匙串：refresh token 仅保存在进程内存，退出 App 后需重新登录。服务地址和 public key 保存在应用配置目录的 `development-cloud-config.json`，不包含登录令牌。release 构建仍使用系统凭证库。
+
+## 本机技能工作台
+
+“技能工作台”无需云端登录；以 `automation_execute` 接收 `{root?,request}`，通过固定类型的请求映射现有 CLI 操作。覆盖技能起草、改写与补丁应用、整包评测、工作流、指令提取、打包、配置导入导出和 Provider 查询。桌面与本机 Panel 共用表单和结果组件；模型请求与适用的写入先预览并确认，计划应用仍由引擎重新检查。浏览器团队页不具备该 native 权限。验证范围见 [工作台验收](../docs/plan/workbench-verification.md)。

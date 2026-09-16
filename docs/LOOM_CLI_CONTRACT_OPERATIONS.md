@@ -988,3 +988,11 @@ loom --json --root <root> panel [--port <port>]
 ```
 
 Serves the local registry control panel over HTTP on `--port` (default 43117) and runs until interrupted. A failed bind returns a structured envelope with `cmd: "panel"`, `error.code: "IO_ERROR"`, and `error.details.stage: "panel.serve"` at exit code 5.
+
+### Team installation plans
+
+`plan team-install` reviews an immutable team package before the existing digest-confirmed apply step.
+
+```bash
+loom plan team-install demo --archive /tmp/team-package.tar.gz --manifest /tmp/team-manifest.json
+```

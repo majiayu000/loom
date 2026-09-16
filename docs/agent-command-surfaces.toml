@@ -261,6 +261,7 @@ next_action_emitters = [
   { id = "workflow.run.error_deferred", source = "src/commands/workflow_cmds/mod.rs#run_error_deferred.next_actions", shape = "string", fixture_ids = ["workflow_run_is_deferred_without_execution"] },
 ]
 examples = [
+  { id = "cli_contract_operations.team_install", surface = "cli_contract_operations", line_range = [997, 997], classification = "executable" },
   { id = "cli_contract_operations.workflow_apply", surface = "cli_contract_operations", line_range = [282, 282], classification = "executable" },
   { id = "readme.command_reference.workspace", surface = "readme", line_range = [319, 335], classification = "executable" },
   { id = "readme.command_reference.agent", surface = "readme", line_range = [337, 338], classification = "executable" },

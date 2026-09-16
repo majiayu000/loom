@@ -69,7 +69,7 @@ fn shipped_skill_has_collision_resistant_metadata_and_trigger_boundaries() {
     assert!(manifest.contains("schema = \"loom.skill.v1\""));
     assert!(manifest.contains("name = \"loom-registry\""));
     assert!(manifest.contains("requires_tools = [\"loom\"]"));
-    assert!(manifest.contains("cli_contract = \">=1.9.0,<2.0.0\""));
+    assert!(manifest.contains("cli_contract = \">=2.0.0,<3.0.0\""));
 
     let openai = fs::read_to_string(repo_path("skills/loom-registry/agents/openai.yaml"))
         .expect("read shipped OpenAI metadata");

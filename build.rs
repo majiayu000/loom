@@ -11,7 +11,6 @@ use zopfli::{Format, Options};
 const FRONTEND_INPUT_FILES: &[&str] = &[
     "package.json",
     "bun.lock",
-    "package-lock.json",
     "index.html",
     "landing.html",
     "team.html",
@@ -30,7 +29,6 @@ fn main() {
 
     println!("cargo:rerun-if-changed=panel/package.json");
     println!("cargo:rerun-if-changed=panel/bun.lock");
-    println!("cargo:rerun-if-changed=panel/package-lock.json");
     println!("cargo:rerun-if-changed=panel/index.html");
     println!("cargo:rerun-if-changed=panel/landing.html");
     println!("cargo:rerun-if-changed=panel/team.html");

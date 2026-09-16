@@ -50,6 +50,7 @@ const INTENT_LABELS: Record<string, IntentDescriptor> = {
 };
 
 const ACTION_LABELS: Record<string, string> = {
+  "automation.execute": "运行工作台操作",
   "workspace.init": "初始化工作区",
   "workspace.remote.set": "配置注册表远端",
   "target.add": "注册目标目录",

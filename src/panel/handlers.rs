@@ -1,3 +1,4 @@
+mod automation;
 mod common;
 mod convergence;
 mod mutations;
@@ -7,6 +8,7 @@ mod skills;
 mod telemetry;
 mod workspace;
 
+pub(super) use automation::*;
 #[cfg(test)]
 pub(super) use common::OpsQuery;
 pub(super) use convergence::*;

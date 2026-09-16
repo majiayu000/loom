@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #[cfg(debug_assertions)]
 use tauri::Manager;
+#[path = "../../src/panel/automation_request.rs"]
+mod automation_request;
 mod cloud;
 mod local;
 mod packages;
@@ -17,6 +19,7 @@ fn main() {
         .manage(cloud::CloudState::default())
         .invoke_handler(tauri::generate_handler![
             local::bootstrap,
+            local::automation_execute,
             local::choose_directory,
             local::choose_file,
             local::local_skills,

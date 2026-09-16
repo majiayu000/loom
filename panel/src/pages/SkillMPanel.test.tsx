@@ -924,36 +924,19 @@ describe("SkillMPanel", () => {
     await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
   });
 
-  it("marks Market and Forge as preview before navigation", async () => {
+  it("opens real catalog and authoring operations from navigation and palette", async () => {
     panelData.current = panelData.liveOps;
     render(<SkillMPanel />);
-
-    expect(screen.getByRole("button", { name: /Market Preview/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Forge Preview/ })).toBeTruthy();
-
+    expect(screen.getByRole("button", { name: "Market" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Workbench" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Market" }));
+    expect(screen.getByRole("heading", { name: "搜索技能" })).toBeTruthy();
+    expect(screen.getByLabelText("已配置 Provider ID")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Workbench" }));
+    expect(screen.getByRole("heading", { name: "改写技能" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "确认执行" })).toBeDisabled();
     await userEvent.keyboard("{Control>}k{/Control}");
-
-    expect(await screen.findByRole("button", { name: /Go to Market Preview not connected/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Go to Forge Preview not connected/ })).toBeTruthy();
-  });
-
-  it("explains Market and Forge placeholders without fake install or create controls", async () => {
-    panelData.current = panelData.liveOps;
-    render(<SkillMPanel />);
-
-    await userEvent.click(screen.getByRole("button", { name: /Market Preview/ }));
-
-    expect(screen.getByRole("heading", { name: "市场" })).toBeTruthy();
-    expect(screen.getByText("Preview · not connected")).toBeTruthy();
-    expect(screen.getByText(/只读查看本地 registry/)).toBeTruthy();
-    expect(screen.getByText(/不展示安装按钮/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /install|安装/i })).toBeNull();
-
-    await userEvent.click(screen.getByRole("button", { name: /Forge Preview/ }));
-
-    expect(screen.getByRole("heading", { name: "Forge" })).toBeTruthy();
-    expect(screen.getByText(/只读参考本地 registry/)).toBeTruthy();
-    expect(screen.getByText(/不展示创建按钮/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /create|创建/i })).toBeNull();
+    expect(await screen.findByRole("button", { name: /Go to Workbench/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Go to Market/ })).toBeTruthy();
   });
 });

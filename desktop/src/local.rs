@@ -5,6 +5,15 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::ShellExt;
 
 type Result<T> = std::result::Result<T, String>;
+
+#[tauri::command]
+pub async fn automation_execute(
+    app: AppHandle,
+    root: Option<String>,
+    request: crate::automation_request::AutomationRequest,
+) -> Result<Value> {
+    run(&app, root, request.argv()).await
+}
 fn atom(value: &str) -> Result<()> {
     if value.is_empty() || value.starts_with('-') || value.chars().any(char::is_control) {
         return Err("参数为空或包含无效字符".into());

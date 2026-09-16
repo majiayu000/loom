@@ -83,3 +83,9 @@ version = "2.0.0"
 skill_range = ">=2.0.0,<3.0.0"
 change = "add explicit Codex authoring, workflow apply, and skillset task runners"
 migration_note = "Select codex-cli explicitly, review generated patches before apply, and execute reviewed workflow plans with an idempotency key and the displayed approvals. Skillset fixtures remain not_run until a runner is selected."
+
+[[contract]]
+version = "2.1.0"
+skill_range = ">=2.0.0,<3.0.0"
+change = "Add the typed local workbench endpoint for existing CLI operations and live provider catalog search/preview."
+migration_note = "Workbench clients require the matching Panel or desktop sidecar; existing CLI command paths and the 2.x shipped Skill range remain unchanged."

@@ -10,6 +10,8 @@ import { TeamForms, TeamSettings } from "./TeamSettings";
 import { PublishForm } from "./PublishForm";
 import { LocalSkills } from "./operations";
 import { AskChat } from "./AskChat";
+import { AutomationWorkbench } from "../automation/AutomationWorkbench";
+import type { Envelope } from "./client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   isDesktop,
@@ -24,7 +26,7 @@ import {
 } from "./client";
 import type { Config, Skill, Team } from "./client";
 
-type Page = "team" | "local" | "updates" | "settings" | "activity";
+type Page = "team" | "local" | "updates" | "settings" | "activity" | "automation";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -194,7 +196,8 @@ export function TeamApp() {
               ["local", "本机技能", "02"],
               ["updates", "版本更新", "03"],
               ["activity", "本机活动", "04"],
-              ["settings", "团队设置", "05"],
+              ["automation", "技能工作台", "05"],
+              ["settings", "团队设置", "06"],
             ] as const
           ).map(([key, title, index]) => (
             <button
@@ -246,7 +249,7 @@ export function TeamApp() {
             ))}
           </select>
         </div>
-<span className="workspace-context">{page === "local" || page === "activity" ? "ON THIS DEVICE" : "SHARED WORKSPACE"}</span>
+<span className="workspace-context">{page === "local" || page === "activity" || page === "automation" ? "ON THIS DEVICE" : "SHARED WORKSPACE"}</span>
 
         </header>
         {error && (
@@ -271,6 +274,8 @@ export function TeamApp() {
           <LocalSkills run={run} />
         ) : page === "activity" ? (
           <LocalActivity />
+        ) : page === "automation" ? (
+          <AutomationWorkbench desktop unavailable={!isDesktop()} execute={(request, root) => native<Envelope>("automation_execute", { request, root: root ?? null })} />
         ) : !user ? (
           <section className="login-layout">
             <StudioWelcome blue={theme === "blue"} />

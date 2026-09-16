@@ -664,6 +664,7 @@ async function remoteStatusWithWarnings(signal?: AbortSignal): Promise<ReadResul
 }
 
 export const api = {
+  automation: (body: Record<string, unknown>) => postJson("/api/v1/automation", body),
   health: (signal?: AbortSignal) => getJsonData<HealthPayload>("/api/v1/health", signal),
   info: (signal?: AbortSignal) => getJsonData<InfoPayload>("/api/v1/workspace/info", signal),
   infoWithWarnings: (signal?: AbortSignal) =>

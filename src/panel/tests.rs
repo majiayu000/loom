@@ -21,6 +21,7 @@ use std::{
 use uuid::Uuid;
 
 mod assets;
+mod automation;
 mod convergence;
 mod handlers;
 mod panel_import_observed;

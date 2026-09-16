@@ -19,6 +19,7 @@ import { DoctorPage } from "./panel/DoctorPage";
 import { OperationLogRow } from "./OperationLogRow";
 import { SkillMAuditHistory } from "./SkillMAuditHistory";
 import { SkillMDetail } from "./SkillMDetail";
+import { AutomationWorkbench } from "../automation/AutomationWorkbench";
 import { loadSkillMPreferences, saveSkillMPreferences } from "../lib/skillm_prefs";
 import {
   operationActionLabel,
@@ -71,8 +72,8 @@ const pages: Array<{ id: SkillMPage; icon: string; label: string; group: "build"
   { id: "sync", icon: "sync", label: "Git sync", group: "ops" },
   { id: "doctor", icon: "shield", label: "Doctor", group: "ops" },
   { id: "settings", icon: "gear", label: "Settings", group: "ops" },
-  { id: "market", icon: "market", label: "Market", group: "ops", preview: true },
-  { id: "forge", icon: "forge", label: "Forge", group: "ops", preview: true },
+  { id: "market", icon: "market", label: "Market", group: "ops" },
+  { id: "forge", icon: "forge", label: "Workbench", group: "ops" },
 ];
 
 const agentMeta: Record<string, { name: string; short: string; color: string }> = {
@@ -352,8 +353,8 @@ export function SkillMPanel() {
               {view === "sync" && <Sync live={live} confirm={setConfirm} />}
               {view === "doctor" && <Doctor live={live} go={go} />}
               {view === "settings" && <Settings live={live} dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} />}
-              {view === "market" && <Market live={live} />}
-              {view === "forge" && <Forge live={live} />}
+              {view === "market" && <AutomationWorkbench initialAction="catalog_search" execute={api.automation} readOnly={live.mode !== "live"} />}
+              {view === "forge" && <AutomationWorkbench execute={api.automation} readOnly={live.mode !== "live"} />}
             </>
           )}
           {termOpen && <Terminal live={live} close={() => setTermOpen(false)} />}
@@ -1028,14 +1029,6 @@ function Settings({ live, dark, setDark, density, setDensity, accent, setAccent 
 
 function Switch({ on, onChange, label = "切换开关" }: { on: boolean; onChange: (value: boolean) => void; label?: string }) {
   return <button type="button" className={`sm-switch ${on ? "on" : ""}`} role="switch" aria-label={label} aria-checked={on} onClick={() => onChange(!on)}><span className="knob" /></button>;
-}
-
-function Market({ live }: { live: ReturnType<typeof usePanelData> }) {
-  return <div className="view view-market"><header className="view-head"><div><h1>市场</h1><p>Preview only · 当前只连接本地注册表，尚未接入市场目录服务</p></div><span className="preview-pill"><Icon d="market" size={14} />Preview · not connected</span></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>本地 skills</span></div><span className="reg-div" /><div className="reg-stat"><b>未接入</b><span>市场目录</span></div><span className="reg-flex" /><span className="reg-src">来源：本地注册表</span></div><section className="preview-panel"><div><h2>现在可用</h2><p>只读查看本地 registry 中已经存在的 skills 和数量。</p></div><div><h2>尚未接入</h2><p>市场目录、搜索、分类、评分和安装 API 还没有后端连接，因此这里不展示安装按钮或模拟安装流程。</p></div></section></div>;
-}
-
-function Forge({ live }: { live: ReturnType<typeof usePanelData> }) {
-  return <div className="view view-forge"><header className="view-head"><div><h1>Forge</h1><p>Preview only · 当前只读展示本地 skill，尚未接入创建向导</p></div><span className="preview-pill"><Icon d="forge" size={14} />Preview · not connected</span></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>可参考 skills</span></div><span className="reg-div" /><div className="reg-stat"><b>未接入</b><span>写入流程</span></div><span className="reg-flex" /><span className="reg-src">未创建任何本地草稿</span></div><section className="preview-panel"><div><h2>现在可用</h2><p>只读参考本地 registry 中的 skill inventory，帮助确认已有命名和标签。</p></div><div><h2>尚未接入</h2><p>创建向导、模板选择、AI 生成、文档导入、发布和写入 API 还没有后端连接，因此这里不展示创建按钮或模拟草稿流程。</p></div></section></div>;
 }
 
 function Terminal({ live, close }: { live: ReturnType<typeof usePanelData>; close: () => void }) {

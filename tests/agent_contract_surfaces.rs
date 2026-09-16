@@ -79,7 +79,7 @@ fn inventory_covers_public_surfaces() {
     assert!(report.example_count >= report.surface_count);
     assert!(report.command_count > 100);
     assert_eq!(report.next_action_emitter_count, 59);
-    assert_eq!(report.panel_mutation_count, 27);
+    assert_eq!(report.panel_mutation_count, 28);
 }
 
 #[test]
@@ -338,13 +338,13 @@ fn library_facade_does_not_export_raw_vocabulary() {
 #[test]
 fn panel_cli_equivalents_parse() {
     let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
-    assert_eq!(report.panel_mutation_count, 27);
+    assert_eq!(report.panel_mutation_count, 28);
 }
 
 #[test]
 fn panel_mutations_are_mapped() {
     let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
-    assert_eq!(report.panel_mutation_count, 27);
+    assert_eq!(report.panel_mutation_count, 28);
 }
 
 #[test]

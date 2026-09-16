@@ -335,9 +335,10 @@ pub(crate) fn command_descriptor(command: &Command) -> CommandDescriptor {
             InstructionCommand::Show(_) => desc("instruction.show", CommandMeta::NONE),
             InstructionCommand::Classify(_) => desc("instruction.classify", CommandMeta::NONE),
             InstructionCommand::Doctor(_) => desc("instruction.doctor", CommandMeta::NONE),
-            InstructionCommand::MigratePlan(_) => {
-                desc("instruction.migrate_plan", CommandMeta::NONE)
-            }
+            InstructionCommand::MigratePlan(args) => desc(
+                "instruction.migrate_plan",
+                CommandMeta::durable_unless_dry_run(args.dry_run),
+            ),
         },
         Command::Workflow { command } => match command {
             WorkflowCommand::Create(args) => desc(

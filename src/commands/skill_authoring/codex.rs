@@ -32,6 +32,7 @@ pub(super) fn generate_patch(
     let action_input = match &request.patch_kind {
         PatchKind::Draft { agent } => json!({"agent": agent}),
         PatchKind::Extract => json!({}),
+        PatchKind::Instruction { path, body } => json!({"path": path, "body": body}),
         PatchKind::Rewrite { instruction } => json!({"instruction": instruction}),
         PatchKind::TuneDescription { description } => json!({"description": description}),
         PatchKind::GenerateEvals { task } => json!({"task": task}),

@@ -1,8 +1,10 @@
 # GH389 Product Spec: Instruction Surface Inventory
 
+September 2026: migrate-plan now prepares a concrete extraction patch. Dry-run writes nothing; omitting it stores an artifact for the existing skill author apply-patch command. Skill extraction adds a new entrypoint, reference extraction requires an existing skill, and keep-instruction remains a no-op. Original native instructions are never edited; sensitive content is rejected before artifact creation.
+
 Issue: https://github.com/majiayu000/loom/issues/389
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Draft for implementation
+Status: Instruction inventory and reviewed extraction implemented
 Locale: en-US
 
 ## Goal
@@ -121,7 +123,7 @@ Initial support should be adapter-driven and read-only:
 
 ## Migration Planning
 
-`migrate-plan` must be dry-run and produce one of these reviewable actions:
+`migrate-plan` produces one of these reviewable actions; `--dry-run` previews it, while non-dry-run saves an extraction patch for explicit apply:
 
 1. `keep-instruction`: leave content as always-on instruction;
 2. `move-to-reference`: move long background into a skill `references/` file;

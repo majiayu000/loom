@@ -23,6 +23,7 @@ use super::helpers::{
 use super::{App, CommandFailure, redact_sensitive_string};
 
 mod codex;
+pub(crate) mod migration;
 
 const PATCH_SCHEMA_VERSION: u32 = 1;
 const MOCK_CREATED_AT: &str = "2026-07-01T00:00:00Z";
@@ -51,6 +52,7 @@ struct AuthoringRequest {
 enum PatchKind {
     Draft { agent: Option<String> },
     Extract,
+    Instruction { path: String, body: String },
     Rewrite { instruction: String },
     TuneDescription { description: String },
     GenerateEvals { task: String },
@@ -194,6 +196,12 @@ impl AuthoringProvider for MockAuthoringProvider {
                     risk_notes: base_risk_notes("draft"),
                 })
             }
+            PatchKind::Instruction { path, body } => Ok(GeneratedPatch {
+                patch_body: add_file_patch(&path, &body),
+                files: vec![json!({"path": path, "change": "add"})],
+                validation_plan: validation_plan(&request.skill),
+                risk_notes: vec!["Source instruction remains unchanged; review the extracted content before applying.".to_string()],
+            }),
             PatchKind::Extract => {
                 let path = format!("skills/{}/references/extracted-context.md", request.skill);
                 let body = format!(
@@ -279,6 +287,11 @@ fn run_authoring_command(
     }
 
     let provider_name = match provider {
+        SkillAuthoringProviderArg::Mock
+            if matches!(request.patch_kind, PatchKind::Instruction { .. }) =>
+        {
+            "local"
+        }
         SkillAuthoringProviderArg::Mock => "mock",
         SkillAuthoringProviderArg::CodexCli => "codex-cli",
     };
@@ -316,7 +329,7 @@ fn run_authoring_command(
         "source_ref": source_ref,
         "source_digest": source_digest,
         "provider": provider_name,
-        "created_at": if provider == SkillAuthoringProviderArg::Mock { MOCK_CREATED_AT.to_string() } else { chrono::Utc::now().to_rfc3339() },
+        "created_at": if provider_name == "mock" { MOCK_CREATED_AT.to_string() } else { chrono::Utc::now().to_rfc3339() },
         "files": generated.files,
         "prompt_material": prompt_material,
         "validation_plan": generated.validation_plan,

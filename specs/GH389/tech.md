@@ -1,8 +1,10 @@
 # GH389 Tech Spec: Instruction Surface Inventory
 
+September 2026: deterministic instruction extraction reuses authoring patch storage and apply validation, rollback and idempotency. The source instruction is read as strict UTF-8 and retained; existing destinations and unsafe paths are rejected before storing an add-file patch.
+
 Issue: https://github.com/majiayu000/loom/issues/389
 Product spec: `specs/GH389/product.md`
-Status: Draft for implementation
+Status: Instruction inventory and reviewed extraction implemented
 
 ## Design Summary
 

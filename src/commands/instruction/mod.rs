@@ -15,7 +15,7 @@ use crate::types::ErrorCode;
 use super::helpers::agent_kind_as_str;
 use super::{App, CommandFailure};
 use analysis::{
-    doctor_findings, load_skill_for_doctor, migration_plan, proposed_skill_name, read_text_body,
+    doctor_findings, load_skill_for_doctor, migration_plan, proposed_skill_name,
     validate_migration_name,
 };
 use model::{
@@ -141,12 +141,6 @@ impl App {
         &self,
         args: &InstructionMigratePlanArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        if !args.dry_run {
-            return Err(CommandFailure::new(
-                ErrorCode::PolicyBlocked,
-                "instruction migration apply is deferred; rerun with --dry-run",
-            ));
-        }
         validate_migration_name(args.to, args.name.as_deref())?;
 
         let workspace = resolve_workspace(args.workspace.as_deref())?;
@@ -168,13 +162,26 @@ impl App {
             .name
             .clone()
             .unwrap_or_else(|| proposed_skill_name(&surface));
-        let _ = read_text_body(Path::new(&surface.path))?;
         let plan = migration_plan(&surface, args.to, &proposed_name);
+        let patch = if args.to == crate::cli::InstructionMigrationTarget::KeepInstruction {
+            Value::Null
+        } else {
+            super::skill_authoring::migration::create_instruction_patch(
+                &self.ctx,
+                Path::new(&surface.path),
+                &proposed_name,
+                &proposed_skill_name(&surface),
+                args.to,
+                args.dry_run,
+            )?
+            .0
+        };
 
         Ok((
             json!({
                 "workspace": workspace.display().to_string(),
-                "dry_run": true,
+                "dry_run": args.dry_run,
+                "patch": patch,
                 "instruction": surface,
                 "plan": plan,
             }),

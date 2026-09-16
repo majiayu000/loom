@@ -15,7 +15,7 @@ pub enum InstructionCommand {
     Classify(InstructionClassifyArgs),
     #[command(about = "Diagnose overlap between instructions and skills")]
     Doctor(InstructionDoctorArgs),
-    #[command(about = "Plan an instruction migration without writing files")]
+    #[command(about = "Prepare a reviewed instruction extraction patch")]
     MigratePlan(InstructionMigratePlanArgs),
 }
 
@@ -78,7 +78,7 @@ pub struct InstructionMigratePlanArgs {
     #[arg(long)]
     pub name: Option<String>,
 
-    /// Required. Instruction migration apply is deferred.
+    /// Preview the patch without saving artifacts. Source instructions are never modified.
     #[arg(long)]
     pub dry_run: bool,
 }

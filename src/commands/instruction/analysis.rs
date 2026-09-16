@@ -237,7 +237,7 @@ pub(super) fn migration_plan(
                 "purpose": "draft portable skill entrypoint"
             }],
             "notes": [
-                "dry-run only; no instruction file or registry state was modified",
+                "source instruction is preserved; the extraction is applied through skill author apply-patch",
                 "generated draft must pass skill lint before projection"
             ]
         }),
@@ -255,7 +255,7 @@ pub(super) fn migration_plan(
                 "purpose": "candidate reference split for repeated background guidance"
             }],
             "notes": [
-                "dry-run only; source instruction edits are intentionally deferred",
+                "source instruction is preserved; reference extraction uses a reviewed patch",
                 "human review must decide whether the always-on instruction keeps a short pointer"
             ]
         }),

@@ -1,11 +1,13 @@
 # GH389 Tasks: Instruction Surface Inventory
 
+September 2026: tests/instruction_migration.rs covers real extraction/apply/replay, source preservation, collision refusal, reference extraction, and sensitive-input refusal. Existing no-write preview coverage remains in tests/instruction_surfaces.rs.
+
 Issue: https://github.com/majiayu000/loom/issues/389
 Product spec: `specs/GH389/product.md`
 Tech spec: `specs/GH389/tech.md`
-Status: Draft for implementation
+Status: Instruction inventory and reviewed extraction implemented
 
-## Scope For First PR
+## Original Foundation Scope
 
 Implement only the read-only instruction boundary foundation:
 
@@ -23,11 +25,11 @@ as skills
 
 ## Tasks
 
-- [ ] `SP389-T1` Owner: implementation | Done when: instruction scan/show/classify/doctor/migrate-plan CLI parses and command ids classify dry-run commands as read-only | Verify: `cargo test --test cli_surface`
-- [ ] `SP389-T2` Owner: implementation | Done when: adapter-driven discovery reports AGENTS.md, nested scope, and supported agent rule surfaces without mutation | Verify: `cargo test --test instruction_surfaces`
-- [ ] `SP389-T3` Owner: implementation | Done when: classification marks scope, precedence, always-on status, skill-like workflow signals, suggestions, and unsupported surfaces explicitly | Verify: `cargo test --test instruction_surfaces`
-- [ ] `SP389-T4` Owner: implementation | Done when: doctor reports duplicate/conflicting guidance between skills and always-on instructions without invented precedence claims | Verify: `cargo test --test instruction_surfaces`
-- [ ] `SP389-T5` Owner: implementation | Done when: migrate-plan emits reviewable no-write plans for keep/reference/extract/review actions | Verify: `cargo test --test instruction_surfaces`
+- [x] `SP389-T1` Owner: implementation | Done when: instruction scan/show/classify/doctor/migrate-plan CLI parses and command ids classify dry-run commands as read-only | Verify: `cargo test --test cli_surface`
+- [x] `SP389-T2` Owner: implementation | Done when: adapter-driven discovery reports AGENTS.md, nested scope, and supported agent rule surfaces without mutation | Verify: `cargo test --test instruction_surfaces`
+- [x] `SP389-T3` Owner: implementation | Done when: classification marks scope, precedence, always-on status, skill-like workflow signals, suggestions, and unsupported surfaces explicitly | Verify: `cargo test --test instruction_surfaces`
+- [x] `SP389-T4` Owner: implementation | Done when: doctor reports duplicate/conflicting guidance between skills and always-on instructions without invented precedence claims | Verify: `cargo test --test instruction_surfaces`
+- [x] `SP389-T5` Owner: implementation | Done when: migrate-plan emits reviewable no-write plans for keep/reference/extract/review actions | Verify: `cargo test --test instruction_surfaces`
 - [ ] `SP389-T6` Owner: implementation | Done when: skill lint boundary rejects non-SKILL.md instruction files and docs/specs cover migration rules | Verify: `cargo test --test skill_lint && git diff --check`
 
 ### SP389-T1: Add CLI Surface
@@ -47,7 +49,7 @@ Done when:
 - `loom instruction classify <path> [--json]` parses.
 - `loom instruction doctor [--agent <agent>] [--workspace <path>] [--skill <skill>] [--json]` parses.
 - `loom instruction migrate-plan <instruction-id> --to <target> --dry-run [--json]` parses.
-- commands are read-only while apply is deferred.
+- inspection and dry-run commands are read-only; non-dry-run extraction writes reviewable patch artifacts for the existing author apply command.
 
 Verify:
 
@@ -124,8 +126,8 @@ Depends on: SP389-T3
 Done when:
 
 - keep-instruction plans explain why no file changes are needed.
-- move-to-reference plans propose target reference files and source edits.
-- extract-skill plans propose draft `SKILL.md` and optional references split.
+- move-to-reference plans propose a new reference file; applying the reviewed patch preserves the source instruction.
+- extract-skill plans propose a new `SKILL.md` containing the reviewed source instruction.
 - review-conflict plans ask for human review when unsafe.
 - dry-run writes no files.
 

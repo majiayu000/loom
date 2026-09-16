@@ -188,7 +188,7 @@ Typed failures:
 1. Run existing offline member eval for each member with the requested agent.
 2. Aggregate `case_count`, `passed`, `failed`, `skipped`, token/command counts, permissions, and aggregate score.
 3. Return `EVAL_FAILED` with the aggregate report when any required member has failing cases.
-4. `skillsets/<name>/evals/` end-to-end fixtures are detected and reported as deferred; no fake end-to-end pass/fail is produced.
+4. With an explicit `--runner`, run `skillsets/<name>/evals/` fixtures using the existing task/trigger runner. Supply the available members' source together for the bundle and compare the same tasks against no source or each individual member. The selected runner is explicit in the report; mock results carry `synthetic=true`. Check member safety before runner startup and clean temporary workspaces on success or failure. `--dry-run` previews without running an agent. Without a runner, configured fixtures report `not_run`.
 
 ### release
 
@@ -271,5 +271,5 @@ Rollback can remove the command group and ignore/delete the optional state file 
 ## Risks
 
 1. File-level state may become a second source of truth if later skill inspect logic is duplicated. Mitigation: use `build_skill_read_model` for summaries.
-2. End-to-end skillset eval fixtures are detected but not run. Mitigation: return explicit deferred status and keep closing language out of partial PRs if this remains required for #377 closure.
+2. Real model quality depends on the configured runner. Mitigation: report mock output as synthetic, retain case evidence, and do not treat deterministic process fixtures as live agent acceptance.
 3. Future role vocabulary may need constraints. Mitigation: keep role free-form and non-semantic in v1.

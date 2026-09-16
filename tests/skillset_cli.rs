@@ -732,7 +732,7 @@ fn skillset_eval_optional_failures_do_not_fail_bundle() {
         .expect("optional member report");
     assert_eq!(optional["required"], json!(false));
     assert_eq!(optional["status"], json!("failed"));
-    assert_eq!(env["data"]["end_to_end"]["status"], json!("deferred"));
+    assert_eq!(env["data"]["end_to_end"]["status"], json!("not_run"));
 }
 
 #[test]

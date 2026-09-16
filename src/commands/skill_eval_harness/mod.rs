@@ -2,8 +2,10 @@ pub(crate) mod cases;
 mod codex_cli;
 mod report;
 mod runner;
+mod skillset;
 
 pub(crate) use codex_cli::execute_reviewed_prompt;
+pub(crate) use skillset::run_skillset_eval;
 
 use std::fs;
 use std::path::Path;

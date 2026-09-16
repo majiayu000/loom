@@ -26,7 +26,7 @@ create -> add/remove members -> show -> lint -> activate/deactivate -> eval aggr
 1. 不实现 marketplace 或 catalog 依赖。
 2. 不实现 DAG workflow 编排。
 3. 不实现 semantic recommendation。
-4. 不实现 `skillsets/<name>/evals/` 的端到端 runner；当前 `skillset eval` 聚合成员 skill eval 结果，并在检测到端到端 fixtures 时返回 deferred 状态。
+4. 不新增独立评测引擎；整体任务评测复用现有 eval runner、临时工作区和结果检查。它不代表工作流 DAG 自动执行。
 5. 不复制单 skill activation / trust / eval 的状态逻辑；skillset lifecycle 必须复用现有单 skill 路径。
 
 ## Behavior Invariants
@@ -61,7 +61,7 @@ loom skillset show <name> [--json]
 loom skillset lint <name> [--json]
 loom skillset activate <name> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
 loom skillset deactivate <name> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
-loom skillset eval <name> --agent <agent> [--baseline no-skill|single-skills]
+loom skillset eval <name> --agent <agent> [--baseline no-skill|single-skills] [--runner mock|codex-cli]
 loom skillset release <name> <version>
 loom skillset rollback <name> --to <version|ref>
 ```

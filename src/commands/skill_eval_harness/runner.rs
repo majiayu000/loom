@@ -584,7 +584,7 @@ fn activation_decision(summary: &Value) -> Value {
     })
 }
 
-fn pass_rate(results: &[EvalCaseResult]) -> Option<f64> {
+pub(super) fn pass_rate(results: &[EvalCaseResult]) -> Option<f64> {
     let passed = results
         .iter()
         .filter(|case| case.status == "passed")

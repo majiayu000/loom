@@ -4,6 +4,7 @@ use clap::ValueEnum;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
+use super::EvalRunnerArg;
 use super::skill_activation_args::ActivationScope;
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
@@ -22,7 +23,7 @@ pub enum SkillsetCommand {
     Activate(SkillsetActivateArgs),
     #[command(about = "Deactivate every member in a skillset")]
     Deactivate(SkillsetActivateArgs),
-    #[command(about = "Aggregate member eval results for a skillset")]
+    #[command(about = "Evaluate members and run skillset task comparisons")]
     Eval(SkillsetEvalArgs),
     #[command(about = "Create a release tag for a skillset definition")]
     Release(SkillsetReleaseArgs),
@@ -114,6 +115,14 @@ pub struct SkillsetEvalArgs {
     /// Baseline to compare against.
     #[arg(long, value_enum, default_value_t = SkillsetEvalBaselineArg::NoSkill)]
     pub baseline: SkillsetEvalBaselineArg,
+
+    /// Run skillsets/<name>/evals with an explicit runner instead of only aggregating members.
+    #[arg(long, value_enum)]
+    pub runner: Option<EvalRunnerArg>,
+
+    /// Preview the bundle comparison without starting a runner.
+    #[arg(long, requires = "runner")]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]

@@ -17,13 +17,7 @@ skillset release/rollback definition versioning
 partial activation failure rollback/recovery reporting
 ```
 
-Still explicitly not implemented:
-
-```text
-skillsets/<name>/evals/ end-to-end runner
-```
-
-The end-to-end runner should be split or kept as remaining GH377 work if issue closure requires it.
+September 2026 follow-up: `skillset eval --runner mock|codex-cli` runs bundle fixtures through the existing eval harness and compares against no skill or each member independently. `--dry-run` previews the selected comparison. A real Codex bundle/no-skill smoke comparison passed; see [verification](../../docs/plan/codex-cli-verification.md). Broader model quality requires additional evidence; deterministic tests do not prove it.
 
 ## Tasks
 
@@ -32,7 +26,7 @@ The end-to-end runner should be split or kept as remaining GH377 work if issue c
 - [x] `SP377-T003` Owner: crud | Done when: create/add/remove reject duplicates and missing members, preserve skill source, and commit registry state | Verify: `cargo test --test skillset_cli`
 - [x] `SP377-T004` Owner: read-lint | Done when: show includes current skill read-model summaries and lint reports empty/missing/duplicate member findings | Verify: `cargo test --test skillset_cli`
 - [x] `SP377-T005` Owner: activation | Done when: dry-run activation returns per-member plans, apply reuses single-skill activation, required failures fail closed, and partial activation failure rolls back or reports recovery commands | Verify: `cargo test --test skillset_cli`
-- [x] `SP377-T006` Owner: eval | Done when: member offline eval results aggregate case/pass/fail/skipped counts and detected `skillsets/<name>/evals/` fixtures are marked deferred | Verify: `cargo test --test skillset_cli`
+- [x] `SP377-T006` Owner: eval | Done when: member offline eval results aggregate case/pass/fail/skipped counts; an explicit runner executes bundle fixtures against no-skill or single-skill baselines, while fixtures without a selected runner report `not_run` | Verify: `cargo test --test skillset_cli --test skillset_end_to_end`
 - [x] `SP377-T007` Owner: release-rollback | Done when: release creates `release/skillset/<name>/<version>` and rollback restores only the skillset definition from version/ref | Verify: `cargo test --test skillset_cli`
 - [x] `SP377-T008` Owner: verification | Done when: focused tests, CLI surface tests, diff check, workspace cargo check, and SpecRail check pass | Verify: `git diff --check && cargo test --test skillset_cli && cargo test --test cli_surface && cargo check --workspace --all-targets --all-features`
 
@@ -137,7 +131,7 @@ Done when:
 - focused tests cover every product acceptance criterion in the first slice.
 - repository formatting and compile checks pass.
 - tests cover activation/eval/release/rollback behavior implemented in this PR.
-- implementation and specs clearly mark the end-to-end skillset eval runner as deferred.
+- implementation and specs distinguish optional runner execution from member-only aggregation.
 
 Verify:
 
@@ -176,7 +170,7 @@ Done when:
 - `skillset eval <name> --agent <agent>` runs existing member offline evals.
 - aggregate summary includes case/pass/fail/skipped counts and aggregate score.
 - member failures return `EVAL_FAILED` with the aggregate report.
-- detected `skillsets/<name>/evals/` fixtures are reported as deferred rather than silently ignored as completed.
+- detected `skillsets/<name>/evals/` fixtures are `not_run` without an explicit runner; selected runner results are reported separately.
 
 Verify:
 
@@ -203,5 +197,5 @@ cargo test --test skillset_cli
 
 ## Handoff Notes
 
-- Use `Refs #377` if the end-to-end `skillsets/<name>/evals/` runner is considered part of the issue closure criteria.
-- Use a closing keyword for issue 377 only if maintainers accept member eval aggregation plus explicit deferred end-to-end runner as sufficient or that runner is split to a follow-up issue.
+- The end-to-end `skillsets/<name>/evals/` runner is implemented with deterministic regressions and one real Codex smoke comparison; broad model quality still requires acceptance evidence.
+- Issue closure should distinguish implemented runner behavior from any remaining real-agent acceptance criteria.

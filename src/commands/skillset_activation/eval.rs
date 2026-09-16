@@ -70,6 +70,20 @@ impl App {
             }
         }
 
+        let end_to_end = if args.runner.is_some() && failed == 0 {
+            let selected = members
+                .iter()
+                .filter(|member| member["status"] != "skipped")
+                .filter_map(|member| member["skill"].as_str())
+                .collect::<Vec<_>>();
+            super::super::skill_eval_harness::run_skillset_eval(&self.ctx, args, &selected)?
+        } else if args.runner.is_some() {
+            json!({"status": "blocked", "reason": "required member eval failed"})
+        } else {
+            skillset_end_to_end_status(&self.ctx, &skillset.id)
+        };
+        failed += end_to_end["summary"]["failed"].as_u64().unwrap_or(0) as usize;
+
         let report = json!({
             "schema_version": 1,
             "skillset": skillset.id,
@@ -77,10 +91,10 @@ impl App {
             "baseline": skillset_eval_baseline_label(args.baseline),
             "members": members,
             "summary": summary.to_json(),
-            "end_to_end": skillset_end_to_end_status(&self.ctx, &skillset.id),
+            "end_to_end": end_to_end,
             "security_model": {
                 "eval_success_is_safety_guarantee": false,
-                "note": "Skillset eval aggregates member quality evidence only. It does not prove the bundle is safe, sandboxed, or free of prompt-injection risk."
+                "note": "Member fixtures and explicitly selected bundle runners provide quality evidence, not a safety guarantee. Mock runner results are synthetic."
             }
         });
 
@@ -170,12 +184,12 @@ fn skillset_end_to_end_status(ctx: &AppContext, name: &str) -> Value {
         });
     }
     json!({
-        "status": "deferred",
+        "status": "not_run",
         "eval_root": evals_dir.display().to_string(),
-        "reason": "skillset end-to-end eval fixtures are detected but this command currently aggregates member evals only",
+        "reason": "select --runner mock or --runner codex-cli to run the skillset fixtures",
         "next_actions": observe_next_actions(
             "skillset.eval.deferred",
-            ["track a follow-up runner for skillsets/<name>/evals/"],
+            [format!("loom skillset eval {name} --agent codex --runner codex-cli --dry-run")],
         ),
     })
 }

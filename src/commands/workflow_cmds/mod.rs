@@ -387,7 +387,7 @@ impl App {
                     if valid {
                         vec![format!("loom workflow apply {} --idempotency-key <key> --dry-run", shell_arg(&plan.plan_id))]
                     } else {
-                        vec![format!("rerun loom workflow plan {}", shell_arg(&plan.workflow_id))]
+                        vec![format!("loom workflow plan {} --agent {} --workspace {}", shell_arg(&plan.workflow_id), shell_arg(&plan.agent), shell_arg(&plan.workspace))]
                     },
                 ),
             }),

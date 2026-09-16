@@ -612,6 +612,14 @@ fn workflow_apply_rejects_stale_sources_before_starting_codex() {
             .contains("stale")
     );
     assert!(!root.path().join("calls.txt").exists());
+    let (output, preflight) = run_loom(root.path(), &["workflow", "preflight", &plan]);
+    assert!(output.status.success(), "{preflight}");
+    assert_eq!(preflight["data"]["valid"], false);
+    let action = preflight["data"]["next_actions"][0].as_str().unwrap();
+    assert!(action.contains("--agent codex"), "{action}");
+    assert!(action.contains("--workspace "), "{action}");
+    skillloom::cli_contract::validate_public_argv(action.split_whitespace())
+        .expect("stale-plan recovery must be an executable public command");
 }
 
 #[test]

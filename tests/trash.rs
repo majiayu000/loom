@@ -231,7 +231,11 @@ fn skill_trash_add_removes_active_state_and_managed_symlink() {
     let (doctor_output, doctor_env) =
         run_with_home(root.path(), home.path(), &["workspace", "doctor"]);
     assert_success(&doctor_output, &format!("workspace doctor: {doctor_env}"));
-    assert_eq!(doctor_env["data"]["healthy"], Value::Bool(true));
+    assert_eq!(
+        doctor_env["data"]["healthy"],
+        Value::Bool(true),
+        "{doctor_env}"
+    );
 
     let (restore_output, restore_env) = run_with_home(
         root.path(),

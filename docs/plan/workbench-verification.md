@@ -18,6 +18,7 @@
 | 真实远程预览 | 固定提交 49f948faa9258a0c61caceaf225e179651397431，lint 有效，scripts_executed=false |
 | 浏览器改写预览 | 实际 HTTP 返回 provider=codex-cli、artifact_written=false；未触发模型调用 |
 | 浏览器打包 | 表单生成计划、确认构建 Codex 插件包、校验摘要与源内容，valid=true |
+| 浏览器指令与 Remote 配置 | 生成提取补丁后源 AGENTS.md 不变；Remote tar 导出、预览与新目录导入通过，scripts_executed=false |
 | 浏览器界面 | 1180×900 和 390×844 检查，无新增页面异常或横向溢出 |
 | 前端 | 35 个测试文件、235 项测试通过；语句覆盖率 77.68%，分支 72.07%，函数 74.12%，行 81.75%；类型检查与生产构建通过 |
 | 后端与桥接 | 5 项工作台测试、14 项桌面测试通过，覆盖全部操作映射、参数隔离、来源授权和真实错误传播 |
@@ -28,6 +29,10 @@
 | 本机发布包准备 | 当前 debug 二进制、第一方 Skill 和契约清单原子组包并校验成功，contract=2.1.0；这不是公开 release 产物 |
 
 原始 JSON、浏览器截图和组包摘要保存在本机 `output/workbench-followup-20260917/`。测试日志位于 `/tmp/loom-workbench-*.log`。测试产物不纳入发布包或版本控制。
+
+## CI 后续修复
+
+首次推送后的 Windows 检查和 Team App 流水线通过（含 macOS App 构建）。Linux 的完整 trace 检查暴露过期工作流计划的重建提示遗漏 agent/workspace，现已修复并由公开 CLI 解析器校验；12 项工作流回归通过。macOS 的单项 trash 健康断言曾失败，本机单次及 24 次并发重复均未复现；保留原断言并补充完整 doctor 诊断，继续由 CI 验证。
 
 ## 验收边界
 

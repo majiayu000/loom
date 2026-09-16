@@ -310,7 +310,10 @@ pub(crate) fn command_descriptor(command: &Command) -> CommandDescriptor {
             ProvisionCommand::Apply(_) => desc("provision.apply", CommandMeta::DURABLE),
             ProvisionCommand::Doctor(_) => desc("provision.doctor", CommandMeta::PREVIEW_ONLY),
             ProvisionCommand::Export(_) => desc("provision.export", CommandMeta::PREVIEW_ONLY),
-            ProvisionCommand::Import(_) => desc("provision.import", CommandMeta::PREVIEW_ONLY),
+            ProvisionCommand::Import(args) => desc(
+                "provision.import",
+                CommandMeta::durable_unless_dry_run(args.dry_run),
+            ),
         },
         Command::Policy { command } => match command {
             PolicyCommand::Org { command } => match command {

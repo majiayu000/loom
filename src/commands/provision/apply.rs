@@ -160,7 +160,10 @@ fn load_apply_plan(
 }
 
 fn ensure_supported_plan(plan: &ProvisionPlan) -> std::result::Result<(), CommandFailure> {
-    if plan.target_kind != "devcontainer" {
+    if !matches!(
+        plan.target_kind.as_str(),
+        "devcontainer" | "codespaces" | "remote"
+    ) {
         return Err(CommandFailure::new(
             ErrorCode::ArgInvalid,
             format!(

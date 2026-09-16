@@ -1,5 +1,6 @@
 mod apply;
 mod artifact;
+mod materialize;
 mod model;
 mod planner;
 mod tar_artifact;
@@ -156,7 +157,7 @@ impl App {
                     },
                     "policy": {
                         "status": "pass",
-                        "apply_deferred": plan.target_kind != "devcontainer",
+                        "apply_deferred": false,
                     },
                 },
                 "findings": plan.findings,
@@ -248,15 +249,19 @@ impl App {
                     Meta::default(),
                 ))
             }
-            crate::cli::ProvisionExportFormatArg::Devcontainer => Err(deferred_failure(
-                "provision export for this format is deferred until devcontainer artifact gates are implemented",
-                json!({
-                    "plan": args.plan,
-                    "format": provision_export_format_name(args.format),
-                    "output": args.output.display().to_string(),
-                    "target_writes_performed": false,
-                }),
-            )),
+            crate::cli::ProvisionExportFormatArg::Devcontainer => {
+                let plan = load_reviewed_provision_plan(&self.ctx, &args.plan)?;
+                if !matches!(plan.target_kind.as_str(), "devcontainer" | "codespaces") {
+                    return Err(CommandFailure::new(
+                        ErrorCode::ArgInvalid,
+                        "devcontainer export requires a devcontainer or codespaces plan",
+                    ));
+                }
+                let mut result = materialize::export_directory(&plan, &args.output)?;
+                result["format"] = json!("devcontainer");
+                result["plan_id"] = json!(plan.plan_id);
+                Ok((result, Meta::default()))
+            }
         }
     }
 
@@ -289,13 +294,12 @@ impl App {
             ));
         }
 
-        Err(deferred_failure(
-            "provision import without --dry-run is deferred until artifact validation and apply gates are implemented",
-            json!({
-                "artifact": args.artifact.display().to_string(),
-                "dry_run": args.dry_run,
-                "target_writes_performed": false,
-            }),
+        let output = args.output.as_deref().ok_or_else(|| {
+            CommandFailure::new(ErrorCode::ArgInvalid, "--output is required for import")
+        })?;
+        Ok((
+            materialize::import_directory(&args.artifact, output)?,
+            Meta::default(),
         ))
     }
 }
@@ -318,10 +322,4 @@ fn generated_file_statuses(workspace: &Path, files: &[model::ProvisionFilePlan])
             })
         })
         .collect()
-}
-
-fn deferred_failure(message: &str, details: Value) -> CommandFailure {
-    let mut failure = CommandFailure::new(ErrorCode::PolicyBlocked, message);
-    failure.details = details;
-    failure
 }

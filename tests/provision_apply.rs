@@ -531,7 +531,7 @@ fn provision_apply_rejects_credential_bearing_clone_url_artifact() {
 }
 
 #[test]
-fn provision_plan_marks_unsupported_targets_apply_deferred() {
+fn provision_remote_plan_requires_approval_and_applies_local_setup() {
     let root = TestDir::new("provision-apply-unsupported-root");
     let workspace = TestDir::new("provision-apply-unsupported-workspace");
     write_skill(
@@ -560,13 +560,32 @@ fn provision_plan_marks_unsupported_targets_apply_deferred() {
         "remote plan should be generated: {env}"
     );
     assert_eq!(env["data"]["plan"]["target_kind"], json!("remote"));
-    assert_eq!(env["data"]["plan"]["policy"]["apply_deferred"], json!(true));
     assert_eq!(
-        env["data"]["plan"]["policy"]["approval_required_for_apply"],
+        env["data"]["plan"]["policy"]["apply_deferred"],
         json!(false)
     );
     assert_eq!(
-        env["data"]["plan"]["policy"]["required_approvals"],
-        json!([])
+        env["data"]["plan"]["policy"]["approval_required_for_apply"],
+        json!(true)
     );
+    assert_eq!(
+        env["data"]["plan"]["policy"]["required_approvals"],
+        json!(["approval:provision-apply"])
+    );
+    let plan_id = env["data"]["plan"]["plan_id"].as_str().unwrap();
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "apply",
+            plan_id,
+            "--idempotency-key",
+            "remote-local",
+            "--approve",
+            "approval:provision-apply",
+        ],
+    );
+    assert!(output.status.success(), "{env}");
+    assert!(workspace.path().join(".loom/loom-setup.sh").is_file());
+    assert!(!workspace.path().join(".devcontainer").exists());
 }

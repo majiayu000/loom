@@ -1,5 +1,7 @@
 # GH382 Tech Spec: Remote And Devcontainer Provisioning
 
+September 2026: portable materialization validates paths before writing a sibling staging directory and renaming it into a new output directory. Imported tar content is read and checksum-verified before target mapping; absolute active-view paths must be relative to the reviewed container workspace. Existing output paths are refused. The historical deferred-format notes below are superseded by this directory contract.
+
 Issue: https://github.com/majiayu000/loom/issues/382
 Product spec: `specs/GH382/product.md`
 Status: Implementation closeout
@@ -207,11 +209,7 @@ Focused tests:
 11. apply by plan id replays the durable reviewed plan without regenerating from
     changed registry state.
 
-`provision export --format devcontainer` is intentionally split from this
-packet. A follow-up spec must define the devcontainer export artifact shape and
-output path semantics before implementation. Until then the CLI must continue to
-fail closed for that format, while shell and tar remain the supported portable
-exports.
+`provision export --format devcontainer` now writes a fresh directory of reviewed configuration files. It refuses existing output paths and does not include or execute registry setup commands beyond the reviewed file bytes. Shell and tar exports remain portable file artifacts; import validates them and materializes their reviewed contents only when an explicit new output directory is supplied.
 
 ## Verification
 

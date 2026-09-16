@@ -175,6 +175,39 @@ pub(super) fn build_tar_export_artifact(
 pub(super) fn inspect_tar_export_artifact(
     path: &Path,
 ) -> Result<ProvisionArtifactInspection, CommandFailure> {
+    let (manifest, entries) = read_tar_artifact(path)?;
+
+    Ok(ProvisionArtifactInspection {
+        kind: "tar",
+        schema_version: manifest.schema_version,
+        plan_id: manifest.plan_id,
+        target_kind: manifest.target_kind,
+        source_path: None,
+        content_digest: None,
+        script_bytes: None,
+        checksums_verified: true,
+        entry_count: entries.len(),
+        generated_file_count: manifest.generated_files.len(),
+        registry_file_count: manifest.registry_files.len(),
+        active_view_file_count: manifest.active_view_files.len(),
+        planned_files: json!(
+            manifest
+                .generated_files
+                .iter()
+                .map(|file| json!({
+                    "path": file.target_path,
+                    "kind": file.kind,
+                    "content_digest": file.content_digest,
+                    "action": "review_only",
+                }))
+                .collect::<Vec<_>>()
+        ),
+    })
+}
+
+fn read_tar_artifact(
+    path: &Path,
+) -> Result<(TarManifest, BTreeMap<String, Vec<u8>>), CommandFailure> {
     let file = File::open(path).map_err(map_io)?;
     let mut archive = Archive::new(file);
     let mut root_name: Option<String> = None;
@@ -220,32 +253,53 @@ pub(super) fn inspect_tar_export_artifact(
     }
     verify_manifest_entries(&entries, &manifest)?;
 
-    Ok(ProvisionArtifactInspection {
-        kind: "tar",
-        schema_version: manifest.schema_version,
-        plan_id: manifest.plan_id,
-        target_kind: manifest.target_kind,
-        source_path: None,
-        content_digest: None,
-        script_bytes: None,
-        checksums_verified: true,
-        entry_count: entries.len(),
-        generated_file_count: manifest.generated_files.len(),
-        registry_file_count: manifest.registry_files.len(),
-        active_view_file_count: manifest.active_view_files.len(),
-        planned_files: json!(
-            manifest
-                .generated_files
-                .iter()
-                .map(|file| json!({
-                    "path": file.target_path,
-                    "kind": file.kind,
-                    "content_digest": file.content_digest,
-                    "action": "review_only",
-                }))
-                .collect::<Vec<_>>()
-        ),
-    })
+    Ok((manifest, entries))
+}
+
+pub(super) fn import_tar_files(path: &Path) -> Result<BTreeMap<String, Vec<u8>>, CommandFailure> {
+    let (manifest, entries) = read_tar_artifact(path)?;
+    let plan: ProvisionPlan = serde_json::from_slice(
+        entries
+            .get("plan.json")
+            .ok_or_else(|| invalid_artifact("missing plan"))?,
+    )
+    .map_err(map_io)?;
+    if plan.plan_id != manifest.plan_id
+        || plan.target_kind != manifest.target_kind
+        || plan.schema_version != super::model::PROVISION_PLAN_SCHEMA
+    {
+        return Err(invalid_artifact("artifact manifest and plan disagree"));
+    }
+    let mut files = BTreeMap::new();
+    for file in manifest.generated_files {
+        if file.archive_path != format!("files/{}", file.target_path) {
+            return Err(invalid_artifact(
+                "generated file path disagrees with manifest",
+            ));
+        }
+        insert_entry(
+            &mut files,
+            &file.target_path,
+            entries[&file.archive_path].clone(),
+        )?;
+    }
+    for file in manifest.registry_files {
+        let target = format!("registry/skills/{}/{}", file.skill, file.source_path);
+        if file.archive_path != target {
+            return Err(invalid_artifact(
+                "registry file path disagrees with manifest",
+            ));
+        }
+        insert_entry(&mut files, &target, entries[&file.archive_path].clone())?;
+    }
+    for file in manifest.active_view_files {
+        let target = Path::new(&file.reviewed_target_path)
+            .strip_prefix(&plan.container_workspace)
+            .map_err(|_| invalid_artifact("active view is outside the reviewed workspace"))?;
+        let target = archive_relative_path(target)?;
+        insert_entry(&mut files, &target, entries[&file.archive_path].clone())?;
+    }
+    Ok(files)
 }
 
 fn collect_registry_files(

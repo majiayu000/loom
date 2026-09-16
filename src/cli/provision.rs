@@ -13,7 +13,7 @@ pub enum ProvisionCommand {
     Doctor(ProvisionDoctorArgs),
     #[command(about = "Export a reviewed provisioning plan into a portable artifact")]
     Export(ProvisionExportArgs),
-    #[command(about = "Inspect a provisioning artifact before apply")]
+    #[command(about = "Inspect or import a provisioning artifact into a new directory")]
     Import(ProvisionImportArgs),
 }
 
@@ -72,6 +72,10 @@ pub struct ProvisionExportArgs {
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ProvisionImportArgs {
     pub artifact: PathBuf,
+
+    /// New directory for the reviewed files. Existing directories are never overwritten.
+    #[arg(long, required_unless_present = "dry_run")]
+    pub output: Option<PathBuf>,
 
     #[arg(long)]
     pub dry_run: bool,

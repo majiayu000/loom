@@ -34,22 +34,8 @@ pub(super) fn build_provision_plan(
     agent: &str,
 ) -> std::result::Result<ProvisionPlan, CommandFailure> {
     let target_kind = provision_target_name(target).to_string();
-    let apply_deferred = target != ProvisionTargetArg::Devcontainer;
-    let required_approvals = if apply_deferred {
-        Vec::<&str>::new()
-    } else {
-        vec!["approval:provision-apply"]
-    };
     let container_workspace = container_workspace_path(workspace);
     let mut findings = Vec::new();
-    if target != ProvisionTargetArg::Devcontainer {
-        findings.push(json!({
-            "id": "provision_target_deferred",
-            "severity": "warning",
-            "message": "only devcontainer file previews are generated in this slice",
-            "details": { "target": target_kind },
-        }));
-    }
 
     let paths = RegistryStatePaths::from_app_context(ctx);
     let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
@@ -87,6 +73,7 @@ pub(super) fn build_provision_plan(
         Err(_) => ("working-tree".to_string(), false),
     };
     let files_to_write = devcontainer_file_plan(
+        target,
         workspace,
         &container_workspace,
         registry_clone_url.as_deref(),
@@ -114,11 +101,11 @@ pub(super) fn build_provision_plan(
         secrets_required,
         policy: json!({
             "mode": "plan_first",
-            "apply_deferred": apply_deferred,
+            "apply_deferred": false,
             "secret_copy": false,
             "target_writes_in_plan": false,
-            "approval_required_for_apply": !apply_deferred,
-            "required_approvals": required_approvals,
+            "approval_required_for_apply": true,
+            "required_approvals": ["approval:provision-apply"],
         }),
         loom_cli: json!({
             "required": true,
@@ -463,6 +450,7 @@ fn collect_secret_requirements(
 }
 
 fn devcontainer_file_plan(
+    target: ProvisionTargetArg,
     workspace: &Path,
     container_workspace: &str,
     registry_clone_url: Option<&str>,
@@ -478,14 +466,19 @@ fn devcontainer_file_plan(
     );
     let devcontainer = devcontainer_json_preview();
     let mut files = Vec::new();
-    for (path, kind, preview) in [
-        (".devcontainer/loom-setup.sh", "shell", setup),
-        (
-            ".devcontainer/devcontainer.json",
-            "devcontainer",
-            devcontainer,
-        ),
-    ] {
+    let generated = if target == ProvisionTargetArg::Remote {
+        vec![(".loom/loom-setup.sh", "shell", setup)]
+    } else {
+        vec![
+            (".devcontainer/loom-setup.sh", "shell", setup),
+            (
+                ".devcontainer/devcontainer.json",
+                "devcontainer",
+                devcontainer,
+            ),
+        ]
+    };
+    for (path, kind, preview) in generated {
         let absolute = workspace.join(path);
         let preimage_digest = digest_file(&absolute);
         let content_digest = digest_str(&preview);
@@ -539,8 +532,13 @@ fn devcontainer_setup_script(
             continue;
         }
         checks.push_str(&format!(
-            "ACTIVE_VIEW={}\nmkdir -p \"$ACTIVE_VIEW\"\n",
-            shell_arg(&view.path)
+            "ACTIVE_VIEW=\"$WORKSPACE\"/{}\nmkdir -p \"$ACTIVE_VIEW\"\n",
+            shell_arg(
+                view.path
+                    .strip_prefix(container_workspace)
+                    .unwrap_or(&view.path)
+                    .trim_start_matches('/')
+            )
         ));
         for skill in &view.skills {
             checks.push_str(&format!(
@@ -558,7 +556,7 @@ fn devcontainer_setup_script(
         r#"#!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE={}
+WORKSPACE="${{LOOM_WORKSPACE:-$PWD}}"
 LOOM_REGISTRY_DIR="${{LOOM_REGISTRY_DIR:-$HOME/.loom-registry}}"
 
 if ! command -v loom >/dev/null 2>&1; then
@@ -571,10 +569,7 @@ fi
 loom --json --root "$LOOM_REGISTRY_DIR" workspace status >/dev/null
 {}
 "#,
-        shell_arg(container_workspace),
-        registry_block,
-        registry_checkout,
-        checks
+        registry_block, registry_checkout, checks
     )
 }
 

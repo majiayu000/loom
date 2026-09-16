@@ -1,5 +1,7 @@
 # GH382 Product Spec: Remote And Devcontainer Provisioning
 
+September 2026: Devcontainer export is a fresh directory of reviewed configuration files. Codespaces uses the Devcontainer layout; Remote writes a portable .loom/loom-setup.sh. Apply writes local files only and retains approval and preimage checks. Import with --output materializes verified shell/tar contents into a fresh directory, including relative active views, without running scripts or connecting to a remote host.
+
 Issue: https://github.com/majiayu000/loom/issues/382
 Parent: https://github.com/majiayu000/loom/issues/376
 Status: Implementation closeout
@@ -39,12 +41,7 @@ loom provision export <plan-id|plan-artifact> --format devcontainer|shell|tar --
 loom provision import <artifact> --dry-run
 ```
 
-Closeout split: `plan-id` resolves through Loom's durable reviewed plan store,
-so apply/export/doctor can replay reviewed content without regenerating from the
-current registry state. `export --format devcontainer` remains fail-closed until
-a separate artifact contract defines whether `<path>` is a directory, archive,
-or devcontainer-feature payload; GH382 currently treats shell and tar as the
-portable export formats.
+Reviewed plan IDs resolve through the durable plan store. Devcontainer export writes reviewed files into a new directory; shell and tar remain portable file formats. Import supports a read-only preview or explicit materialization into a new directory. Local apply requires the plan approvals and preimage checks for all targets.
 
 ## Target Kinds
 
@@ -56,7 +53,7 @@ Initial target kinds:
   Codespaces environment notes.
 - `shell`: generate a reproducible install/setup script.
 - `tar`: export a portable registry and active-view artifact.
-- `remote`: abstract target for future SSH/cloud integrations.
+- `remote`: portable setup script and local file apply for later remote use; no SSH connection or cloud deployment.
 
 ## Non-Goals
 

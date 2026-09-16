@@ -114,11 +114,17 @@ pub(super) fn build_shell_export_artifact(
     let setup = plan
         .files_to_write
         .iter()
-        .find(|file| file.kind == "shell" && file.path == ".devcontainer/loom-setup.sh")
+        .find(|file| {
+            file.kind == "shell"
+                && matches!(
+                    file.path.as_str(),
+                    ".devcontainer/loom-setup.sh" | ".loom/loom-setup.sh"
+                )
+        })
         .ok_or_else(|| {
             CommandFailure::new(
                 ErrorCode::ArgInvalid,
-                "plan does not contain a reviewed devcontainer setup shell file",
+                "plan does not contain a reviewed setup shell file",
             )
         })?;
     let content_digest = digest_str(&setup.preview);
@@ -173,7 +179,7 @@ pub(super) fn inspect_provision_artifact(
     super::tar_artifact::inspect_tar_export_artifact(path)
 }
 
-fn inspect_shell_export_artifact_text(
+pub(super) fn inspect_shell_export_artifact_text(
     raw: &str,
 ) -> Result<ProvisionArtifactInspection, CommandFailure> {
     let Some((header, script)) = raw.split_once("\n\n") else {

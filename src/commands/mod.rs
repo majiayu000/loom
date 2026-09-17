@@ -236,178 +236,193 @@ impl App {
             }
         }
 
-        let result = match &cli.command {
-            Command::Init => {
-                let args = WorkspaceInitArgs {
-                    scan_existing: home_dir().is_some(),
-                };
-                self.cmd_workspace_init(&args, &request_id)
-            }
-            Command::Backup { command } => self.cmd_backup(command),
-            Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
-            Command::Use(args) => self.cmd_use(args, &request_id),
-            Command::Plan { command } => self.cmd_plan(command),
-            Command::Apply(args) => self.cmd_apply(args, &request_id),
-            Command::Workspace { command } => match command {
-                WorkspaceCommand::Status => self.cmd_status(),
-                WorkspaceCommand::Doctor => self.cmd_doctor(),
-                WorkspaceCommand::Init(args) => self.cmd_workspace_init(args, &request_id),
-                WorkspaceCommand::Binding { command } => {
-                    self.cmd_workspace_binding(command, &request_id)
+        let result = match org_policy::require_command_policy(&self.ctx, &cli.command) {
+            Err(failure) => Err(failure),
+            Ok(()) => match &cli.command {
+                Command::Init => {
+                    let args = WorkspaceInitArgs {
+                        scan_existing: home_dir().is_some(),
+                    };
+                    self.cmd_workspace_init(&args, &request_id)
                 }
-                WorkspaceCommand::Remote { command } => self.cmd_remote(command),
-            },
-            Command::Target { command } => self.cmd_target(command, &request_id),
-            Command::Skill { command } => match command {
-                SkillCommand::Add(args) => self.cmd_add(args, &request_id),
-                SkillCommand::Install(args) => self.cmd_skill_install(args, &request_id),
-                SkillCommand::ImportObserved(args) => self.cmd_import_observed(args, &request_id),
-                SkillCommand::MonitorObserved(args) => self.cmd_monitor_observed(args, &request_id),
-                SkillCommand::Project(args) if args.dry_run => self.cmd_project_plan(args),
-                SkillCommand::Project(args) => self.cmd_project(args, &request_id),
-                SkillCommand::Commit(args) => self.cmd_commit(args, &request_id),
-                SkillCommand::Improve(args) => self.cmd_skill_improve(args),
-                SkillCommand::Regression(args) => self.cmd_skill_regression(args),
-                SkillCommand::Watch(args) => self.cmd_watch(args, &request_id),
-                SkillCommand::Release(args) => self.cmd_release(args, &request_id),
-                SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
-                SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
-                SkillCommand::Diff(args) => self.cmd_diff(args),
-                SkillCommand::History(args) => self.cmd_history(args),
-                SkillCommand::Trash {
-                    command: SkillTrashCommand::Add(args),
-                } if args.dry_run => self.cmd_skill_trash_add_plan(args),
-                SkillCommand::Trash {
-                    command: SkillTrashCommand::Add(args),
-                } => self.cmd_skill_trash_add(args, &request_id),
-                SkillCommand::Trash {
-                    command: SkillTrashCommand::List,
-                } => self.cmd_skill_trash_list(),
-                SkillCommand::Trash {
-                    command: SkillTrashCommand::Restore(args),
-                } => self.cmd_skill_trash_restore(args, &request_id),
-                SkillCommand::Trash {
-                    command: SkillTrashCommand::Purge(args),
-                } if args.dry_run => self.cmd_skill_trash_purge_plan(args),
-                SkillCommand::Trash {
-                    command: SkillTrashCommand::Purge(args),
-                } => self.cmd_skill_trash_purge(args, &request_id),
-                SkillCommand::List => self.cmd_skill_list(),
-                SkillCommand::Stats(args) => self.cmd_skill_stats(args),
-                SkillCommand::Inspect(args) => self.cmd_skill_inspect(args),
-                SkillCommand::Deps(args) => self.cmd_skill_deps(args),
-                SkillCommand::Compile(args) => self.cmd_skill_compile(args),
-                SkillCommand::Activate(args) => self.cmd_skill_activate(args, &request_id),
-                SkillCommand::Deactivate(args) => self.cmd_skill_deactivate(args, &request_id),
-                SkillCommand::Active {
-                    command: SkillActiveCommand::List(args),
-                } => self.cmd_skill_active_list(args),
-                SkillCommand::Search(args) => self.cmd_skill_search(args),
-                SkillCommand::Recommend(args) => self.cmd_skill_recommend(args),
-                SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
-                SkillCommand::Used(args) => self.cmd_skill_used(args),
-                SkillCommand::Feedback(args) => self.cmd_skill_feedback(args),
-                SkillCommand::Author {
-                    command: SkillAuthorCommand::Draft(args),
-                } => self.cmd_skill_draft(args),
-                SkillCommand::Author {
-                    command: SkillAuthorCommand::Extract(args),
-                } => self.cmd_skill_extract(args),
-                SkillCommand::Author {
-                    command: SkillAuthorCommand::Rewrite(args),
-                } => self.cmd_skill_rewrite(args),
-                SkillCommand::Author {
-                    command: SkillAuthorCommand::TuneDescription(args),
-                } => self.cmd_skill_tune_description(args),
-                SkillCommand::Author {
-                    command: SkillAuthorCommand::GenerateEvals(args),
-                } => self.cmd_skill_generate_evals(args),
-                SkillCommand::Author {
-                    command: SkillAuthorCommand::ApplyPatch(args),
-                } => self.cmd_skill_apply_patch(args, &request_id),
-                SkillCommand::Author {
-                    command: SkillAuthorCommand::New(args),
-                } => self.cmd_skill_new(args, &request_id),
-                SkillCommand::Provenance { command } => {
-                    self.cmd_skill_provenance(command, &request_id)
+                Command::Backup { command } => self.cmd_backup(command),
+                Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
+                Command::Use(args) => self.cmd_use(args, &request_id),
+                Command::Plan { command } => self.cmd_plan(command),
+                Command::Apply(args) => self.cmd_apply(args, &request_id),
+                Command::Workspace { command } => match command {
+                    WorkspaceCommand::Status => self.cmd_status(),
+                    WorkspaceCommand::Doctor => self.cmd_doctor(),
+                    WorkspaceCommand::Init(args) => self.cmd_workspace_init(args, &request_id),
+                    WorkspaceCommand::Binding { command } => {
+                        self.cmd_workspace_binding(command, &request_id)
+                    }
+                    WorkspaceCommand::Remote { command } => self.cmd_remote(command),
+                },
+                Command::Target { command } => self.cmd_target(command, &request_id),
+                Command::Skill { command } => match command {
+                    SkillCommand::Add(args) => self.cmd_add(args, &request_id),
+                    SkillCommand::Install(args) => self.cmd_skill_install(args, &request_id),
+                    SkillCommand::ImportObserved(args) => {
+                        self.cmd_import_observed(args, &request_id)
+                    }
+                    SkillCommand::MonitorObserved(args) => {
+                        self.cmd_monitor_observed(args, &request_id)
+                    }
+                    SkillCommand::Project(args) if args.dry_run => self.cmd_project_plan(args),
+                    SkillCommand::Project(args) => self.cmd_project(args, &request_id),
+                    SkillCommand::Commit(args) => self.cmd_commit(args, &request_id),
+                    SkillCommand::Improve(args) => self.cmd_skill_improve(args),
+                    SkillCommand::Regression(args) => self.cmd_skill_regression(args),
+                    SkillCommand::Watch(args) => self.cmd_watch(args, &request_id),
+                    SkillCommand::Release(args) => self.cmd_release(args, &request_id),
+                    SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
+                    SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
+                    SkillCommand::Diff(args) => self.cmd_diff(args),
+                    SkillCommand::History(args) => self.cmd_history(args),
+                    SkillCommand::Trash {
+                        command: SkillTrashCommand::Add(args),
+                    } if args.dry_run => self.cmd_skill_trash_add_plan(args),
+                    SkillCommand::Trash {
+                        command: SkillTrashCommand::Add(args),
+                    } => self.cmd_skill_trash_add(args, &request_id),
+                    SkillCommand::Trash {
+                        command: SkillTrashCommand::List,
+                    } => self.cmd_skill_trash_list(),
+                    SkillCommand::Trash {
+                        command: SkillTrashCommand::Restore(args),
+                    } => self.cmd_skill_trash_restore(args, &request_id),
+                    SkillCommand::Trash {
+                        command: SkillTrashCommand::Purge(args),
+                    } if args.dry_run => self.cmd_skill_trash_purge_plan(args),
+                    SkillCommand::Trash {
+                        command: SkillTrashCommand::Purge(args),
+                    } => self.cmd_skill_trash_purge(args, &request_id),
+                    SkillCommand::List => self.cmd_skill_list(),
+                    SkillCommand::Stats(args) => self.cmd_skill_stats(args),
+                    SkillCommand::Inspect(args) => self.cmd_skill_inspect(args),
+                    SkillCommand::Deps(args) => self.cmd_skill_deps(args),
+                    SkillCommand::Compile(args) => self.cmd_skill_compile(args),
+                    SkillCommand::Activate(args) => self.cmd_skill_activate(args, &request_id),
+                    SkillCommand::Deactivate(args) => self.cmd_skill_deactivate(args, &request_id),
+                    SkillCommand::Active {
+                        command: SkillActiveCommand::List(args),
+                    } => self.cmd_skill_active_list(args),
+                    SkillCommand::Search(args) => self.cmd_skill_search(args),
+                    SkillCommand::Recommend(args) => self.cmd_skill_recommend(args),
+                    SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
+                    SkillCommand::Used(args) => self.cmd_skill_used(args),
+                    SkillCommand::Feedback(args) => self.cmd_skill_feedback(args),
+                    SkillCommand::Author {
+                        command: SkillAuthorCommand::Draft(args),
+                    } => self.cmd_skill_draft(args),
+                    SkillCommand::Author {
+                        command: SkillAuthorCommand::Extract(args),
+                    } => self.cmd_skill_extract(args),
+                    SkillCommand::Author {
+                        command: SkillAuthorCommand::Rewrite(args),
+                    } => self.cmd_skill_rewrite(args),
+                    SkillCommand::Author {
+                        command: SkillAuthorCommand::TuneDescription(args),
+                    } => self.cmd_skill_tune_description(args),
+                    SkillCommand::Author {
+                        command: SkillAuthorCommand::GenerateEvals(args),
+                    } => self.cmd_skill_generate_evals(args),
+                    SkillCommand::Author {
+                        command: SkillAuthorCommand::ApplyPatch(args),
+                    } => self.cmd_skill_apply_patch(args, &request_id),
+                    SkillCommand::Author {
+                        command: SkillAuthorCommand::New(args),
+                    } => self.cmd_skill_new(args, &request_id),
+                    SkillCommand::Provenance { command } => {
+                        self.cmd_skill_provenance(command, &request_id)
+                    }
+                    SkillCommand::Lint(args) => self.cmd_skill_lint(args),
+                    SkillCommand::Policy(args) => self.cmd_skill_policy(args),
+                    SkillCommand::Scan(args) => self.cmd_skill_scan(args),
+                    SkillCommand::Trust(args) => self.cmd_skill_trust(args, &request_id),
+                    SkillCommand::Quarantine(args) => self.cmd_skill_quarantine(args, &request_id),
+                    SkillCommand::Unquarantine(args) => {
+                        self.cmd_skill_unquarantine(&args.skill, &request_id)
+                    }
+                    SkillCommand::Visibility(args) => self.cmd_skill_visibility(args),
+                    SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
+                    SkillCommand::Eval(args) => self.cmd_skill_eval(args),
+                    SkillCommand::Orphan {
+                        command: SkillOrphanCommand::List,
+                    } => self.cmd_skill_orphan_list(),
+                    SkillCommand::Orphan {
+                        command: SkillOrphanCommand::Clean(args),
+                    } if args.dry_run => self.cmd_skill_orphan_clean_plan(args),
+                    SkillCommand::Orphan {
+                        command: SkillOrphanCommand::Clean(args),
+                    } => self.cmd_skill_orphan_clean(args, &request_id),
+                },
+                Command::Skillset { command } => match command {
+                    SkillsetCommand::Create(args) => self.cmd_skillset_create(args),
+                    SkillsetCommand::Add(args) => self.cmd_skillset_add(args),
+                    SkillsetCommand::Remove(args) => self.cmd_skillset_remove(args),
+                    SkillsetCommand::Show(args) => self.cmd_skillset_show(args),
+                    SkillsetCommand::Lint(args) => self.cmd_skillset_lint(args),
+                    SkillsetCommand::Activate(args) => {
+                        self.cmd_skillset_activate(args, &request_id)
+                    }
+                    SkillsetCommand::Deactivate(args) => {
+                        self.cmd_skillset_deactivate(args, &request_id)
+                    }
+                    SkillsetCommand::Eval(args) => self.cmd_skillset_eval(args),
+                    SkillsetCommand::Release(args) => self.cmd_skillset_release(args, &request_id),
+                    SkillsetCommand::Rollback(args) => {
+                        self.cmd_skillset_rollback(args, &request_id)
+                    }
+                },
+                Command::Telemetry { command } => self.cmd_telemetry(command),
+                Command::Provider { command } => self.cmd_provider(command, &request_id),
+                Command::Catalog { command } => self.cmd_catalog(command),
+                Command::Package { command } => self.cmd_package(command),
+                Command::Mcp { command } => self.cmd_mcp(command),
+                Command::Provision { command } => self.cmd_provision(command),
+                Command::Policy { command } => match command {
+                    PolicyCommand::Org { command } => self.cmd_policy_org(command, &request_id),
+                },
+                Command::Approval { command } => self.cmd_approval(command, &request_id),
+                Command::Roles { command } => self.cmd_roles(command, &request_id),
+                Command::Instruction { command } => self.cmd_instruction(command),
+                Command::Workflow { command } => self.cmd_workflow(command),
+                Command::Index(args) if args.is_build_action() => self.cmd_index_build(args),
+                Command::Index(args) if args.is_status_action() => self.cmd_index_status(),
+                Command::Index(args) => Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!(
+                        "unknown index action '{}'; expected {}",
+                        args.action,
+                        args.expected_actions()
+                    ),
+                )),
+                Command::Active(args) if args.is_recommend_action() => {
+                    self.cmd_active_recommend(args)
                 }
-                SkillCommand::Lint(args) => self.cmd_skill_lint(args),
-                SkillCommand::Policy(args) => self.cmd_skill_policy(args),
-                SkillCommand::Scan(args) => self.cmd_skill_scan(args),
-                SkillCommand::Trust(args) => self.cmd_skill_trust(args, &request_id),
-                SkillCommand::Quarantine(args) => self.cmd_skill_quarantine(args, &request_id),
-                SkillCommand::Unquarantine(args) => {
-                    self.cmd_skill_unquarantine(&args.skill, &request_id)
+                Command::Active(args) => Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!(
+                        "unknown active action '{}'; expected {}",
+                        args.action,
+                        args.expected_actions()
+                    ),
+                )),
+                Command::Sync { command } => self.cmd_sync(command),
+                Command::Ops { command } => self.cmd_ops(command),
+                Command::Agent { command } => match command {
+                    AgentCommand::Preflight(args) => self.cmd_agent_preflight(args),
+                    AgentCommand::Reconcile(args) => self.cmd_agent_reconcile(args),
+                },
+                Command::Codex { command } => match command {
+                    CodexCommand::Reconcile(args) => self.cmd_codex_reconcile(args, &request_id),
+                },
+                Command::Panel(_) => {
+                    Ok((json!({"message": "panel handled in main"}), Meta::default()))
                 }
-                SkillCommand::Visibility(args) => self.cmd_skill_visibility(args),
-                SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
-                SkillCommand::Eval(args) => self.cmd_skill_eval(args),
-                SkillCommand::Orphan {
-                    command: SkillOrphanCommand::List,
-                } => self.cmd_skill_orphan_list(),
-                SkillCommand::Orphan {
-                    command: SkillOrphanCommand::Clean(args),
-                } if args.dry_run => self.cmd_skill_orphan_clean_plan(args),
-                SkillCommand::Orphan {
-                    command: SkillOrphanCommand::Clean(args),
-                } => self.cmd_skill_orphan_clean(args, &request_id),
             },
-            Command::Skillset { command } => match command {
-                SkillsetCommand::Create(args) => self.cmd_skillset_create(args),
-                SkillsetCommand::Add(args) => self.cmd_skillset_add(args),
-                SkillsetCommand::Remove(args) => self.cmd_skillset_remove(args),
-                SkillsetCommand::Show(args) => self.cmd_skillset_show(args),
-                SkillsetCommand::Lint(args) => self.cmd_skillset_lint(args),
-                SkillsetCommand::Activate(args) => self.cmd_skillset_activate(args, &request_id),
-                SkillsetCommand::Deactivate(args) => {
-                    self.cmd_skillset_deactivate(args, &request_id)
-                }
-                SkillsetCommand::Eval(args) => self.cmd_skillset_eval(args),
-                SkillsetCommand::Release(args) => self.cmd_skillset_release(args, &request_id),
-                SkillsetCommand::Rollback(args) => self.cmd_skillset_rollback(args, &request_id),
-            },
-            Command::Telemetry { command } => self.cmd_telemetry(command),
-            Command::Provider { command } => self.cmd_provider(command, &request_id),
-            Command::Catalog { command } => self.cmd_catalog(command),
-            Command::Package { command } => self.cmd_package(command),
-            Command::Mcp { command } => self.cmd_mcp(command),
-            Command::Provision { command } => self.cmd_provision(command),
-            Command::Policy { command } => match command {
-                PolicyCommand::Org { command } => self.cmd_policy_org(command, &request_id),
-            },
-            Command::Approval { command } => self.cmd_approval(command, &request_id),
-            Command::Roles { command } => self.cmd_roles(command, &request_id),
-            Command::Instruction { command } => self.cmd_instruction(command),
-            Command::Workflow { command } => self.cmd_workflow(command),
-            Command::Index(args) if args.is_build_action() => self.cmd_index_build(args),
-            Command::Index(args) if args.is_status_action() => self.cmd_index_status(),
-            Command::Index(args) => Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                format!(
-                    "unknown index action '{}'; expected {}",
-                    args.action,
-                    args.expected_actions()
-                ),
-            )),
-            Command::Active(args) if args.is_recommend_action() => self.cmd_active_recommend(args),
-            Command::Active(args) => Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                format!(
-                    "unknown active action '{}'; expected {}",
-                    args.action,
-                    args.expected_actions()
-                ),
-            )),
-            Command::Sync { command } => self.cmd_sync(command),
-            Command::Ops { command } => self.cmd_ops(command),
-            Command::Agent { command } => match command {
-                AgentCommand::Preflight(args) => self.cmd_agent_preflight(args),
-                AgentCommand::Reconcile(args) => self.cmd_agent_reconcile(args),
-            },
-            Command::Codex { command } => match command {
-                CodexCommand::Reconcile(args) => self.cmd_codex_reconcile(args, &request_id),
-            },
-            Command::Panel(_) => Ok((json!({"message": "panel handled in main"}), Meta::default())),
         };
 
         match result {

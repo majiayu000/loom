@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/381
 Product spec: `specs/GH381/product.md`
-Status: Blocked design packet
+Status: Local primitives implemented; mutating commands now enforce org policy when initialized
 
 ## Current State
 

@@ -90,6 +90,7 @@ impl App {
                 Some(stored.cursor),
             ));
         }
+        require_apply_org_policy(&self.ctx, stored.plan, stored.kind)?;
         let confirmed_plan_digest = if stored.kind == StoredPlanKind::Converge {
             let digest = validate_confirmed_plan_digest(
                 stored.plan,
@@ -210,6 +211,37 @@ struct StoredPlan<'a> {
 enum StoredPlanKind {
     Use,
     Converge,
+}
+
+fn require_apply_org_policy(
+    ctx: &crate::state::AppContext,
+    plan: &Value,
+    kind: StoredPlanKind,
+) -> std::result::Result<(), CommandFailure> {
+    match kind {
+        StoredPlanKind::Use => {
+            let use_args = plan_use_args(plan)?;
+            super::org_policy::require_command_policy(
+                ctx,
+                &crate::cli::Command::Use(UseArgs {
+                    apply: true,
+                    ..use_args
+                }),
+            )
+        }
+        StoredPlanKind::Converge => {
+            let skill = plan.get("skill").and_then(Value::as_str).ok_or_else(|| {
+                CommandFailure::new(ErrorCode::StateCorrupt, "convergence plan is missing skill")
+            })?;
+            super::org_policy::require_policy_checks(
+                ctx,
+                &[
+                    super::org_policy::PolicyCheck::new("skill.activate").skill(skill),
+                    super::org_policy::PolicyCheck::new("skill.project").skill(skill),
+                ],
+            )
+        }
+    }
 }
 
 fn plan_use_args(plan: &Value) -> std::result::Result<UseArgs, CommandFailure> {

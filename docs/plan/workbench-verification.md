@@ -61,7 +61,7 @@ Linux x86_64 发布配置启用固定帧指针，简化栈访问和展开记录�
 | 源码回归 | 444 项单元测试；inventory 10、recommend 15、stats 23、workflow 12 项集成测试通过 |
 | 静态检查 | 全目标 Clippy、格式、模块上限与 shell 语法检查通过 |
 
-本地交叉构建使用独立工具链与临时 Linux sysroot，没有更改全局 Rust 默认版本。上述数据为本机容器验收；最终 Linux 原生构建结果由本轮推送后的 CI 确认。性能日志和构建证据保存在本机 `output/release-size-20260917/`，不随发布包分发。
+本地交叉构建使用独立工具链与临时 Linux sysroot，没有更改全局 Rust 默认版本。上述数据为本机容器验收；推送 `c1fdbed` 后的主 CI 已通过 Ubuntu/macOS/Windows 与 Team App（含原生 Linux 发布构建和体积检查）。性能日志和构建证据保存在本机 `output/release-size-20260917/`，不随发布包分发。
 
 ## 验收边界
 

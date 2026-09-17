@@ -151,6 +151,12 @@ impl App {
         args: &ProjectArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        if !args.dry_run {
+            super::org_policy::require_action_policy(
+                &self.ctx,
+                super::org_policy::PolicyCheck::new("skill.project").skill(&args.skill),
+            )?;
+        }
         validate_skill_name(&args.skill).map_err(map_arg)?;
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
@@ -234,6 +240,13 @@ impl App {
         args: &CaptureArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        if !args.dry_run {
+            let mut check = super::org_policy::PolicyCheck::new("skill.capture");
+            if let Some(skill) = args.skill.as_deref() {
+                check = check.skill(skill);
+            }
+            super::org_policy::require_action_policy(&self.ctx, check)?;
+        }
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
         let paths = self.ensure_registry_layout()?;

@@ -696,6 +696,26 @@ pub(crate) fn maybe_autosync_or_queue(
         return Ok(());
     }
 
+    let remote = gitops::remote_url(ctx)
+        .ok()
+        .flatten()
+        .map(|url| crate::commands::org_policy::sync_remote_identity(&url))
+        .unwrap_or_else(|| "origin".to_string());
+    if let Err(err) = crate::commands::org_policy::require_action_policy(
+        ctx,
+        crate::commands::org_policy::PolicyCheck::new("sync.push").sync_remote(remote),
+    ) {
+        if err.code == ErrorCode::PolicyBlocked {
+            meta.sync_state = Some(SyncState::PendingPush);
+            meta.warnings.push(format!(
+                "org policy blocked auto sync; operation retained in registry journal: {}",
+                err.message
+            ));
+            return Ok(());
+        }
+        return Err(err);
+    }
+
     match sync_push_internal(ctx) {
         Ok(_) => {
             meta.sync_state = Some(SyncState::Synced);

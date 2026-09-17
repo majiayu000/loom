@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/381
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Blocked design packet
+Status: Local primitives implemented; mutating commands now enforce org policy when initialized
 Locale: zh-CN
 
 ## Goal

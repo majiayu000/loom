@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use common::{TestDir, run_loom, write_file};
+use common::{TestDir, run_loom, run_loom_with_env, write_file};
 use serde_json::{Value, json};
 
 fn test_actor() -> String {
@@ -261,6 +261,34 @@ fn blocked_skill_denies_and_malformed_policy_fails_closed() {
     assert!(output.status.success(), "policy check should pass: {check}");
     assert_eq!(check["data"]["policy"]["decision"], json!("deny"));
 
+    let (output, blocked_activate) = run_loom(
+        root.path(),
+        &["skill", "activate", "danger", "--agent", "codex"],
+    );
+    assert!(
+        !output.status.success(),
+        "blocked skill activate must fail: {blocked_activate}"
+    );
+    assert_eq!(blocked_activate["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        blocked_activate["error"]["details"]["policy"]["decision"],
+        json!("deny")
+    );
+
+    let (output, request) = run_loom(
+        root.path(),
+        &["approval", "request", "skill.activate", "--skill", "danger"],
+    );
+    assert!(
+        !output.status.success(),
+        "blocked skill must not create an approval request: {request}"
+    );
+    assert_eq!(request["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        request["error"]["details"]["policy"]["decision"],
+        json!("deny")
+    );
+
     let before_roles = read_json(&root.path().join("state/registry/roles.json"));
     write_file(
         &root.path().join("state/registry/org_policy.toml"),
@@ -277,4 +305,111 @@ fn blocked_skill_denies_and_malformed_policy_fails_closed() {
         before_roles,
         "failed policy reads must not rewrite role state"
     );
+}
+
+#[test]
+fn mutating_commands_enforce_org_policy_and_honour_approvals() {
+    let root = TestDir::new("org-policy-enforce");
+    let admin = "policy-admin";
+    let requester = "policy-requester";
+    let source = root.path().join("src-demo");
+    write_file(
+        &source.join("SKILL.md"),
+        "---\nname: demo\ndescription: Use when testing org policy enforcement on skill add.\n---\n# Demo\n",
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("USER", admin)],
+        &["policy", "org", "init", "--bootstrap-admin", admin],
+    );
+    assert!(output.status.success(), "policy init should pass: {env}");
+
+    let (output, blocked) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &[
+            "skill",
+            "add",
+            source.to_str().expect("source path"),
+            "--name",
+            "demo",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "unprivileged add must fail: {blocked}"
+    );
+    assert_eq!(blocked["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        blocked["error"]["details"]["policy"]["decision"],
+        json!("approval_required")
+    );
+    assert!(
+        blocked["error"]["details"]["policy"]["approval_request_command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("approval request skill.add"),
+        "blocked mutation must include approval request command: {blocked}"
+    );
+
+    let (output, preview) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &["skill", "author", "new", "preview-skill", "--dry-run"],
+    );
+    assert!(
+        output.status.success(),
+        "dry-run install must not require org policy write access: {preview}"
+    );
+
+    let (output, request) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &["approval", "request", "skill.add", "--skill", "demo"],
+    );
+    assert!(
+        output.status.success(),
+        "approval request should pass: {request}"
+    );
+    let request_id = request["data"]["request"]["request_id"]
+        .as_str()
+        .expect("request id")
+        .to_string();
+
+    let (output, approved) = run_loom_with_env(
+        root.path(),
+        &[("USER", admin)],
+        &["approval", "approve", &request_id],
+    );
+    assert!(
+        output.status.success(),
+        "admin approve should pass: {approved}"
+    );
+
+    let (output, check) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &["policy", "org", "check", "skill.add", "--skill", "demo"],
+    );
+    assert!(output.status.success(), "policy check should pass: {check}");
+    assert_eq!(check["data"]["policy"]["decision"], json!("allow"));
+    assert_eq!(
+        check["data"]["policy"]["evidence"]["satisfied_approval_request"],
+        json!(request_id)
+    );
+
+    let (output, added) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &[
+            "skill",
+            "add",
+            source.to_str().expect("source path"),
+            "--name",
+            "demo",
+        ],
+    );
+    assert!(output.status.success(), "approved add should pass: {added}");
+    assert!(root.path().join("skills/demo/SKILL.md").exists());
 }

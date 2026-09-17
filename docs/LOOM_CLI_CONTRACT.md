@@ -793,7 +793,7 @@ loom --json --root <root> roles grant <user-or-team> <viewer|author|reviewer|mai
 loom --json --root <root> roles revoke <user-or-team> <viewer|author|reviewer|maintainer|admin>
 ```
 
-First-slice org governance creates Git-tracked policy, role, and approval state. It does not yet enforce org policy inside every mutating command; callers can use `policy org check` and approval events as the audited decision layer until command-wide enforcement lands.
+First-slice org governance creates Git-tracked policy, role, and approval state. When `state/registry/org_policy.toml` exists, mutating lifecycle commands call the same evaluator before writing. Callers can still use `policy org check` and approval events as the audited decision layer. Registries without org policy keep their previous ungoverned write path.
 
 Rules:
 
@@ -806,6 +806,7 @@ Rules:
 7. approve/reject commands require the current local actor to satisfy one of the request's required roles
 8. role grant/revoke require current admin role and revoke must preserve at least one resolved non-team admin
 9. malformed policy, role, or approval state fails closed with `STATE_CORRUPT`
+10. when `state/registry/org_policy.toml` exists, mutating lifecycle commands call the same evaluator and fail with `POLICY_BLOCKED` unless the actor is allowed or a matching approved request exists; dry-run/preview commands are not gated; registries without org policy keep the ungoverned write path; autosync queues `sync.push` when that action is blocked instead of failing the parent mutation
 
 ## Continued contract
 

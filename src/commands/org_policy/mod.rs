@@ -1,11 +1,12 @@
+mod enforce;
 mod state;
 
 use chrono::Utc;
 use serde_json::{Value, json};
 
 use crate::cli::{
-    ApprovalCommand, ApprovalDecisionArgs, ApprovalListArgs, ApprovalRequestArgs,
-    OrgPolicyCheckArgs, OrgPolicyCommand, OrgPolicyInitArgs, RoleGrantArgs, RolesCommand,
+    ApprovalCommand, ApprovalDecisionArgs, ApprovalListArgs, ApprovalRequestArgs, OrgPolicyCommand,
+    OrgPolicyInitArgs, RoleGrantArgs, RolesCommand,
 };
 use crate::envelope::Meta;
 use crate::gitops;
@@ -18,12 +19,15 @@ use super::{App, CommandFailure};
 use state::{
     RoleGrantRecord, RolesFile, append_approval_event, approval_decision_event,
     approval_requested_event, approval_state_json, approval_summary, canonical_action,
-    commit_policy_change, current_actor, default_policy_toml, has_resolved_admin,
+    commit_policy_change, current_actor, default_policy_toml, has_resolved_admin, identity_subject,
     load_approval_states, load_policy_document, load_roles, org_policy_digest_json,
     org_policy_path, policy_blocked, policy_json, required_roles_for_action, roles_for_subject,
     roles_json, roles_path, save_roles, shell_arg, subject_for_action, subject_has_role,
     validate_request_id, validate_role, validate_subject, write_string,
 };
+
+pub(crate) use enforce::{require_action_policy, require_command_policy};
+pub(crate) use state::{PolicyCheck, sync_remote_identity};
 
 impl App {
     pub fn cmd_policy_org(
@@ -35,7 +39,7 @@ impl App {
             OrgPolicyCommand::Init(args) => self.cmd_policy_org_init(args, request_id),
             OrgPolicyCommand::Show => self.cmd_policy_org_show(),
             OrgPolicyCommand::Check(args) => {
-                let decision = evaluate_org_policy(&self.ctx, args)?;
+                let decision = evaluate_org_policy(&self.ctx, &PolicyCheck::from_args(args))?;
                 Ok((json!({"policy": decision}), Meta::default()))
             }
         }
@@ -230,12 +234,16 @@ impl App {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
         let paths = self.ensure_registry_layout()?;
-        let check = OrgPolicyCheckArgs {
+        let check = PolicyCheck {
             action: args.action.clone(),
             skill: args.skill.clone(),
             provider: args.provider.clone(),
             sync_remote: args.sync_remote.clone(),
             agent: args.agent.clone(),
+            trash_id: None,
+            target_id: None,
+            binding_id: None,
+            skillset: None,
         };
         let decision = evaluate_org_policy(&self.ctx, &check)?;
         if decision.decision == "deny" {
@@ -373,7 +381,7 @@ impl App {
 
 fn evaluate_org_policy(
     ctx: &crate::state::AppContext,
-    args: &OrgPolicyCheckArgs,
+    args: &PolicyCheck,
 ) -> std::result::Result<state::OrgPolicyDecision, CommandFailure> {
     load_policy_document(ctx)?;
     let action = canonical_action(&args.action)?;
@@ -408,6 +416,15 @@ fn evaluate_org_policy(
             reasons
                 .push("blocked or quarantined skill cannot be approved by org policy".to_string());
         }
+    }
+    if decision == "approval_required"
+        && let Some(request_id) = matching_approved_request(ctx, &action, &subject)?
+    {
+        decision = "allow".to_string();
+        reasons.push(format!(
+            "approved request '{request_id}' satisfies org policy for this action and subject"
+        ));
+        evidence["satisfied_approval_request"] = json!(request_id);
     }
     let required_approvals = required_roles
         .iter()
@@ -444,35 +461,49 @@ fn evaluate_org_policy(
     })
 }
 
-pub(crate) fn require_team_install_policy(
+fn matching_approved_request(
     ctx: &crate::state::AppContext,
-    skill: &str,
-    has_projections: bool,
+    action: &str,
+    subject: &Value,
+) -> std::result::Result<Option<String>, CommandFailure> {
+    let wanted = identity_subject(subject);
+    Ok(load_approval_states(ctx)?
+        .into_iter()
+        .find(|request| {
+            request.status == "approved"
+                && request.action == action
+                && identity_subject(&request.subject) == wanted
+        })
+        .map(|request| request.request_id))
+}
+
+pub(crate) fn require_policy_checks(
+    ctx: &crate::state::AppContext,
+    checks: &[PolicyCheck],
 ) -> std::result::Result<(), CommandFailure> {
     if !org_policy_path(ctx).try_exists().map_err(map_io)? {
         return Ok(());
     }
-    for action in if has_projections {
-        vec!["skill.install", "skill.project"]
-    } else {
-        vec!["skill.install"]
-    } {
-        let decision = evaluate_org_policy(
-            ctx,
-            &OrgPolicyCheckArgs {
-                action: action.into(),
-                skill: Some(skill.into()),
-                provider: None,
-                sync_remote: None,
-                agent: None,
-            },
-        )?;
+    for check in checks {
+        let decision = evaluate_org_policy(ctx, check)?;
         if decision.decision != "allow" {
             return Err(policy_blocked(
-                "team install requires the existing organization policy workflow",
+                "org policy blocked this mutation",
                 json!({"policy": decision}),
             ));
         }
     }
     Ok(())
+}
+
+pub(crate) fn require_team_install_policy(
+    ctx: &crate::state::AppContext,
+    skill: &str,
+    has_projections: bool,
+) -> std::result::Result<(), CommandFailure> {
+    let mut checks = vec![PolicyCheck::new("skill.install").skill(skill)];
+    if has_projections {
+        checks.push(PolicyCheck::new("skill.project").skill(skill));
+    }
+    require_policy_checks(ctx, &checks)
 }

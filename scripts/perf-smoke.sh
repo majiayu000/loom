@@ -4,11 +4,44 @@ set -euo pipefail
 bin="${1:-target/release/loom}"
 if [[ ! -x "$bin" ]]; then
   default_rustflags="-Cllvm-args=-enable-machine-outliner=always"
-  if [[ "$(uname -s)" == "Linux" ]]; then
-    default_rustflags+=" -Clink-arg=-Wl,--no-eh-frame-hdr"
+  if [[ "$(uname -sm)" == "Linux x86_64" ]]; then
+    default_rustflags+=" -Cforce-frame-pointers=yes -Clink-arg=-Wl,--icf=all,-z,pack-relative-relocs"
   fi
   perf_rustflags="${LOOM_PERF_RUSTFLAGS:-$default_rustflags}"
   RUSTFLAGS="$perf_rustflags ${RUSTFLAGS:-}" cargo build --release --locked
+fi
+
+# Exercise a real panic in the shipped binary, rather than only checking ELF
+# section names. /dev/full fails every stdout write without touching user data.
+if [[ "$(uname -s)" == "Linux" ]]; then
+  python3 - "$bin" <<'PY'
+import os
+from pathlib import Path
+import re
+import resource
+import signal
+import subprocess
+import sys
+import tempfile
+
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+with tempfile.TemporaryDirectory(prefix="loom-backtrace-") as root:
+    with open("/dev/full", "wb") as output:
+        result = subprocess.run(
+            [str(Path(sys.argv[1]).resolve()), "--root", root, "--json", "workspace", "status"],
+            stdout=output,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, "RUST_BACKTRACE": "full"},
+            timeout=30,
+        )
+frames = re.findall(r"^\s+\d+:\s+0x[0-9a-f]+", result.stderr, re.MULTILINE)
+if (result.returncode != -signal.SIGABRT
+        or "failed printing to stdout" not in result.stderr
+        or len(frames) < 2):
+    sys.exit(f"release crash backtrace missing or probe failed: {result.stderr}")
+print(f"release crash backtrace: {len(frames)} frames")
+PY
 fi
 
 # Hard ceiling: 6297 KiB. The durable plan/apply protocol, offline eval

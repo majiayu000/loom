@@ -117,7 +117,7 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            rustflags: -Cllvm-args=-enable-machine-outliner=always -Clink-arg=-Wl,--no-eh-frame-hdr
+            rustflags: -Cllvm-args=-enable-machine-outliner=always -Cforce-frame-pointers=yes -Clink-arg=-Wl,--icf=all,-z,pack-relative-relocs
           - os: macos-15-intel
             target: x86_64-apple-darwin
             rustflags: ""

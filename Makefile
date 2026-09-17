@@ -3,8 +3,9 @@ SHELL := /usr/bin/env bash
 PANEL_DIR := panel
 PANEL_INSTALL_STAMP := $(PANEL_DIR)/node_modules/.bun-install.stamp
 LOOM_CONTRACT_DIFF_BASE ?= $(shell git merge-base HEAD origin/main 2>/dev/null)
-ifeq ($(shell uname -s),Linux)
-LOOM_PERF_RUSTFLAGS ?= -Cllvm-args=-enable-machine-outliner=always -Clink-arg=-Wl,--no-eh-frame-hdr
+# Keep unwind tables and their lookup header available for crash backtraces.
+ifeq ($(shell uname -sm),Linux x86_64)
+LOOM_PERF_RUSTFLAGS ?= -Cllvm-args=-enable-machine-outliner=always -Cforce-frame-pointers=yes -Clink-arg=-Wl,--icf=all,-z,pack-relative-relocs
 else
 LOOM_PERF_RUSTFLAGS ?= -Cllvm-args=-enable-machine-outliner=always
 endif

@@ -5,16 +5,34 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+## [0.1.9] - 2026-09-17
+
+### Added
+
+- When `org_policy.toml` exists, mutating lifecycle commands now call the same
+  org-policy evaluator and fail with `POLICY_BLOCKED` unless the actor is
+  allowed or a matching approved request exists. Approvals bind to action,
+  identity, command inputs, and skill source digest; `use --apply` preflights
+  activate, project, target, and binding actions.
 - CLI contract 2.1.0 connects the Panel and desktop skill workbench to 18 existing operations, with explicit preview and confirmation for model calls and applicable writes.
 - GitHub catalog search now uses authenticated `gh`; remote previews inspect temporary checkouts and return an immutable locator without installing or executing skills.
-- Repair release-contract fixtures and the missing team-install command example exposed by cross-platform CI.
-
 - Add deterministic Codex/Claude plugin, npm, and GitHub Release asset bundles with native metadata verification.
 - Turn instruction migration plans into reviewable extraction patches that reuse guarded apply while preserving source instructions.
 - Add new-directory configuration import/export and approved local Codespaces/Remote setup apply without running scripts or connecting to remote hosts.
-
 - CLI contract 2.0.0 adds explicit Codex CLI authoring, reviewed workflow apply with durable node outcomes and Git checkpoints, and skillset task comparisons with no-skill or single-skill baselines. Real model access remains explicit; deterministic process tests are not live model quality evidence.
 - Workflow creation from a skillset now persists a read-only serial snapshot with task and previous-node result inputs. Real Codex smoke acceptance covers authoring, workflow handoff, workspace writes and checkpoints, and bundle/no-skill comparison; see `docs/plan/codex-cli-verification.md`.
+- Add a constrained desktop shell, Panel team workspace, and private cloud team registry for installing and updating team artifacts with durable provenance.
+
+### Changed
+
+- The Linux x86_64 release binary keeps working crash backtraces while staying
+  inside the existing size budget.
+- macOS desktop tag builds now require Developer ID signing and notarization,
+  using bundle id `com.starlight.loom`.
+
+### Fixed
+
+- Repair release-contract fixtures and the missing team-install command example exposed by cross-platform CI.
 
 ## [0.1.8] - 2026-08-20
 
@@ -212,6 +230,7 @@ archives, checksums, and provenance details on GitHub Releases.
 
 - Initial public release archives for Loom.
 
+[0.1.9]: https://github.com/majiayu000/loom/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/majiayu000/loom/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/majiayu000/loom/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/majiayu000/loom/compare/v0.1.5...v0.1.6

@@ -149,8 +149,8 @@ requests, not just string equality, once org policy is enabled. A matching
 approval must share action, identity subject, `command_inputs_digest`, and
 skill `source_digest` when the subject names a skill. Registry `HEAD` is
 recorded as evidence but is not part of the match, because committing the
-approval itself moves `HEAD`. `use --apply` expands `target.add` and
-`workspace.binding.add` per selected agent.
+approval itself moves `HEAD`. `use --apply` expands `skill.activate`,
+`target.add`, and `workspace.binding.add` per selected agent.
 
 ## Approval Store
 

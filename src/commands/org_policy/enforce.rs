@@ -14,9 +14,9 @@ use crate::types::ErrorCode;
 
 use super::super::CommandFailure;
 use super::super::helpers::map_io;
-use super::super::skill_authoring::sha256_digest;
+use super::super::skill_authoring::{sha256_digest, validate_patch_id};
+use super::check::PolicyCheck;
 use super::require_policy_checks;
-use super::state::PolicyCheck;
 
 pub(crate) fn require_command_policy(
     ctx: &AppContext,
@@ -40,10 +40,15 @@ fn governed_checks(
     Ok(match command {
         Command::Monitor(_) => vec![PolicyCheck::new("skill.monitor_observed")],
         Command::Use(args) if args.apply => {
-            let mut checks = vec![
-                PolicyCheck::new("skill.activate").skill(&args.skill),
-                PolicyCheck::new("skill.project").skill(&args.skill),
-            ];
+            let mut checks = Vec::new();
+            for agent in &args.agents {
+                checks.push(
+                    PolicyCheck::new("skill.activate")
+                        .skill(&args.skill)
+                        .agent(agent.as_str()),
+                );
+            }
+            checks.push(PolicyCheck::new("skill.project").skill(&args.skill));
             for agent in &args.agents {
                 checks.push(PolicyCheck::new("target.add").agent(agent.as_str()));
                 checks.push(PolicyCheck::new("workspace.binding.add").agent(agent.as_str()));
@@ -248,6 +253,7 @@ fn apply_patch_checks(
     ctx: &AppContext,
     args: &SkillApplyPatchArgs,
 ) -> std::result::Result<Vec<PolicyCheck>, CommandFailure> {
+    validate_patch_id(&args.patch_id)?;
     if let Some(key) = args.idempotency_key.as_deref()
         && apply_record_exists(ctx, key)
     {

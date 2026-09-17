@@ -483,6 +483,24 @@ fn mutating_commands_enforce_org_policy_and_honour_approvals() {
         json!("demo")
     );
 
+    let (output, bad_patch) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &[
+            "skill",
+            "author",
+            "apply-patch",
+            "../secret",
+            "--idempotency-key",
+            "policy-test",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "escaped patch id must fail before reading: {bad_patch}"
+    );
+    assert_eq!(bad_patch["error"]["code"], json!("ARG_INVALID"));
+
     let (output, activate_request) = run_loom_with_env(
         root.path(),
         &[("USER", requester)],
@@ -532,6 +550,21 @@ fn mutating_commands_enforce_org_policy_and_honour_approvals() {
         "activate policy check should pass: {activate_check}"
     );
     assert_eq!(activate_check["data"]["policy"]["decision"], json!("allow"));
+
+    let (output, use_after_activate) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &["use", "demo", "--agents", "codex", "--apply"],
+    );
+    assert!(
+        !output.status.success(),
+        "activate approval must not skip later use --apply writes: {use_after_activate}"
+    );
+    assert_eq!(use_after_activate["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        use_after_activate["error"]["details"]["policy"]["action"],
+        json!("skill.project")
+    );
 
     write_file(
         &root.path().join("skills/demo/SKILL.md"),

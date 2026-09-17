@@ -1,3 +1,4 @@
+mod check;
 mod enforce;
 mod state;
 
@@ -16,18 +17,21 @@ use crate::types::ErrorCode;
 use super::helpers::{map_io, map_lock};
 use super::skill_safety::trust_metadata_for_skill;
 use super::{App, CommandFailure};
+use check::{
+    canonical_action, identity_subject, required_roles_for_action, subject_for_action,
+};
 use state::{
     RoleGrantRecord, RolesFile, append_approval_event, approval_decision_event,
-    approval_requested_event, approval_state_json, approval_summary, canonical_action,
-    commit_policy_change, current_actor, default_policy_toml, has_resolved_admin, identity_subject,
-    load_approval_states, load_policy_document, load_roles, org_policy_digest_json,
-    org_policy_path, policy_blocked, policy_json, required_roles_for_action, roles_for_subject,
-    roles_json, roles_path, save_roles, shell_arg, subject_for_action, subject_has_role,
-    validate_request_id, validate_role, validate_subject, write_string,
+    approval_requested_event, approval_state_json, approval_summary, commit_policy_change,
+    current_actor, default_policy_toml, has_resolved_admin, load_approval_states,
+    load_policy_document, load_roles, org_policy_digest_json, org_policy_path, policy_blocked,
+    policy_json, roles_for_subject, roles_json, roles_path, save_roles, shell_arg,
+    subject_has_role, validate_request_id, validate_role, validate_subject, write_string,
 };
 
+pub(crate) use check::PolicyCheck;
 pub(crate) use enforce::{require_action_policy, require_command_policy};
-pub(crate) use state::{PolicyCheck, sync_remote_identity};
+pub(crate) use state::sync_remote_identity;
 
 impl App {
     pub fn cmd_policy_org(

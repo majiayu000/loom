@@ -539,7 +539,7 @@ pub(crate) fn sha256_digest(bytes: &[u8]) -> String {
     format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
-pub(super) fn validate_patch_id(patch_id: &str) -> std::result::Result<(), CommandFailure> {
+pub(crate) fn validate_patch_id(patch_id: &str) -> std::result::Result<(), CommandFailure> {
     if !patch_id.starts_with("skillpatch_") {
         return Err(CommandFailure::new(
             ErrorCode::ArgInvalid,

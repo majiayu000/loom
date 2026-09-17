@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/381
 Product spec: `specs/GH381/product.md`
-Status: Blocked design packet
+Status: Local primitives implemented; mutating commands now enforce org policy when initialized
 
 ## Current State
 
@@ -145,7 +145,12 @@ state. A partial allow must not let earlier writes land before a later denied
 write is discovered.
 
 Approval tokens supplied to apply commands must be validated against approved
-requests, not just string equality, once org policy is enabled.
+requests, not just string equality, once org policy is enabled. A matching
+approval must share action, identity subject, `command_inputs_digest`, and
+skill `source_digest` when the subject names a skill. Registry `HEAD` is
+recorded as evidence but is not part of the match, because committing the
+approval itself moves `HEAD`. `use --apply` expands `skill.activate`,
+`target.add`, and `workspace.binding.add` per selected agent.
 
 ## Approval Store
 

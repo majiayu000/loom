@@ -279,6 +279,10 @@ impl App {
         skill: &WatchSkillPlan,
         request_id: &str,
     ) -> std::result::Result<serde_json::Value, CommandFailure> {
+        super::org_policy::require_action_policy(
+            &self.ctx,
+            super::org_policy::PolicyCheck::new("skill.watch").skill(&skill.skill),
+        )?;
         stage_watch_paths(&self.ctx, &skill.paths)?;
         let changed = has_staged_changes_for_paths(&self.ctx, &skill.paths)?;
         if !changed {

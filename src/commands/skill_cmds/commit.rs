@@ -9,6 +9,15 @@ impl App {
         args: &SkillCommitArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let action = if args.from_projection {
+            "skill.capture"
+        } else {
+            "skill.save"
+        };
+        super::super::org_policy::require_action_policy(
+            &self.ctx,
+            super::super::org_policy::PolicyCheck::new(action).skill(&args.skill),
+        )?;
         validate_skill_name(&args.skill).map_err(map_arg)?;
         self.ensure_write_repo_ready()?;
         if args.from_source {

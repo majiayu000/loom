@@ -8,14 +8,14 @@ use serde_json::{Value, json};
 use toml_edit::DocumentMut;
 use uuid::Uuid;
 
-use crate::cli::{ApprovalDecisionArgs, ApprovalRequestArgs, OrgPolicyCheckArgs};
+use crate::cli::{ApprovalDecisionArgs, ApprovalRequestArgs};
 use crate::gitops;
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
 use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryStatePaths};
 use crate::types::ErrorCode;
 
-use super::super::helpers::{map_git, map_io, map_registry_state, validate_skill_name};
+use super::super::helpers::{map_git, map_io, map_registry_state};
 use super::super::projections::record_registry_operation;
 use super::super::{CommandFailure, redact_sensitive_string};
 
@@ -472,6 +472,14 @@ pub(super) fn validate_role(role: &str) -> std::result::Result<(), CommandFailur
     }
 }
 
+pub(crate) fn sync_remote_identity(raw: &str) -> String {
+    if validate_subject(raw).is_ok() {
+        raw.to_string()
+    } else {
+        "origin".to_string()
+    }
+}
+
 pub(super) fn validate_subject(subject: &str) -> std::result::Result<(), CommandFailure> {
     if subject.is_empty() || subject.len() > 128 {
         return Err(CommandFailure::new(
@@ -511,108 +519,6 @@ pub(super) fn has_resolved_admin(roles: &RolesFile) -> bool {
         .grants
         .iter()
         .any(|grant| grant.role == "admin" && !grant.subject.starts_with("team:"))
-}
-
-pub(super) fn canonical_action(action: &str) -> std::result::Result<String, CommandFailure> {
-    let normalized = match action {
-        "workspace.remote" => "workspace.remote.set",
-        other => other,
-    };
-    if required_roles_for_action(normalized).is_empty() {
-        return Err(CommandFailure::new(
-            ErrorCode::ArgInvalid,
-            format!("unsupported org policy action '{action}'"),
-        ));
-    }
-    Ok(normalized.to_string())
-}
-
-pub(super) fn required_roles_for_action(action: &str) -> Vec<String> {
-    let role = match action {
-        "skill.author.new"
-        | "skill.save"
-        | "skill.capture"
-        | "skill.watch"
-        | "skill.snapshot"
-        | "skill.add"
-        | "skill.install"
-        | "skill.import_observed"
-        | "skill.monitor_observed"
-        | "skill.trash.add"
-        | "skill.trash.restore" => "author",
-        "skill.activate" | "skill.deactivate" | "skill.project" => "reviewer",
-        "skill.release"
-        | "skill.rollback"
-        | "skill.trust.update"
-        | "skill.trust"
-        | "skill.quarantine"
-        | "skill.provenance.refresh"
-        | "skill.trash.purge"
-        | "skill.orphan.clean"
-        | "provider.add"
-        | "provider.remove"
-        | "target.add"
-        | "target.remove"
-        | "workspace.remote.set"
-        | "workspace.binding.add"
-        | "workspace.binding.remove"
-        | "sync.pull"
-        | "sync.push"
-        | "sync.replay"
-        | "ops.retry"
-        | "ops.purge"
-        | "ops.history.repair" => "maintainer",
-        "roles.grant" | "roles.revoke" | "policy.org.init" => "admin",
-        _ => return Vec::new(),
-    };
-    vec![role.to_string()]
-}
-
-pub(super) fn subject_for_action(
-    action: &str,
-    args: &OrgPolicyCheckArgs,
-) -> std::result::Result<Value, CommandFailure> {
-    let mut subject = serde_json::Map::new();
-    if action.starts_with("skill.") {
-        let Some(skill) = args.skill.as_deref() else {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                format!("action '{action}' requires --skill"),
-            ));
-        };
-        validate_skill_name(skill).map_err(|err| {
-            CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                format!("invalid skill subject: {err}"),
-            )
-        })?;
-        subject.insert("skill".to_string(), json!(skill));
-    }
-    if action.starts_with("provider.") {
-        let Some(provider) = args.provider.as_deref() else {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                format!("action '{action}' requires --provider"),
-            ));
-        };
-        validate_subject(provider)?;
-        subject.insert("provider".to_string(), json!(provider));
-    }
-    if action.starts_with("sync.") {
-        let Some(remote) = args.sync_remote.as_deref() else {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                format!("action '{action}' requires --sync-remote"),
-            ));
-        };
-        validate_subject(remote)?;
-        subject.insert("sync_remote".to_string(), json!(remote));
-    }
-    if let Some(agent) = args.agent.as_deref() {
-        validate_subject(agent)?;
-        subject.insert("agent".to_string(), json!(agent));
-    }
-    Ok(Value::Object(subject))
 }
 
 pub(super) fn org_policy_digest_json(value: &Value) -> String {

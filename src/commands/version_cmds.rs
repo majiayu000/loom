@@ -29,6 +29,15 @@ impl App {
         args: &ReleaseArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let action = if args.anchor || args.version.is_none() {
+            "skill.snapshot"
+        } else {
+            "skill.release"
+        };
+        super::org_policy::require_action_policy(
+            &self.ctx,
+            super::org_policy::PolicyCheck::new(action).skill(&args.skill),
+        )?;
         if args.anchor || args.version.is_none() {
             return self.cmd_release_anchor(args, request_id);
         }
@@ -146,6 +155,12 @@ impl App {
         args: &RollbackArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        if !args.dry_run {
+            super::org_policy::require_action_policy(
+                &self.ctx,
+                super::org_policy::PolicyCheck::new("skill.rollback").skill(&args.skill),
+            )?;
+        }
         validate_skill_name(&args.skill).map_err(map_arg)?;
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;

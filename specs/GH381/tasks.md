@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/381
 Product spec: `specs/GH381/product.md`
 Tech spec: `specs/GH381/tech.md`
-Status: Blocked design packet
+Status: Local primitives implemented; mutating commands now enforce org policy when initialized
 
 ## Scope For First PR
 
@@ -21,12 +21,12 @@ hosted RBAC service, replacement for Git hosting permissions, local safety gate 
 
 ## Tasks
 
-- [ ] `SP381-T001` Owner: policy-state | Done when: org policy and role state files are deterministic, human-reviewable, first-admin bootstrap is explicit, existing policy init cannot reset admins without admin policy, and malformed state fails closed | Verify: `cargo test --test org_policy`
-- [ ] `SP381-T002` Owner: policy-cli | Done when: `policy org init/show/check` returns allow/deny/approval_required with roles, reasons, evidence, and approval commands | Verify: `cargo test --test org_policy`
-- [ ] `SP381-T003` Owner: approval-store | Done when: approval request/list/approve/reject uses append-only audited events with source/registry/command-input evidence, required roles, approval requirements, satisfied approval tokens, redacted comments, and policy decision digest, checks approver roles before decision events, and computes terminal current request state deterministically | Verify: `cargo test --test org_policy`
-- [ ] `SP381-T004` Owner: roles | Done when: roles list/grant/revoke validates role names, requires admin policy for grant/revoke, preserves at least one resolved admin, and exposes resolved role grants in JSON | Verify: `cargo test --test org_policy`
-- [ ] `SP381-T005` Owner: enforcement | Done when: skill install/add/import-observed/monitor-observed/new/save/capture/watch/snapshot/provenance refresh/trash/orphan clean, project, activate/deactivate, release/rollback, trust/quarantine, provider add/remove, target add/remove, workspace remote/binding updates, sync pull/push/replay, ops retry/purge/history repair, autosync, and composite apply mutations call org policy before writing | Verify: `cargo test --test skill_policy && cargo test --test agent_plan_apply`
-- [ ] `SP381-T006` Owner: safety | Done when: org policy approval cannot bypass local safety gates and blocked/quarantined skills remain denied | Verify: `cargo test --test skill_policy`
+- [x] `SP381-T001` Owner: policy-state | Done when: org policy and role state files are deterministic, human-reviewable, first-admin bootstrap is explicit, existing policy init cannot reset admins without admin policy, and malformed state fails closed | Verify: `cargo test --test org_policy`
+- [x] `SP381-T002` Owner: policy-cli | Done when: `policy org init/show/check` returns allow/deny/approval_required with roles, reasons, evidence, and approval commands | Verify: `cargo test --test org_policy`
+- [x] `SP381-T003` Owner: approval-store | Done when: approval request/list/approve/reject uses append-only audited events with source/registry/command-input evidence, required roles, approval requirements, satisfied approval tokens, redacted comments, and policy decision digest, checks approver roles before decision events, and computes terminal current request state deterministically | Verify: `cargo test --test org_policy`
+- [x] `SP381-T004` Owner: roles | Done when: roles list/grant/revoke validates role names, requires admin policy for grant/revoke, preserves at least one resolved admin, and exposes resolved role grants in JSON | Verify: `cargo test --test org_policy`
+- [x] `SP381-T005` Owner: enforcement | Done when: skill install/add/import-observed/monitor-observed/new/save/capture/watch/snapshot/provenance refresh/trash/orphan clean, project, activate/deactivate, release/rollback, trust/quarantine, provider add/remove, target add/remove, workspace remote/binding updates, sync pull/push/replay, ops retry/purge/history repair, autosync, and composite apply mutations call org policy before writing | Verify: `cargo test --test org_policy --test skill_policy && cargo test --test agent_plan_apply`
+- [x] `SP381-T006` Owner: safety | Done when: org policy approval cannot bypass local safety gates and blocked/quarantined skills remain denied | Verify: `cargo test --test skill_policy`
 - [ ] `SP381-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 
 ### SP381-T1: Add Org Policy State
@@ -135,8 +135,8 @@ Done when:
   projection, registry, and sync writes before any mutation lands.
 - Approval-required actions return `POLICY_BLOCKED` with approval request
   command.
-- Approved requests unblock only the matching action, full action-specific
-  subject, and evidence digest.
+- Approved requests unblock only the matching action, identity subject,
+  `command_inputs_digest`, and skill `source_digest` when present.
 - Existing local policy gates still run.
 
 Verify:

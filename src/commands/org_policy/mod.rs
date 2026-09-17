@@ -17,9 +17,7 @@ use crate::types::ErrorCode;
 use super::helpers::{map_io, map_lock};
 use super::skill_safety::trust_metadata_for_skill;
 use super::{App, CommandFailure};
-use check::{
-    canonical_action, identity_subject, required_roles_for_action, subject_for_action,
-};
+use check::{canonical_action, identity_subject, required_roles_for_action, subject_for_action};
 use state::{
     RoleGrantRecord, RolesFile, append_approval_event, approval_decision_event,
     approval_requested_event, approval_state_json, approval_summary, commit_policy_change,

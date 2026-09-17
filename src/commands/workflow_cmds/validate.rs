@@ -148,7 +148,10 @@ fn topological_order(
         .nodes
         .iter()
         .map(|node| (node.id.as_str(), 0usize))
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
     let mut children: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for edge in &workflow.edges {
         *indegree.entry(edge.to.as_str()).or_insert(0) += 1;
@@ -161,7 +164,10 @@ fn topological_order(
     let mut ready = indegree
         .iter()
         .filter_map(|(node, count)| (*count == 0).then_some(*node))
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     let mut out = Vec::with_capacity(workflow.nodes.len());
     while let Some(node) = ready.pop_first() {
         out.push(node.to_string());
@@ -202,7 +208,10 @@ fn workflow_depth(workflow: &WorkflowRecord, order: &[String]) -> usize {
         .nodes
         .iter()
         .map(|node| (node.id.as_str(), 1usize))
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
     for node in order {
         let current = *depth.get(node.as_str()).unwrap_or(&1);
         if let Some(next) = children.get(node.as_str()) {
@@ -219,11 +228,13 @@ fn validate_required_outputs(
     workflow: &WorkflowRecord,
     order: &[String],
 ) -> std::result::Result<(), CommandFailure> {
-    let mut available = workflow
-        .external_inputs
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
+    let mut available = workflow.external_inputs.iter().map(String::as_str).fold(
+        BTreeSet::new(),
+        |mut entries, value| {
+            entries.insert(value);
+            entries
+        },
+    );
     for node_id in order {
         let node = workflow_node(workflow, node_id)?;
         for required in &node.requires {

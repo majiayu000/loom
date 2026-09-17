@@ -234,14 +234,17 @@ pub(super) fn roles_json(roles: &RolesFile) -> Value {
             .push(grant.role.clone());
     }
     for roles in by_subject.values_mut() {
-        roles.sort_by_key(|role| role_rank(role).unwrap_or(0));
+        roles.sort_by_cached_key(|role| role_rank(role).unwrap_or(0));
         roles.dedup();
     }
     json!({
         "path": ROLES_REL,
         "grants": roles.grants,
         "by_subject": by_subject,
-        "unresolved_teams": roles.grants.iter().filter(|grant| grant.subject.starts_with("team:")).map(|grant| grant.subject.clone()).collect::<BTreeSet<_>>(),
+        "unresolved_teams": roles.grants.iter().filter(|grant| grant.subject.starts_with("team:")).map(|grant| grant.subject.clone()).fold(BTreeSet::new(), |mut entries, value| {
+                entries.insert(value);
+                entries
+            }),
     })
 }
 

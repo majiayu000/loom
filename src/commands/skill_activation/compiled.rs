@@ -97,13 +97,13 @@ impl App {
             targets.targets.push(resolved.target.clone());
             targets
                 .targets
-                .sort_by(|left, right| left.target_id.cmp(&right.target_id));
+                .sort_by_cached_key(|entry| entry.target_id.clone());
         }
         if resolved.binding_is_new {
             bindings.bindings.push(resolved.binding.clone());
             bindings
                 .bindings
-                .sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
+                .sort_by_cached_key(|entry| entry.binding_id.clone());
         }
 
         let rule = RegistryBindingRule {

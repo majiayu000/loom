@@ -335,7 +335,10 @@ fn append_missing_operations(operations: &mut Vec<Value>, extra_operations: &[Va
                 .and_then(Value::as_str)
                 .map(str::to_string)
         })
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     for operation in extra_operations {
         if let Some(op_id) = operation.get("op_id").and_then(Value::as_str)
             && seen.insert(op_id.to_string())

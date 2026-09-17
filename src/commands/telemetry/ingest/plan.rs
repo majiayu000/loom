@@ -114,7 +114,10 @@ pub(super) fn preview_dedupe(
         .events
         .into_iter()
         .map(|entry| entry.event.event_id)
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     plan.matched.clear();
     plan.unmatched.clear();
     for source in &plan.sources {

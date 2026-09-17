@@ -78,10 +78,13 @@ fn request_scope_matches_plan(scope: &ConvergenceRequestScope, plan: &Value) -> 
     let planned_agents = plan["projections"]
         .as_array()
         .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item["agent"].as_str())
-                .collect::<BTreeSet<_>>()
+            items.iter().filter_map(|item| item["agent"].as_str()).fold(
+                BTreeSet::new(),
+                |mut entries, value| {
+                    entries.insert(value);
+                    entries
+                },
+            )
         })
         .unwrap_or_default();
     let resolved_agent = scope.agent.as_deref().or_else(|| {

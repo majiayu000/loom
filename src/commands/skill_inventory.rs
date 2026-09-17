@@ -205,13 +205,19 @@ fn add_registry_skill_rows(snapshot: &RegistrySnapshot, rows: &mut BTreeMap<Stri
         .targets
         .iter()
         .map(|target| (target.target_id.as_str(), target))
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
     let bindings = snapshot
         .bindings
         .bindings
         .iter()
         .map(|binding| (binding.binding_id.as_str(), binding))
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
 
     for rule in &snapshot.rules.rules {
         let row = skill_row(rows, &rule.skill_id);
@@ -715,7 +721,10 @@ pub(crate) fn tokenize(query: &str) -> Vec<String> {
         .map(str::trim)
         .filter(|token| !token.is_empty())
         .map(str::to_ascii_lowercase)
-        .collect::<BTreeSet<_>>()
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        })
         .into_iter()
         .collect::<Vec<_>>();
     if tokens.is_empty() {

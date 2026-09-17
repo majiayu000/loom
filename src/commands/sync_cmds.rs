@@ -295,11 +295,13 @@ fn sync_push_internal_with_rebase(
     )
     .map_err(map_git)?;
     let operation_report = ctx.read_registry_ops_report().map_err(map_io)?;
-    let queued_ids = operation_report
-        .ops
-        .iter()
-        .map(|op| op.op_id.clone())
-        .collect::<BTreeSet<_>>();
+    let queued_ids = operation_report.ops.iter().map(|op| op.op_id.clone()).fold(
+        BTreeSet::new(),
+        |mut entries, value| {
+            entries.insert(value);
+            entries
+        },
+    );
     let remote_main_exists =
         gitops::fetch_origin_main_if_present(ctx).map_err(map_remote_unreachable)?;
     let remote_history_exists =

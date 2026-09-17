@@ -184,7 +184,7 @@ fn actionable_registry_ops(
             }
         })
         .collect::<Vec<_>>();
-    ops.sort_by_key(|op| op.created_at);
+    ops.sort_by_cached_key(|op| op.created_at);
     (ops, local_journal_events)
 }
 

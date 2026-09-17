@@ -28,7 +28,9 @@ pub(crate) fn planned_record_files(
         .sources
         .retain(|item| item.skill_id != record.skill_id);
     sources.sources.push(record);
-    sources.sources.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
+    sources
+        .sources
+        .sort_by_cached_key(|entry| entry.skill_id.clone());
     Ok((
         serde_json::to_string_pretty(&sources)? + "\n",
         serde_json::to_string_pretty(&lock)? + "\n",

@@ -66,7 +66,7 @@ pub(super) fn save_providers(
     let mut providers = providers.clone();
     providers
         .providers
-        .sort_by(|left, right| left.id.cmp(&right.id));
+        .sort_by_cached_key(|entry| entry.id.clone());
     let path = providers_path(ctx);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(map_io)?;

@@ -304,7 +304,13 @@ fn validate_approvals(
     provided: &[String],
 ) -> std::result::Result<(), CommandFailure> {
     let required = required_approvals(plan);
-    let provided = provided.iter().cloned().collect::<BTreeSet<_>>();
+    let provided = provided
+        .iter()
+        .cloned()
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     let missing = required
         .iter()
         .filter(|approval| !provided.contains(*approval))

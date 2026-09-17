@@ -85,10 +85,13 @@ impl App {
                 !projections.is_empty(),
             )?;
         }
-        let visibility_agents = projections
-            .iter()
-            .map(|effect| effect.agent.clone())
-            .collect::<BTreeSet<_>>();
+        let visibility_agents = projections.iter().map(|effect| effect.agent.clone()).fold(
+            BTreeSet::new(),
+            |mut entries, value| {
+                entries.insert(value);
+                entries
+            },
+        );
         let resolved_visibility_agent =
             args.agent
                 .map(|agent| agent.as_str().to_string())
@@ -479,7 +482,10 @@ fn resolve_input_conflicts(
     let dirty_digests = dirty
         .iter()
         .filter_map(|projection| projection.live_tree_digest.as_deref())
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     if dirty_digests.len() > 1 {
         conflicts.push(ConvergenceInputConflict {
             code: "DIVERGENT_PROJECTION_INPUTS".to_string(),

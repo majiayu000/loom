@@ -380,7 +380,7 @@ fn collect_regular_files(
         .map_err(map_io)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(map_io)?;
-    entries.sort_by_key(|entry| entry.path());
+    entries.sort_by_cached_key(|entry| entry.path());
     for entry in entries {
         let path = entry.path();
         if path.components().any(|component| {
@@ -501,7 +501,13 @@ fn verify_manifest_entries(
         expected.insert(file.archive_path.clone());
         verify_entry_digest(entries, &file.archive_path, &file.content_digest)?;
     }
-    let actual = entries.keys().cloned().collect::<BTreeSet<_>>();
+    let actual = entries
+        .keys()
+        .cloned()
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     if actual != expected {
         return Err(invalid_artifact(
             "provision tar artifact entries do not match manifest",

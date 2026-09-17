@@ -22,7 +22,10 @@ pub(super) fn skillset_recommendations(
     let inventory = inventory_skills
         .iter()
         .filter_map(|skill| skill["skill_id"].as_str().map(|id| (id.to_string(), skill)))
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
     let skill_scores = skill_results
         .iter()
         .filter_map(|result| {
@@ -31,7 +34,10 @@ pub(super) fn skillset_recommendations(
                 result["score"].as_i64().unwrap_or_default(),
             ))
         })
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
     let tokens = tokenize(task);
     let mut out = Vec::new();
     for skillset in skillsets["skillsets"].as_array().into_iter().flatten() {

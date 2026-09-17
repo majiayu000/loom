@@ -140,9 +140,9 @@ impl WorkflowsFile {
 
     pub fn normalize(&mut self) {
         self.workflows
-            .sort_by(|left, right| left.workflow_id.cmp(&right.workflow_id));
+            .sort_by_cached_key(|entry| entry.workflow_id.clone());
         for workflow in &mut self.workflows {
-            workflow.nodes.sort_by(|left, right| left.id.cmp(&right.id));
+            workflow.nodes.sort_by_cached_key(|entry| entry.id.clone());
             workflow.edges.sort_by(|left, right| {
                 left.from
                     .cmp(&right.from)
@@ -171,7 +171,7 @@ impl WorkflowPlansFile {
     }
 
     pub fn normalize(&mut self) {
-        self.plans.sort_by_key(|plan| plan.created_at);
+        self.plans.sort_by_cached_key(|plan| plan.created_at);
         if self.plans.len() > 200 {
             self.plans.drain(0..self.plans.len() - 200);
         }

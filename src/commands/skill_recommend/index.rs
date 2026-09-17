@@ -143,7 +143,10 @@ fn lexical_index_payload(skills: &[Value]) -> Value {
                 .values()
                 .flatten()
                 .cloned()
-                .collect::<BTreeSet<_>>()
+                .fold(BTreeSet::new(), |mut entries, value| {
+                    entries.insert(value);
+                    entries
+                })
                 .into_iter()
                 .collect::<Vec<_>>();
             Some(json!({
@@ -256,7 +259,10 @@ fn tokenized_array(value: &Value) -> Vec<String> {
         .into_iter()
         .flatten()
         .flat_map(|item| tokenize(item.as_str().unwrap_or_default()))
-        .collect::<BTreeSet<_>>()
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        })
         .into_iter()
         .collect()
 }

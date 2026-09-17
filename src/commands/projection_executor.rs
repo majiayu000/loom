@@ -231,7 +231,7 @@ fn execute_projection_mode<M: ExecutionMode>(
         targets.targets.push(input.target.clone());
         targets
             .targets
-            .sort_by(|left, right| left.target_id.cmp(&right.target_id));
+            .sort_by_cached_key(|entry| entry.target_id.clone());
     }
 
     let mut bindings = original_bindings.clone();
@@ -239,7 +239,7 @@ fn execute_projection_mode<M: ExecutionMode>(
         bindings.bindings.push(input.binding.clone());
         bindings
             .bindings
-            .sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
+            .sort_by_cached_key(|entry| entry.binding_id.clone());
     }
 
     let mut rules = original_rules.clone();

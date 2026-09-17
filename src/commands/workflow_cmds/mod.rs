@@ -550,7 +550,7 @@ fn workflow_from_input(
         created_at: now,
         updated_at: now,
     };
-    record.nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    record.nodes.sort_by_cached_key(|entry| entry.id.clone());
     Ok(record)
 }
 

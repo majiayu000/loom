@@ -138,7 +138,10 @@ pub(super) fn append_events_deduped_locked(
         .events
         .into_iter()
         .map(|entry| entry.event.event_id)
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     let prepared = drafts
         .into_iter()
         .map(|draft| {

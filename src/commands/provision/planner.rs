@@ -52,7 +52,10 @@ pub(super) fn build_provision_plan(
     let active_skills = active_views
         .iter()
         .flat_map(|view| view.skills.iter().cloned())
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     let dependency_readiness =
         collect_dependency_readiness(ctx, &active_skills, agent, workspace, &mut findings)?;
     collect_safety_policy_findings(
@@ -151,7 +154,10 @@ fn collect_active_views(
         .targets
         .iter()
         .map(|target| (target.target_id.as_str(), target))
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
     let mut matching_bindings = Vec::new();
     for binding in &snapshot.bindings.bindings {
         if binding.active

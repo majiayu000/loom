@@ -336,7 +336,9 @@ pub(crate) fn save_record_and_lock(
         .sources
         .retain(|item| item.skill_id != record.skill_id);
     sources.sources.push(record);
-    sources.sources.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
+    sources
+        .sources
+        .sort_by_cached_key(|entry| entry.skill_id.clone());
     write_sources(ctx, &sources).map_err(map_io)?;
     write_lock(ctx, &sources).map_err(map_io)?;
     Ok(())
@@ -589,7 +591,7 @@ fn tree_digest(
             .with_context(|| format!("strip {}", path.display()))?;
         entries.push((rel.to_path_buf(), entry.path().to_path_buf()));
     }
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries.sort_by_cached_key(|entry| entry.0.clone());
 
     let mut hasher = Sha256::new();
     for (rel, full) in entries {

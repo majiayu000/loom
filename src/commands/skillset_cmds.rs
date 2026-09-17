@@ -68,11 +68,11 @@ impl SkillsetsFile {
     }
 
     pub(crate) fn normalize(&mut self) {
-        self.skillsets.sort_by(|left, right| left.id.cmp(&right.id));
+        self.skillsets.sort_by_cached_key(|entry| entry.id.clone());
         for skillset in &mut self.skillsets {
             skillset
                 .members
-                .sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
+                .sort_by_cached_key(|entry| entry.skill_id.clone());
         }
     }
 

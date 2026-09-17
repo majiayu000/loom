@@ -466,7 +466,7 @@ fn evaluate_task(skill_path: &Path, index: usize, record: &JsonlRecord<TaskCase>
         Some(passed as f64 / active as f64)
     };
 
-    checks.sort_by(|a, b| a.id.cmp(&b.id));
+    checks.sort_by_cached_key(|entry| entry.id.clone());
 
     TaskResult {
         id: case

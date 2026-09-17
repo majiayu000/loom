@@ -176,7 +176,7 @@ impl App {
         targets.targets.push(target.clone());
         targets
             .targets
-            .sort_by(|left, right| left.target_id.cmp(&right.target_id));
+            .sort_by_cached_key(|entry| entry.target_id.clone());
         let outcome = self.registry_write_txn(
             &paths,
             RegistryWriteTxn {

@@ -79,7 +79,7 @@ pub(super) fn scan_workspace(
             surfaces.push(build_surface(workspace, entry.path(), metadata)?);
         }
     }
-    surfaces.sort_by(|a, b| a.path.cmp(&b.path));
+    surfaces.sort_by_cached_key(|entry| entry.path.clone());
 
     Ok(ScanResult {
         surfaces,

@@ -166,7 +166,10 @@ impl App {
             .filter(|action| action.category == "fix_config_disable" && args.fix_config)
             .filter_map(|action| action.details.get("entry_index").and_then(Value::as_u64))
             .map(|index| index as usize)
-            .collect::<BTreeSet<_>>();
+            .fold(BTreeSet::new(), |mut entries, value| {
+                entries.insert(value);
+                entries
+            });
         let config_patch = patch_disabled_entries(&config_indices)?;
         let restart_required = plans.iter().any(|plan| plan.restart_required)
             || config_patch.restart_required

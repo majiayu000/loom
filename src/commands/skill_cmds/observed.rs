@@ -72,7 +72,7 @@ impl App {
                     continue;
                 }
             };
-            entries.sort_by_key(|entry| entry.file_name());
+            entries.sort_by_cached_key(|entry| entry.file_name());
 
             for entry in entries {
                 let source_path = entry.path();
@@ -400,7 +400,7 @@ impl App {
                     continue;
                 }
             };
-            entries.sort_by_key(|entry| entry.file_name());
+            entries.sort_by_cached_key(|entry| entry.file_name());
 
             for entry in entries {
                 let source_path = entry.path();

@@ -218,7 +218,7 @@ pub(super) async fn registry_skill_history(
         ));
     }
 
-    events.sort_by_key(|event| Reverse(event.observed_at));
+    events.sort_by_cached_key(|event| Reverse(event.observed_at));
     events.truncate(200);
 
     (

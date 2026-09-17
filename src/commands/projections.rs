@@ -76,7 +76,7 @@ pub(crate) fn upsert_projection(
     projections.projections.push(projection);
     projections
         .projections
-        .sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
+        .sort_by_cached_key(|entry| entry.instance_id.clone());
 }
 
 pub(crate) fn project_skill_to_target(

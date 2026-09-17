@@ -106,7 +106,7 @@ pub(super) fn skill_source_digest(path: &Path) -> std::result::Result<String, Co
             entry.file_type().is_symlink(),
         ));
     }
-    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries.sort_by_cached_key(|entry| entry.0.clone());
 
     let mut hasher = Sha256::new();
     hasher.update(b"loom.mcp.skill-source.v1\n");

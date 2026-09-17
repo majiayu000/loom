@@ -453,7 +453,7 @@ pub(crate) fn upsert_trust_record(
         file.skills.push(record.clone());
     }
     file.skills
-        .sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
+        .sort_by_cached_key(|entry| entry.skill_id.clone());
     record
 }
 

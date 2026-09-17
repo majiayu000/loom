@@ -542,7 +542,10 @@ fn validate_plan_guards(
                 .iter()
                 .filter_map(Value::as_str)
                 .map(str::to_string)
-                .collect::<BTreeSet<_>>()
+                .fold(BTreeSet::new(), |mut entries, value| {
+                    entries.insert(value);
+                    entries
+                })
         })
         .unwrap_or_default();
     let approved = approvals
@@ -550,7 +553,10 @@ fn validate_plan_guards(
         .map(|approval| approval.trim())
         .filter(|approval| !approval.is_empty())
         .map(str::to_string)
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     let missing = required.difference(&approved).cloned().collect::<Vec<_>>();
     if !missing.is_empty() {
         return Err(plan_failure(

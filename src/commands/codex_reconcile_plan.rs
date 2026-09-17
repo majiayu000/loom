@@ -68,7 +68,13 @@ fn plan_target(
 ) -> CodexReconcilePlan {
     let target_path = PathBuf::from(&target.path);
     let desired = desired_rules_for_target(snapshot, target, &request.agent);
-    let desired_skills = desired.keys().cloned().collect::<BTreeSet<_>>();
+    let desired_skills = desired
+        .keys()
+        .cloned()
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     let mut actions = Vec::new();
     let mut warnings = Vec::new();
     if request.allowlist_path.is_some() {
@@ -510,7 +516,10 @@ fn desired_rules_for_target<'a>(
                 && binding.default_target_id == target.target_id
         })
         .map(|binding| binding.binding_id.as_str())
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     let mut desired = BTreeMap::new();
     for rule in &snapshot.rules.rules {
         if rule.target_id == target.target_id && active_bindings.contains(rule.binding_id.as_str())

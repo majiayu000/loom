@@ -489,7 +489,7 @@ fn collect_digest_paths(
         .map_err(map_io)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(map_io)?;
-    entries.sort_by_key(|entry| entry.path());
+    entries.sort_by_cached_key(|entry| entry.path());
     for entry in entries {
         let entry_path = entry.path();
         let meta = fs::symlink_metadata(&entry_path).map_err(map_io)?;

@@ -197,7 +197,10 @@ impl App {
             .filter_map(|skill| skill["skill_id"].as_str())
             .filter(|skill| validate_skill_name(skill).is_ok())
             .map(str::to_string)
-            .collect::<BTreeSet<_>>();
+            .fold(BTreeSet::new(), |mut entries, value| {
+                entries.insert(value);
+                entries
+            });
         let report = aggregate_stats(
             &skill_ids,
             &bound_agents,
@@ -232,13 +235,19 @@ fn current_bound_agents(
         .bindings
         .iter()
         .map(|binding| (binding.binding_id.as_str(), binding))
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
     let targets = snapshot
         .targets
         .targets
         .iter()
         .map(|target| (target.target_id.as_str(), target))
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
     let mut result = BTreeMap::<String, BTreeSet<String>>::new();
     for rule in &snapshot.rules.rules {
         let binding = bindings.get(rule.binding_id.as_str()).ok_or_else(|| {
@@ -354,7 +363,10 @@ fn aggregate_stats(
                 .iter()
                 .filter(|agent| agent_filter.is_none_or(|selected| *agent == selected))
                 .cloned()
-                .collect::<BTreeSet<_>>();
+                .fold(BTreeSet::new(), |mut entries, value| {
+                    entries.insert(value);
+                    entries
+                });
             let lifetime = scoped_lifetime.get(skill).cloned().unwrap_or_default();
             let category = if !scoped_bindings.is_empty() {
                 if lifetime

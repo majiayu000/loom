@@ -89,7 +89,10 @@ fn merge_activity_rows(
         .iter()
         .filter(|op| op.command == "skill.release")
         .filter_map(|op| json_string_field(&op.details, &["tag"]))
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     for op in audit_ops {
         if op.command == "release"
             && json_string_field(&op.details, &["tag"])

@@ -418,11 +418,13 @@ fn new_blocking_safety_findings(
     baseline: &SkillSafetyReport,
     current: &SkillSafetyReport,
 ) -> Vec<SafetyFinding> {
-    let baseline_keys = baseline
-        .findings
-        .iter()
-        .map(safety_finding_key)
-        .collect::<BTreeSet<_>>();
+    let baseline_keys = baseline.findings.iter().map(safety_finding_key).fold(
+        BTreeSet::new(),
+        |mut entries, value| {
+            entries.insert(value);
+            entries
+        },
+    );
     current
         .findings
         .iter()

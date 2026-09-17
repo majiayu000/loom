@@ -743,7 +743,7 @@ pub(super) fn committed_skill_digest(
             .ok_or_else(|| corrupt("skill commit path escaped prefix"))?;
         entries.push((relative.to_string(), mode == "120000", oid.to_string()));
     }
-    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries.sort_by_cached_key(|entry| entry.0.clone());
     let mut hasher = Sha256::new();
     for (relative, symlink, oid) in entries {
         let blob = gitops::run_git_allow_failure(&app.ctx, &["cat-file", "blob", &oid])

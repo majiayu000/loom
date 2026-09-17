@@ -510,7 +510,7 @@ fn uninitialized_watch_roots(
         }
         roots.push((skill, entry.path()));
     }
-    roots.sort_by(|left, right| left.0.cmp(&right.0));
+    roots.sort_by_cached_key(|entry| entry.0.clone());
     Ok(roots)
 }
 

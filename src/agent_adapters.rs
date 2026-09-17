@@ -240,7 +240,7 @@ pub(crate) fn load_agent_adapters(
                     .map_err(|err| adapter_io_failure(&location.path, err))?
                     .collect::<std::result::Result<Vec<_>, _>>()
                     .map_err(|err| adapter_io_failure(&location.path, err))?;
-                entries.sort_by_key(|entry| entry.path());
+                entries.sort_by_cached_key(|entry| entry.path());
                 for entry in entries {
                     let path = entry.path();
                     if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
@@ -345,7 +345,7 @@ pub(crate) fn preferred_discovery_root(
             adapter.config_path.as_deref(),
         ));
     }
-    candidates.sort_by_key(|root| {
+    candidates.sort_by_cached_key(|root| {
         (
             role_rank(&root.role, scope),
             root.priority.unwrap_or(u32::MAX),
@@ -397,7 +397,10 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
             .all
             .into_iter()
             .map(|dir| (dir.agent.to_string(), vec![dir.path]))
-            .collect::<BTreeMap<_, _>>()
+            .fold(BTreeMap::new(), |mut entries, (key, value)| {
+                entries.insert(key, value);
+                entries
+            })
     } else {
         BTreeMap::new()
     };

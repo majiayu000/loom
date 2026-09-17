@@ -207,7 +207,7 @@ fn collect_source_inputs(
             paths.push(entry.path().to_path_buf());
         }
     }
-    paths.sort_by_key(|path| slash_path(path));
+    paths.sort_by_cached_key(|path| slash_path(path));
 
     let mut inputs = Vec::new();
     for path in paths {
@@ -424,7 +424,7 @@ fn build_tool_interface(
             risk: script_risk(skill_path, &input.path),
         })
         .collect::<Vec<_>>();
-    script_entrypoints.sort_by(|a, b| a.path.cmp(&b.path));
+    script_entrypoints.sort_by_cached_key(|entry| entry.path.clone());
     ToolInterfaceDoc {
         schema_version: COMPILE_SCHEMA_VERSION,
         allowed_tools,
@@ -455,7 +455,7 @@ fn build_references(
             },
         });
     }
-    references.sort_by(|a, b| a.path.cmp(&b.path));
+    references.sort_by_cached_key(|entry| entry.path.clone());
     Ok(ReferencesDoc {
         schema_version: COMPILE_SCHEMA_VERSION,
         references,

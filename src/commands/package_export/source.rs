@@ -109,7 +109,7 @@ pub(super) fn collect_source_files(
         }
         collect_skill_files(ctx, &member.skill_id, &skill_path, &mut files)?;
     }
-    files.sort_by(|left, right| left.archive_rel.cmp(&right.archive_rel));
+    files.sort_by_cached_key(|entry| entry.archive_rel.clone());
     Ok(files)
 }
 

@@ -240,7 +240,10 @@ fn scan_all(
         .iter()
         .filter(|skill| skill["source_status"].as_str() == Some("present"))
         .filter_map(|skill| skill["skill_id"].as_str().map(str::to_string))
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     let cursor = cursor::read_cursor(ctx)?;
     let mut plan = ScanPlan {
         agents: agents.to_vec(),

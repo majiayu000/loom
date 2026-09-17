@@ -122,7 +122,7 @@ impl App {
         bindings.bindings.push(binding.clone());
         bindings
             .bindings
-            .sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
+            .sort_by_cached_key(|entry| entry.binding_id.clone());
         let outcome = self.registry_write_txn(
             &paths,
             RegistryWriteTxn {

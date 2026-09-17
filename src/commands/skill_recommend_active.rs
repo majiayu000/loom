@@ -72,7 +72,10 @@ pub(crate) fn active_view(
         .iter()
         .filter(|rule| rule.binding_id == binding.binding_id)
         .map(|rule| rule.skill_id.clone())
-        .collect::<BTreeSet<_>>();
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     Ok(ActiveView {
         binding_id: Some(binding.binding_id.clone()),
         workspace: command_workspace(workspace, binding),
@@ -96,11 +99,20 @@ pub(crate) fn activation_plan_delta(
                 .as_str()
                 .map(|id| (id.to_string(), skill.clone()))
         })
-        .collect::<BTreeMap<_, _>>();
+        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+            entries.insert(key, value);
+            entries
+        });
     let mut add = Vec::new();
     let mut keep = Vec::new();
     let mut risks = Vec::new();
-    let desired_set = desired.iter().cloned().collect::<BTreeSet<_>>();
+    let desired_set = desired
+        .iter()
+        .cloned()
+        .fold(BTreeSet::new(), |mut entries, value| {
+            entries.insert(value);
+            entries
+        });
     for skill in desired {
         if active_view.active_skills.contains(skill) {
             keep.push(json!({

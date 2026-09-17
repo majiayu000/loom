@@ -234,7 +234,10 @@ impl App {
                     outputs
                         .iter()
                         .map(|(key, value)| (key, redact_sensitive_string(value)))
-                        .collect::<BTreeMap<_, _>>()
+                        .fold(BTreeMap::new(), |mut entries, (key, value)| {
+                            entries.insert(key, value);
+                            entries
+                        })
                 );
                 save_workflow_plan(&self.ctx, plan.clone())?;
                 Ok(())

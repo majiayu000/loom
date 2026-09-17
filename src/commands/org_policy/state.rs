@@ -617,6 +617,7 @@ pub(super) fn canonical_action(action: &str) -> std::result::Result<String, Comm
 pub(super) fn required_roles_for_action(action: &str) -> Vec<String> {
     let role = match action {
         "skill.author.new"
+        | "skill.author.apply_patch"
         | "skill.save"
         | "skill.capture"
         | "skill.watch"
@@ -671,6 +672,7 @@ fn action_requires_skill(action: &str) -> bool {
                 | "skill.watch"
                 | "skill.capture"
                 | "skill.trash.purge"
+                | "skill.author.apply_patch"
         )
 }
 

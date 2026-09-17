@@ -135,8 +135,8 @@ Done when:
   projection, registry, and sync writes before any mutation lands.
 - Approval-required actions return `POLICY_BLOCKED` with approval request
   command.
-- Approved requests unblock only the matching action, full action-specific
-  subject, and evidence digest.
+- Approved requests unblock only the matching action, identity subject,
+  `command_inputs_digest`, and skill `source_digest` when present.
 - Existing local policy gates still run.
 
 Verify:

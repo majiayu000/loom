@@ -1,12 +1,20 @@
+use std::fs;
+
+use serde_json::Value;
+
 use crate::cli::{
-    Command, OpsCommand, OpsHistoryCommand, ProviderCommand, RemoteCommand, SkillAuthorCommand,
-    SkillCommand, SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand,
-    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand,
+    Command, OpsCommand, OpsHistoryCommand, ProviderCommand, RemoteCommand, SkillApplyPatchArgs,
+    SkillAuthorCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
+    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand,
+    WorkspaceCommand,
 };
 use crate::gitops;
 use crate::state::AppContext;
+use crate::types::ErrorCode;
 
 use super::super::CommandFailure;
+use super::super::helpers::map_io;
+use super::super::skill_authoring::sha256_digest;
 use super::require_policy_checks;
 use super::state::PolicyCheck;
 
@@ -31,12 +39,17 @@ fn governed_checks(
 ) -> std::result::Result<Vec<PolicyCheck>, CommandFailure> {
     Ok(match command {
         Command::Monitor(_) => vec![PolicyCheck::new("skill.monitor_observed")],
-        Command::Use(args) if args.apply => vec![
-            PolicyCheck::new("skill.activate").skill(&args.skill),
-            PolicyCheck::new("skill.project").skill(&args.skill),
-            PolicyCheck::new("target.add"),
-            PolicyCheck::new("workspace.binding.add"),
-        ],
+        Command::Use(args) if args.apply => {
+            let mut checks = vec![
+                PolicyCheck::new("skill.activate").skill(&args.skill),
+                PolicyCheck::new("skill.project").skill(&args.skill),
+            ];
+            for agent in &args.agents {
+                checks.push(PolicyCheck::new("target.add").agent(agent.as_str()));
+                checks.push(PolicyCheck::new("workspace.binding.add").agent(agent.as_str()));
+            }
+            checks
+        }
         Command::Workspace { command } => match command {
             WorkspaceCommand::Binding { command } => match command {
                 WorkspaceBindingCommand::Add(args) => {
@@ -61,7 +74,7 @@ fn governed_checks(
             }
             _ => Vec::new(),
         },
-        Command::Skill { command } => skill_checks(command)?,
+        Command::Skill { command } => skill_checks(ctx, command)?,
         Command::Skillset { command } => skillset_checks(command),
         Command::Provider { command } => match command {
             ProviderCommand::Add(args) => {
@@ -85,11 +98,32 @@ fn governed_checks(
     })
 }
 
-fn skill_checks(command: &SkillCommand) -> std::result::Result<Vec<PolicyCheck>, CommandFailure> {
+fn skill_checks(
+    ctx: &AppContext,
+    command: &SkillCommand,
+) -> std::result::Result<Vec<PolicyCheck>, CommandFailure> {
     Ok(match command {
         SkillCommand::Author {
             command: SkillAuthorCommand::New(args),
         } if !args.dry_run => vec![PolicyCheck::new("skill.author.new").skill(&args.name)],
+        SkillCommand::Author {
+            command: SkillAuthorCommand::Draft(args),
+        } if !args.dry_run => vec![PolicyCheck::new("skill.author.new").skill(&args.name)],
+        SkillCommand::Author {
+            command: SkillAuthorCommand::Extract(args),
+        } if !args.dry_run => vec![PolicyCheck::new("skill.save").skill(&args.skill)],
+        SkillCommand::Author {
+            command: SkillAuthorCommand::Rewrite(args),
+        } if !args.dry_run => vec![PolicyCheck::new("skill.save").skill(&args.skill)],
+        SkillCommand::Author {
+            command: SkillAuthorCommand::TuneDescription(args),
+        } if !args.dry_run => vec![PolicyCheck::new("skill.save").skill(&args.skill)],
+        SkillCommand::Author {
+            command: SkillAuthorCommand::GenerateEvals(args),
+        } if !args.dry_run => vec![PolicyCheck::new("skill.save").skill(&args.skill)],
+        SkillCommand::Author {
+            command: SkillAuthorCommand::ApplyPatch(args),
+        } => apply_patch_checks(ctx, args)?,
         SkillCommand::Add(args) => vec![PolicyCheck::new("skill.add").skill(&args.name)],
         SkillCommand::Install(args) if !args.dry_run => {
             vec![PolicyCheck::new("skill.install").skill(&args.name)]
@@ -208,4 +242,52 @@ fn sync_checks(
         .map(|url| super::sync_remote_identity(&url))
         .unwrap_or_else(|| "origin".to_string());
     Ok(vec![PolicyCheck::new(action).sync_remote(remote)])
+}
+
+fn apply_patch_checks(
+    ctx: &AppContext,
+    args: &SkillApplyPatchArgs,
+) -> std::result::Result<Vec<PolicyCheck>, CommandFailure> {
+    if let Some(key) = args.idempotency_key.as_deref()
+        && apply_record_exists(ctx, key)
+    {
+        return Ok(Vec::new());
+    }
+    Ok(match apply_patch_skill(ctx, &args.patch_id)? {
+        Some(skill) => vec![PolicyCheck::new("skill.save").skill(skill)],
+        None => vec![PolicyCheck::new("skill.author.apply_patch")],
+    })
+}
+
+fn apply_record_exists(ctx: &AppContext, idempotency_key: &str) -> bool {
+    let digest = sha256_digest(idempotency_key.as_bytes());
+    let suffix = digest.strip_prefix("sha256:").unwrap_or(&digest);
+    ctx.state_dir
+        .join("patches/apply-records")
+        .join(format!("{suffix}.json"))
+        .exists()
+}
+
+fn apply_patch_skill(
+    ctx: &AppContext,
+    patch_id: &str,
+) -> std::result::Result<Option<String>, CommandFailure> {
+    let path = ctx
+        .state_dir
+        .join("patches")
+        .join(format!("{patch_id}.json"));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path).map_err(map_io)?;
+    let artifact: Value = serde_json::from_str(&raw).map_err(|err| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            format!("failed to parse patch artifact '{}': {err}", path.display()),
+        )
+    })?;
+    Ok(artifact
+        .get("skill")
+        .and_then(Value::as_str)
+        .map(str::to_string))
 }

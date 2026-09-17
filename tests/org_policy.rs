@@ -412,4 +412,174 @@ fn mutating_commands_enforce_org_policy_and_honour_approvals() {
     );
     assert!(output.status.success(), "approved add should pass: {added}");
     assert!(root.path().join("skills/demo/SKILL.md").exists());
+
+    let (output, rewrite_preview) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &[
+            "skill",
+            "author",
+            "rewrite",
+            "demo",
+            "--instruction",
+            "tighten the skill",
+            "--dry-run",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "dry-run author rewrite must not require org policy write access: {rewrite_preview}"
+    );
+
+    let (output, rewrite_blocked) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &[
+            "skill",
+            "author",
+            "rewrite",
+            "demo",
+            "--instruction",
+            "tighten the skill",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "unprivileged author rewrite must fail: {rewrite_blocked}"
+    );
+    assert_eq!(rewrite_blocked["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        rewrite_blocked["error"]["details"]["policy"]["action"],
+        json!("skill.save")
+    );
+
+    write_file(
+        &root.path().join("state/patches/skillpatch_demo.json"),
+        "{\n  \"skill\": \"demo\"\n}\n",
+    );
+    let (output, apply_blocked) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &[
+            "skill",
+            "author",
+            "apply-patch",
+            "skillpatch_demo",
+            "--idempotency-key",
+            "policy-test",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "unprivileged apply-patch must fail: {apply_blocked}"
+    );
+    assert_eq!(apply_blocked["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        apply_blocked["error"]["details"]["policy"]["action"],
+        json!("skill.save")
+    );
+    assert_eq!(
+        apply_blocked["error"]["details"]["policy"]["subject"]["skill"],
+        json!("demo")
+    );
+
+    let (output, activate_request) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &[
+            "approval",
+            "request",
+            "skill.activate",
+            "--skill",
+            "demo",
+            "--agent",
+            "codex",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "activate approval request should pass: {activate_request}"
+    );
+    let activate_request_id = activate_request["data"]["request"]["request_id"]
+        .as_str()
+        .expect("activate request id")
+        .to_string();
+    let (output, activate_approved) = run_loom_with_env(
+        root.path(),
+        &[("USER", admin)],
+        &["approval", "approve", &activate_request_id],
+    );
+    assert!(
+        output.status.success(),
+        "admin activate approve should pass: {activate_approved}"
+    );
+    let (output, activate_check) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &[
+            "policy",
+            "org",
+            "check",
+            "skill.activate",
+            "--skill",
+            "demo",
+            "--agent",
+            "codex",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "activate policy check should pass: {activate_check}"
+    );
+    assert_eq!(activate_check["data"]["policy"]["decision"], json!("allow"));
+
+    write_file(
+        &root.path().join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Use when testing stale org policy approvals after source edits.\n---\n# Demo changed\n",
+    );
+    let (output, stale) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &[
+            "policy",
+            "org",
+            "check",
+            "skill.activate",
+            "--skill",
+            "demo",
+            "--agent",
+            "codex",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stale approval check should still return a decision: {stale}"
+    );
+    assert_eq!(
+        stale["data"]["policy"]["decision"],
+        json!("approval_required")
+    );
+
+    write_roles(
+        root.path(),
+        json!([grant(admin, "admin"), grant(requester, "reviewer")]),
+    );
+    let (output, use_blocked) = run_loom_with_env(
+        root.path(),
+        &[("USER", requester)],
+        &["use", "demo", "--agents", "codex", "--apply"],
+    );
+    assert!(
+        !output.status.success(),
+        "reviewer use --apply must still fail target/binding policy: {use_blocked}"
+    );
+    assert_eq!(use_blocked["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        use_blocked["error"]["details"]["policy"]["action"],
+        json!("target.add")
+    );
+    assert_eq!(
+        use_blocked["error"]["details"]["policy"]["subject"]["agent"],
+        json!("codex")
+    );
 }

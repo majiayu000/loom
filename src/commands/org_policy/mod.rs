@@ -409,6 +409,7 @@ fn evaluate_org_policy(
         "command_inputs_digest": org_policy_digest_json(&json!({"action": action, "subject": subject})),
     });
     if let Some(skill) = subject.get("skill").and_then(Value::as_str) {
+        evidence["source_digest"] = json!(super::skill_authoring::skill_source_digest(ctx, skill)?);
         let trust = trust_metadata_for_skill(ctx, skill)?;
         evidence["skill_trust"] = json!({"trust": trust.trust, "quarantined": trust.quarantined});
         if trust.trust == "blocked" || trust.quarantined {
@@ -418,7 +419,7 @@ fn evaluate_org_policy(
         }
     }
     if decision == "approval_required"
-        && let Some(request_id) = matching_approved_request(ctx, &action, &subject)?
+        && let Some(request_id) = matching_approved_request(ctx, &action, &subject, &evidence)?
     {
         decision = "allow".to_string();
         reasons.push(format!(
@@ -465,14 +466,19 @@ fn matching_approved_request(
     ctx: &crate::state::AppContext,
     action: &str,
     subject: &Value,
+    evidence: &Value,
 ) -> std::result::Result<Option<String>, CommandFailure> {
     let wanted = identity_subject(subject);
+    let wanted_inputs = evidence.get("command_inputs_digest");
+    let wanted_source = evidence.get("source_digest");
     Ok(load_approval_states(ctx)?
         .into_iter()
         .find(|request| {
             request.status == "approved"
                 && request.action == action
                 && identity_subject(&request.subject) == wanted
+                && request.evidence.get("command_inputs_digest") == wanted_inputs
+                && request.evidence.get("source_digest") == wanted_source
         })
         .map(|request| request.request_id))
 }

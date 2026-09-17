@@ -460,7 +460,7 @@ fn is_sensitive_env_key(key: &str) -> bool {
     .any(|needle| upper.contains(needle))
 }
 
-pub(super) fn skill_source_digest(
+pub(crate) fn skill_source_digest(
     ctx: &AppContext,
     skill: &str,
 ) -> std::result::Result<String, CommandFailure> {
@@ -533,7 +533,7 @@ fn patch_id(
     format!("skillpatch_{}", &hex[..24])
 }
 
-pub(super) fn sha256_digest(bytes: &[u8]) -> String {
+pub(crate) fn sha256_digest(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("sha256:{}", to_hex(&hasher.finalize()))

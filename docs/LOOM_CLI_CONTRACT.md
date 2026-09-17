@@ -806,7 +806,7 @@ Rules:
 7. approve/reject commands require the current local actor to satisfy one of the request's required roles
 8. role grant/revoke require current admin role and revoke must preserve at least one resolved non-team admin
 9. malformed policy, role, or approval state fails closed with `STATE_CORRUPT`
-10. when `state/registry/org_policy.toml` exists, mutating lifecycle commands call the same evaluator and fail with `POLICY_BLOCKED` unless the actor is allowed or a matching approved request exists; dry-run/preview commands are not gated; registries without org policy keep the ungoverned write path; autosync queues `sync.push` when that action is blocked instead of failing the parent mutation
+10. when `state/registry/org_policy.toml` exists, mutating lifecycle commands call the same evaluator and fail with `POLICY_BLOCKED` unless the actor is allowed or a matching approved request exists; a match requires the same action, identity subject, `command_inputs_digest`, and skill `source_digest` when present, so source edits invalidate prior approvals; non-dry-run skill author generation and apply-patch are gated, while apply-patch replay of an existing apply record is not; `use --apply` preflights activate, project, and each selected agent's `target.add` and `workspace.binding.add`; dry-run/preview commands are not gated; registries without org policy keep the ungoverned write path; autosync queues `sync.push` when that action is blocked instead of failing the parent mutation
 
 ## Continued contract
 

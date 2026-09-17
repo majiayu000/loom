@@ -112,6 +112,10 @@ impl App {
 
         let artifact = load_patch_artifact(&artifact_path)?;
         validate_artifact(&artifact, &args.patch_id)?;
+        super::org_policy::require_action_policy(
+            &self.ctx,
+            super::org_policy::PolicyCheck::new("skill.save").skill(&artifact.skill),
+        )?;
         let patch_body = fs::read_to_string(&patch_path).map_err(map_io)?;
         let patch_digest = sha256_digest(patch_body.as_bytes());
 

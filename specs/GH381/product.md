@@ -165,7 +165,7 @@ derived from the event stream; implementations must not rewrite a mutable
 request record to append decisions.
 
 ```json
-{"event": "requested", "request_id": "approval_...", "action": "skill.activate", "subject": {"skill": "fixflow"}, "requester": "alice", "reason_redacted": "...", "risk_summary": {"high": 1}, "evidence": {"skill_source_digest": "sha256:...", "registry_head": "abc123", "command_inputs_digest": "sha256:..."}, "required_roles": ["reviewer"], "required_approvals": ["approval:reviewer"], "policy_decision_digest": "sha256:...", "created_at": "..."}
+{"event": "requested", "request_id": "approval_...", "action": "skill.activate", "subject": {"skill": "fixflow"}, "requester": "alice", "reason_redacted": "...", "risk_summary": {"high": 1}, "evidence": {"source_digest": "sha256:...", "registry_head": "abc123", "command_inputs_digest": "sha256:..."}, "required_roles": ["reviewer"], "required_approvals": ["approval:reviewer"], "policy_decision_digest": "sha256:...", "created_at": "..."}
 {"event": "approved", "request_id": "approval_...", "approver": "bob", "satisfied_approval": "approval:reviewer", "comment_redacted": "...", "created_at": "..."}
 ```
 
@@ -177,7 +177,9 @@ files.
 Decision commands must authorize the current actor against the request's
 required roles before appending approved or rejected events. An approval event
 unblocks only the exact action plus action-specific subject, immutable command
-inputs, source digest, registry head, and evidence digest that were requested.
+inputs, and skill source digest that were requested. Registry `HEAD` is recorded
+as evidence but is not part of the match, because committing the approval itself
+moves `HEAD`.
 Every `required_approvals[]` token must be satisfied by a matching decision
 event; one approval does not satisfy unrelated required tokens. Approved and
 rejected requests are terminal unless a later explicit superseding-request flow

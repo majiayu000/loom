@@ -264,18 +264,18 @@ next_action_emitters = [
 examples = [
   { id = "cli_contract_operations.team_install", surface = "cli_contract_operations", line_range = [997, 997], classification = "executable" },
   { id = "cli_contract_operations.workflow_apply", surface = "cli_contract_operations", line_range = [282, 282], classification = "executable" },
-  { id = "readme.command_reference.workspace", surface = "readme", line_range = [319, 335], classification = "executable" },
-  { id = "readme.command_reference.agent", surface = "readme", line_range = [337, 338], classification = "executable" },
-  { id = "readme.command_reference.targets", surface = "readme", line_range = [340, 343], classification = "executable" },
-  { id = "readme.command_reference.skills", surface = "readme", line_range = [345, 409], classification = "executable" },
-  { id = "readme.command_reference.instructions", surface = "readme", line_range = [411, 415], classification = "executable" },
-  { id = "readme.command_reference.package", surface = "readme", line_range = [417, 419], classification = "executable" },
-  { id = "readme.command_reference.mcp", surface = "readme", line_range = [421, 426], classification = "executable" },
-  { id = "readme.command_reference.provision", surface = "readme", line_range = [428, 432], classification = "executable" },
-  { id = "readme.command_reference.skillset", surface = "readme", line_range = [434, 443], classification = "executable" },
-  { id = "readme.command_reference.workflow", surface = "readme", line_range = [445, 449], classification = "executable" },
-  { id = "readme.command_reference.sync_ops", surface = "readme", line_range = [451, 460], classification = "executable" },
-  { id = "readme.command_reference.panel", surface = "readme", line_range = [462, 462], classification = "executable" },
+  { id = "readme.command_reference.workspace", surface = "readme", line_range = [321, 337], classification = "executable" },
+  { id = "readme.command_reference.agent", surface = "readme", line_range = [339, 340], classification = "executable" },
+  { id = "readme.command_reference.targets", surface = "readme", line_range = [342, 345], classification = "executable" },
+  { id = "readme.command_reference.skills", surface = "readme", line_range = [347, 411], classification = "executable" },
+  { id = "readme.command_reference.instructions", surface = "readme", line_range = [413, 417], classification = "executable" },
+  { id = "readme.command_reference.package", surface = "readme", line_range = [419, 421], classification = "executable" },
+  { id = "readme.command_reference.mcp", surface = "readme", line_range = [423, 428], classification = "executable" },
+  { id = "readme.command_reference.provision", surface = "readme", line_range = [430, 434], classification = "executable" },
+  { id = "readme.command_reference.skillset", surface = "readme", line_range = [436, 445], classification = "executable" },
+  { id = "readme.command_reference.workflow", surface = "readme", line_range = [447, 451], classification = "executable" },
+  { id = "readme.command_reference.sync_ops", surface = "readme", line_range = [453, 462], classification = "executable" },
+  { id = "readme.command_reference.panel", surface = "readme", line_range = [464, 464], classification = "executable" },
   { id = "cli_contract.envelope_action", surface = "cli_contract", line_range = [184, 184], classification = "executable" },
   { id = "cli_contract.default_actions", surface = "cli_contract", line_range = [201, 207], classification = "executable" },
   { id = "cli_contract.error_action_table", surface = "cli_contract", line_range = [232, 250], classification = "executable" },
@@ -426,37 +426,37 @@ path = "docs/plan/trash-mvp-spec.md"
 [[example]]
 id = "readme.install_and_first_lifecycle"
 surface = "readme"
-line_range = [40, 92]
+line_range = [40, 94]
 classification = "executable"
 [[example]]
 id = "readme.monitor"
 surface = "readme"
-line_range = [96, 99]
+line_range = [98, 101]
 classification = "executable"
 [[example]]
 id = "readme.agent_quickstart"
 surface = "readme"
-line_range = [109, 165]
+line_range = [111, 167]
 classification = "executable"
 [[example]]
 id = "readme.command_matrix"
 surface = "readme"
-line_range = [214, 273]
+line_range = [216, 275]
 classification = "output_example"
 [[example]]
 id = "readme.agent_guidance"
 surface = "readme"
-line_range = [301, 302]
+line_range = [303, 304]
 classification = "executable"
 [[example]]
 id = "readme.observed_targets"
 surface = "readme"
-line_range = [473, 477]
+line_range = [475, 479]
 classification = "executable"
 [[example]]
 id = "readme.monitor_reference"
 surface = "readme"
-line_range = [484, 489]
+line_range = [486, 491]
 classification = "executable"
 [[example]]
 id = "agent_usage.boundary"
@@ -551,7 +551,7 @@ classification = "executable"
 [[example]]
 id = "releasing.archive_smoke"
 surface = "releasing"
-line_range = [97, 101]
+line_range = [101, 105]
 classification = "executable"
 [[example]]
 id = "release_workflow.homebrew_formula"

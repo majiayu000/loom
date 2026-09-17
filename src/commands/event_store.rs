@@ -44,9 +44,8 @@ pub(crate) struct CommandEventRow {
 }
 
 pub(crate) fn command_event_input(cli: &Cli, request_id: &str) -> Result<serde_json::Value> {
-    let mut audit_cli = cli.clone();
-    audit_cli.request_id = Some(request_id.to_string());
-    let mut input = serde_json::to_value(audit_cli).context("failed to encode command input")?;
+    let mut input = serde_json::to_value(cli).context("failed to encode command input")?;
+    input["request_id"] = serde_json::Value::String(request_id.to_string());
     if let Command::Plan {
         command: PlanCommand::Converge(args),
     } = &cli.command
@@ -499,6 +498,7 @@ fn looks_like_secret(raw: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
     use std::collections::BTreeSet;
     use std::fs;
     use std::sync::Arc;
@@ -512,6 +512,22 @@ mod tests {
     };
     use crate::envelope::{Envelope, Meta};
     use crate::state::AppContext;
+
+    #[test]
+    fn command_input_uses_execution_request_id_without_changing_cli() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "loom",
+            "--request-id",
+            "original",
+            "workspace",
+            "status",
+        ])
+        .expect("parse audit fixture");
+        let input = super::command_event_input(&cli, "execution").expect("encode command input");
+        assert_eq!(input["request_id"], "execution");
+        assert_eq!(input["command"]["Workspace"]["command"], "Status");
+        assert_eq!(cli.request_id.as_deref(), Some("original"));
+    }
 
     #[test]
     fn redacts_url_userinfo_without_changing_plain_urls() {

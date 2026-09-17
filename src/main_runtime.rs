@@ -82,18 +82,21 @@ pub async fn run() {
         return;
     }
 
-    match app.execute(cli.clone()) {
+    let (json, pretty) = (cli.json, cli.pretty);
+    let cmd = command_name(&cli.command);
+    let request_id = cli.request_id.clone();
+    match app.execute(cli) {
         Ok((env, code)) => {
-            print_envelope(&env, cli.json, cli.pretty);
+            print_envelope(&env, json, pretty);
             if code != 0 {
                 std::process::exit(code);
             }
         }
         Err(err) => {
             let code = ErrorCode::InternalError;
-            if cli.json {
-                let env = top_level_failure_envelope(&cli, err.to_string());
-                print_envelope(&env, true, cli.pretty);
+            if json {
+                let env = top_level_failure_envelope(cmd, request_id, err.to_string());
+                print_envelope(&env, true, pretty);
             } else {
                 eprintln!("command failed: {}", err);
             }
@@ -116,10 +119,10 @@ fn failure_envelope(
     Envelope::err(cmd, request_id, code, message, details)
 }
 
-fn top_level_failure_envelope(cli: &Cli, message: String) -> Envelope {
-    failure_envelope(
-        cli,
-        command_name(&cli.command),
+fn top_level_failure_envelope(cmd: &str, request_id: Option<String>, message: String) -> Envelope {
+    Envelope::err(
+        cmd,
+        request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         ErrorCode::InternalError,
         format!("command failed: {message}"),
         json!({ "stage": "app.execute" }),
@@ -334,7 +337,11 @@ mod tests {
             "status",
         ])
         .expect("parse fixture CLI");
-        let env = top_level_failure_envelope(&cli, "injected top-level failure".to_string());
+        let env = top_level_failure_envelope(
+            crate::commands::command_name(&cli.command),
+            cli.request_id,
+            "injected top-level failure".to_string(),
+        );
         let value = serde_json::to_value(env).expect("serialize fixture envelope");
 
         assert_eq!(value["ok"], json!(false));

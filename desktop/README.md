@@ -14,7 +14,7 @@ cd desktop
 bunx @tauri-apps/cli@2.11.4 build --bundles app
 ```
 
-开发者需 Rust、Git、Bun、平台 Tauri 构建依赖；构建命令使用固定版本 Tauri CLI，不要求全局安装。打包后的用户不需要 Rust/Bun；Git 仍需系统提供。`prepare-sidecar.sh [target-triple]` 编译同 checkout 的 CLI，不下载或调用用户 PATH 中的 loom。原生调用通过 Tauri sidecar 解析打包路径，参数为数组，前端没有通用 shell/文件读取入口。Windows bundle target 需根据发布平台选择；本次默认仅构建 macOS app，未做签名、公证或发布。
+开发者需 Rust、Git、Bun、平台 Tauri 构建依赖；构建命令使用固定版本 Tauri CLI，不要求全局安装。打包后的用户不需要 Rust/Bun；Git 仍需系统提供。`prepare-sidecar.sh [target-triple]` 编译同 checkout 的 CLI，不下载或调用用户 PATH 中的 loom。原生调用通过 Tauri sidecar 解析打包路径，参数为数组，前端没有通用 shell/文件读取入口。Windows bundle target 需根据发布平台选择；本地默认仅构建未签名的 macOS app。带 `v*.*.*` tag 的 `Desktop Release` 会用 Developer ID 签名，并在 Tauri 公证 `.app` 之后再对 DMG 跑 `notarytool` 和 `stapler`。
 
 ## Native bridge
 

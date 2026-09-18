@@ -5,6 +5,8 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+- macOS desktop DMGs now go through `notarytool` and `stapler` after Tauri staples the `.app`.
+
 ## [0.1.9] - 2026-09-17
 
 ### Added

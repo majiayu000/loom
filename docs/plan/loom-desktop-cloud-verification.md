@@ -72,7 +72,7 @@
 
 ## 2026-09-09 工作区视觉元素
 
-新增 imagegen 原创纸带、书册、薄片插画 `panel/src/assets/loom-paper-weave.png`，用于团队和更新页头；技能卡片加入轻量装饰印记，团队空状态及本机未读取状态加入折页手册，真实版本历史行增加连接线和节点。全部元素为装饰，不作为业务状态或权限证据。
+当时新增 imagegen 原创纸带、书册、薄片插画，打算用于团队和更新页头；技能卡片加入轻量装饰印记，团队空状态及本机未读取状态加入折页手册，真实版本历史行增加连接线和节点。全部元素为装饰，不作为业务状态或权限证据。这张纸带图没有被任何代码引用，页头后来改用 method-bridge 与 paper-steps。2026-09-22 已从仓库删除 `loom-paper-weave.png`。四张仍在界面里的插画以 WebP 打进前端包，PNG 母版留在 Git 中，并通过 `Cargo.toml` 的 `exclude` 不进入发布 crate。
 
 224 项前端测试、类型检查、3 个变动源文件 lint 和生产构建通过。`.git/codex/studio-ui/elements-*.png` 是明确使用视觉验收数据的 1180px / 390px 截图，窄屏无横向溢出；不把截图中的示例技能写入团队数据库。桌面构建证据为 `elements-engine.log` / `elements-bundle.log`。
 

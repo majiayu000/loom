@@ -85,7 +85,7 @@ loom skill visibility fixflow --agent codex
 
 The installer detects Apple Silicon macOS, Intel macOS, and x86_64 Linux, verifies the release archive against `SHA256SUMS`, installs the binary to `~/.local/bin`, and keeps versioned bundled Skills/contracts under `~/.local/share/loom`. Pass `--help` to the downloaded script to override the version or install directories. Homebrew is intentionally not advertised until the tap contains a published formula.
 
-The prebuilt Linux archive requires glibc 2.39 or newer (for example, Ubuntu 24.04). This is also the requirement of the published 0.1.9 Linux binary.
+The prebuilt Linux archive requires glibc 2.39 or newer (for example, Ubuntu 24.04). This is also the requirement of the published 0.2.0 Linux binary.
 
 The Agent Skill is named `loom-registry` to avoid colliding with Loom.com video Skills. The copy commands fail closed when a same-name target already exists; inspect and resolve that target manually instead of overwriting it. Start a new Claude Code or Codex session after copying so the agent can discover the Skill. A source build can use `skills/loom-registry` from the checkout; `cargo install` installs only the CLI binary and does not install the Agent Skill.
 

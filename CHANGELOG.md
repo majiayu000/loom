@@ -5,7 +5,13 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+## [0.2.0] - 2026-09-22
+
+### Changed
+
 - macOS desktop DMGs now go through `notarytool` and `stapler` after Tauri staples the `.app`.
+- Refresh Rust and Panel tooling: `yaml-rust2` 0.13.0, `uuid` 1.26.1, `toml_edit` 0.25.15, and Biome 2.5.14. GitHub Actions `setup-node` is now v7.
+- The published crate no longer includes unused illustration PNG masters. `loom-paper-weave.png` is removed; the four illustrations still shown in the app ship as WebP.
 
 ## [0.1.9] - 2026-09-17
 
@@ -232,6 +238,7 @@ archives, checksums, and provenance details on GitHub Releases.
 
 - Initial public release archives for Loom.
 
+[0.2.0]: https://github.com/majiayu000/loom/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/majiayu000/loom/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/majiayu000/loom/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/majiayu000/loom/compare/v0.1.6...v0.1.7

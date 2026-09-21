@@ -13,6 +13,8 @@ panel/node_modules/
 panel/dist/
 panel/coverage/
 target/
+# Local acceptance dumps and generated screenshots. Not product source.
+/output/
 .omx/
 # Ignore mutable registry content in the tool checkout, but ship the scoped
 # first-party Agent Skill used by release archives and installation docs.

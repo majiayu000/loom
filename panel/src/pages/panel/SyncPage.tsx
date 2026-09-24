@@ -1,6 +1,6 @@
 import type { OperationCounts, RemotePayload } from "../../types";
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GitIcon, PlayIcon, RefreshIcon, SyncIcon } from "../../components/icons/nav_icons";
 import { MutationBanner } from "../../components/panel/MutationBanner";
 import { api, type OpsHistoryDiagnosePayload } from "../../lib/api/client";
@@ -17,9 +17,12 @@ interface SyncPageProps {
   refreshKey?: string | null;
   readOnly: boolean;
   onMutation: () => void;
+  requestedSync?: { id: number; direction: "pull" | "push" } | null;
+  onRequestedSyncHandled?: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }
 
-export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRoot, refreshKey, readOnly, onMutation }: SyncPageProps) {
+export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRoot, refreshKey, readOnly, onMutation, requestedSync, onRequestedSyncHandled, onBusyChange }: SyncPageProps) {
   const push = useMutation();
   const pull = useMutation();
   const replay = useMutation();
@@ -30,12 +33,28 @@ export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRo
   const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
   const [diagnoseLoading, setDiagnoseLoading] = useState(false);
   const [repairVersion, setRepairVersion] = useState(0);
+  const handledSyncRequest = useRef<number | null>(null);
   const syncBusy = push.busy || pull.busy || replay.busy || setRemote.busy || historyRepair.busy;
   const configured = remote?.configured === true;
   const state = remote?.sync_state ?? (configured ? "unknown" : "not configured");
   const stateTone = syncStateTone(state);
   const rootDisplay = registryRoot ? registryRoot.replace(/^\/Users\/[^/]+/, "~") : "—";
   const conflictCount = diagnose?.conflicts.length ?? 0;
+
+  useEffect(() => {
+    onBusyChange?.(syncBusy);
+  }, [syncBusy, onBusyChange]);
+
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+
+  useEffect(() => {
+    if (!requestedSync || handledSyncRequest.current === requestedSync.id) return;
+    handledSyncRequest.current = requestedSync.id;
+    onRequestedSyncHandled?.();
+    if (readOnly || syncBusy) return;
+    if (requestedSync.direction === "pull") void pull.run("sync pull", api.syncPull, onMutation);
+    if (requestedSync.direction === "push" && queuedWriteCount === 0) void push.run("sync push", api.syncPush, onMutation);
+  }, [requestedSync, onRequestedSyncHandled, queuedWriteCount, readOnly, syncBusy, pull.run, push.run, onMutation]);
 
   useEffect(() => {
     setRemoteUrl(remote?.url ?? "");

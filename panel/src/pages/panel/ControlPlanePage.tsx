@@ -24,6 +24,9 @@ interface ControlPlanePageProps {
   onNavigate: (page: PanelPageKey) => void;
   readOnly: boolean;
   mutationVersion: number;
+  requestAddTarget?: number | null;
+  requestAddBinding?: number | null;
+  onRequestAddHandled?: () => void;
 }
 
 const TABS: Array<{ id: ControlPlaneTab; label: string; page?: PanelPageKey }> = [
@@ -48,6 +51,9 @@ export function ControlPlanePage({
   onNavigate,
   readOnly,
   mutationVersion,
+  requestAddTarget,
+  requestAddBinding,
+  onRequestAddHandled,
 }: ControlPlanePageProps) {
   const [tab, setTab] = useState<ControlPlaneTab>(initialTab);
 
@@ -93,6 +99,8 @@ export function ControlPlanePage({
           onMutation={onMutation}
           readOnly={readOnly}
           mutationVersion={mutationVersion}
+          requestAdd={requestAddTarget}
+          onRequestAddHandled={onRequestAddHandled}
         />
       )}
       {tab === "bindings" && (
@@ -105,6 +113,8 @@ export function ControlPlanePage({
           onMutation={onMutation}
           readOnly={readOnly}
           mutationVersion={mutationVersion}
+          requestAdd={requestAddBinding}
+          onRequestAddHandled={onRequestAddHandled}
         />
       )}
       {tab === "projections" && (

@@ -105,6 +105,8 @@ export interface ActionViewModel {
   disabledReason?: string;
 }
 
+export type PaletteActionKey = "addTarget" | "addBinding" | "syncPull" | "syncPush";
+
 export interface ShellStatusViewModel {
   label: string;
   title: string;

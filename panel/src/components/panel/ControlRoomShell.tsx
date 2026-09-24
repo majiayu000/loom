@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import type { PanelViewModel } from "../../lib/panel_view_model";
+import type { PaletteActionKey, PanelViewModel } from "../../lib/panel_view_model";
 import type { PanelPageKey } from "../../lib/types";
 import { ActivityBar } from "./ActivityBar";
 import { StatusBar } from "./StatusBar";
@@ -24,6 +24,9 @@ interface ControlRoomShellProps {
   onNavigate: (page: PanelPageKey) => void;
   onSelectSkill: (id: string) => void;
   onSelectTarget: (id: string) => void;
+  onSelectBinding: (id: string) => void;
+  onRunAction: (action: PaletteActionKey) => void;
+  syncBusy: boolean;
   onReplayQueued: () => Promise<void> | void;
   onCycleTheme: () => void;
   onToggleTweaks: () => void;
@@ -42,6 +45,9 @@ export function ControlRoomShell({
   onNavigate,
   onSelectSkill,
   onSelectTarget,
+  onSelectBinding,
+  onRunAction,
+  syncBusy,
   onReplayQueued,
   onCycleTheme,
   onToggleTweaks,
@@ -73,6 +79,11 @@ export function ControlRoomShell({
     onNavigate("targets");
     setPaletteOpen(false);
   };
+  const selectBinding = (id: string) => {
+    onSelectBinding(id);
+    onNavigate("bindings");
+    setPaletteOpen(false);
+  };
 
   return (
     <div className={`control-room-shell${className ? ` ${className}` : ""}`}>
@@ -100,6 +111,9 @@ export function ControlRoomShell({
             onNavigate={navigate}
             onSelectSkill={selectSkill}
             onSelectTarget={selectTarget}
+            onSelectBinding={selectBinding}
+            onRunAction={onRunAction}
+            syncBusy={syncBusy}
             onReplayQueued={onReplayQueued}
           />
         </Suspense>

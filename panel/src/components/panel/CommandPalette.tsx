@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
-import type { PanelViewModel } from "../../lib/panel_view_model";
+import type { PaletteActionKey, PanelViewModel } from "../../lib/panel_view_model";
 import type { PanelPageKey } from "../../lib/types";
 import { SearchIcon } from "../icons/nav_icons";
 
@@ -11,6 +11,9 @@ interface CommandPaletteProps {
   onNavigate: (page: PanelPageKey) => void;
   onSelectSkill: (id: string) => void;
   onSelectTarget: (id: string) => void;
+  onSelectBinding: (id: string) => void;
+  onRunAction: (action: PaletteActionKey) => void;
+  syncBusy: boolean;
   onReplayQueued: () => Promise<void> | void;
 }
 
@@ -31,6 +34,9 @@ export function CommandPalette({
   onNavigate,
   onSelectSkill,
   onSelectTarget,
+  onSelectBinding,
+  onRunAction,
+  syncBusy,
   onReplayQueued,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
@@ -61,6 +67,27 @@ export function CommandPalette({
       detail: target.path.state === "available" ? target.path.label : target.agent.label,
       run: () => onSelectTarget(target.id),
     }));
+    const bindingCommands = viewModel.bindings.map((binding) => ({
+      id: `binding:${binding.id}`,
+      group: "Bindings",
+      label: binding.id,
+      detail: `${binding.skill.label} → ${binding.target.label}`,
+      run: () => onSelectBinding(binding.id),
+    }));
+    const actionKeys: PaletteActionKey[] = ["addTarget", "addBinding", "syncPull", "syncPush"];
+    const actionCommands = actionKeys.map((key) => {
+      const action = viewModel.actions[key];
+      const busy = syncBusy && (key === "syncPull" || key === "syncPush");
+      return {
+        id: `mutation:${key}`,
+        group: "Commands",
+        label: action.label,
+        detail: busy ? "sync in progress" : action.disabledReason,
+        disabled: !action.enabled || busy,
+        disabledReason: busy ? "sync in progress" : action.disabledReason,
+        run: () => onRunAction(key),
+      };
+    });
     const replay = viewModel.actions.replayQueued;
     const mutationCommands =
       viewModel.shell.counts.queuedWrites.value && viewModel.shell.counts.queuedWrites.value > 0
@@ -76,8 +103,8 @@ export function CommandPalette({
             },
           ]
         : [];
-    return [...pageCommands, ...skillCommands, ...targetCommands, ...mutationCommands];
-  }, [onNavigate, onReplayQueued, onSelectSkill, onSelectTarget, viewModel]);
+    return [...pageCommands, ...skillCommands, ...targetCommands, ...bindingCommands, ...actionCommands, ...mutationCommands];
+  }, [onNavigate, onReplayQueued, onRunAction, onSelectBinding, onSelectSkill, onSelectTarget, syncBusy, viewModel]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -145,7 +172,7 @@ export function CommandPalette({
               setActiveIndex(0);
             }}
             onKeyDown={onKeyDown}
-            placeholder="Search pages, skills, targets"
+            placeholder="Search pages, skills, targets, bindings, actions"
             style={paletteStyles.input}
           />
           <kbd style={paletteStyles.kbd}>Esc</kbd>

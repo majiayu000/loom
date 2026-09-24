@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Ownership, Skill, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { MutationBanner } from "../../components/panel/MutationBanner";
@@ -24,6 +24,8 @@ interface TargetsPageProps {
   onMutation: () => void;
   readOnly: boolean;
   mutationVersion: number;
+  requestAdd?: number | null;
+  onRequestAddHandled?: () => void;
 }
 
 export function TargetsPage({
@@ -35,8 +37,11 @@ export function TargetsPage({
   onMutation,
   readOnly,
   mutationVersion,
+  requestAdd,
+  onRequestAddHandled,
 }: TargetsPageProps) {
   const [addOpen, setAddOpen] = useState(false);
+  const handledAddRequest = useRef<number | null>(null);
   const sel = targets.find((t) => t.id === selectedTarget) ?? null;
   const observedSkillsForSelected = sel
     ? skills.filter((skill) => skill.observedTargetIds?.includes(sel.id))
@@ -48,6 +53,13 @@ export function TargetsPage({
   useEffect(() => {
     if (readOnly) setAddOpen(false);
   }, [readOnly]);
+
+  useEffect(() => {
+    if (requestAdd == null || handledAddRequest.current === requestAdd) return;
+    handledAddRequest.current = requestAdd;
+    onRequestAddHandled?.();
+    if (!readOnly) setAddOpen(true);
+  }, [requestAdd, readOnly, onRequestAddHandled]);
 
   return (
     <>

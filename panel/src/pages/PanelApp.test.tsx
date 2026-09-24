@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { PanelApp } from "./PanelApp";
 import { errorResponse, jsonResponse } from "./test_utils";
@@ -16,6 +17,9 @@ interface FetchMockOptions {
   operationCounts?: OperationCounts;
   pendingOps?: RegistryOperationRecord[];
   omitOperationCounts?: boolean;
+  withTarget?: boolean;
+  withBinding?: boolean;
+  deferPush?: (resolve: (response: Response) => void) => void;
 }
 
 function installFetchMock(failingPath: string | null = null, failingResponse?: Response, options: FetchMockOptions = {}) {
@@ -141,7 +145,11 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
                 ok: true,
                 cmd: "registry.status",
                 request_id: "req-registry",
-                data: { counts: {}, projections: [], rules: [], targets: [], bindings: [] },
+                data: {
+                  counts: {}, projections: [], rules: [],
+                  targets: options.withTarget || options.withBinding ? [{ target_id: "target-1", agent: "claude", path: "/tmp/skills", ownership: "managed", capabilities: {} }] : [],
+                  bindings: options.withBinding ? [{ binding_id: "binding-1", agent: "claude", profile_id: "home", workspace_matcher: { kind: "path_prefix", value: "/tmp" }, default_target_id: "target-1", policy_profile: "safe-capture", active: true }] : [],
+                },
                 error: null,
                 meta: { warnings: [] },
               }),
@@ -243,6 +251,14 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
             meta: { warnings: [] },
           }),
         );
+      case "/api/v1/bindings/binding-1":
+        return Promise.resolve(jsonResponse({ ok: true, data: { binding: { binding_id: "binding-1" }, rules: [], projections: [] } }));
+      case "/api/v1/sync/pull":
+      case "/api/v1/sync/push":
+        if (url === "/api/v1/sync/push" && options.deferPush) {
+          return new Promise((resolve) => options.deferPush?.(resolve));
+        }
+        return Promise.resolve(failedResponse ?? jsonResponse({ ok: true, cmd: url === "/api/v1/sync/pull" ? "sync.pull" : "sync.push", request_id: "req-sync-action" }));
       default:
         return Promise.reject(new Error(`unexpected fetch ${url}`));
     }
@@ -483,6 +499,122 @@ describe("PanelApp status failure UI", () => {
     await screen.findByRole("heading", { name: "Skills" });
     expect(localStorage.getItem("loom.page")).toBe("skills");
     expect(window.location.hash).toBe("#/skills/typed-api-client");
+  });
+
+  it("finds a binding in the palette and opens its detail", async () => {
+    installFetchMock(null, undefined, { withBinding: true });
+    render(<PanelApp />);
+    await screen.findByRole("heading", { name: "Overview" });
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    fireEvent.change(within(dialog).getByRole("searchbox"), { target: { value: "binding-1" } });
+    fireEvent.click(within(dialog).getByRole("option", { name: /binding-1/i }));
+
+    await screen.findByRole("heading", { name: "Bindings" });
+    const row = screen.getAllByText("binding-1").map((node) => node.closest("tr")).find(Boolean);
+    expect(row).toHaveClass("selected");
+  });
+
+  it("opens the existing add forms from enabled palette actions", async () => {
+    installFetchMock(null, undefined, { withTarget: true });
+    render(<PanelApp />);
+    await screen.findByRole("heading", { name: "Overview" });
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    let dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsAdd target/i }));
+    expect(await screen.findByRole("form", { name: "Add target" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsAdd binding/i }));
+    expect(await screen.findByRole("form", { name: "Add binding" })).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/bindings", expect.anything());
+  });
+
+  it("shows palette action prerequisites and blocks writes while offline", async () => {
+    installFetchMock(null, undefined, { pendingCount: 2 });
+    render(<PanelApp />);
+    await screen.findByRole("heading", { name: "Overview" });
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    let dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    const addBinding = within(dialog).getByRole("option", { name: /CommandsAdd binding/i }) as HTMLButtonElement;
+    const push = within(dialog).getByRole("option", { name: /CommandsPush remote/i }) as HTMLButtonElement;
+    expect(addBinding.disabled).toBe(true);
+    expect(addBinding.title).toBe("add a target first");
+    expect(push.disabled).toBe(true);
+    expect(push.title).toBe("replay queued writes first");
+
+    cleanup();
+    fetchMock.mockReset();
+    localStorage.clear();
+    installFetchMock("/api/v1/registry/status", errorResponse(503, { error: { message: "registry offline" } }));
+    render(<PanelApp />);
+    await screen.findByText(/live API offline/i);
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    const pull = within(dialog).getByRole("option", { name: /CommandsPull remote/i }) as HTMLButtonElement;
+    const addTarget = within(dialog).getByRole("option", { name: /CommandsAdd target/i }) as HTMLButtonElement;
+    expect(pull.disabled).toBe(true);
+    expect(pull.title).toBe("registry offline");
+    expect(addTarget.disabled).toBe(true);
+    expect(addTarget.title).toBe("registry offline");
+    fireEvent.click(pull);
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/sync/pull", expect.anything());
+  });
+
+  it("shows sync mutation errors from the existing Sync page when launched by the palette", async () => {
+    installFetchMock("/api/v1/sync/pull", errorResponse(503, { error: { message: "remote unavailable" } }));
+    render(<PanelApp />);
+    await screen.findByRole("heading", { name: "Overview" });
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsPull remote/i }));
+
+    await screen.findByRole("heading", { name: "Git sync" });
+    expect(await screen.findByText(/sync pull: remote unavailable/i)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/sync/pull", expect.anything());
+  });
+
+  it("pushes from the palette and refreshes live registry data", async () => {
+    installSuccessfulFetchMock();
+    render(<PanelApp />);
+    await screen.findByRole("heading", { name: "Overview" });
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsPush remote/i }));
+
+    await screen.findByRole("heading", { name: "Git sync" });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/sync/push", expect.anything()));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => input === "/api/v1/workspace/status").length).toBeGreaterThan(1));
+  });
+
+  it("disables another sync command while the Sync page is busy", async () => {
+    let finishPush: ((response: Response) => void) | undefined;
+    installFetchMock(null, undefined, { deferPush: (resolve) => { finishPush = resolve; } });
+    render(<PanelApp />);
+    await screen.findByRole("heading", { name: "Overview" });
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    let dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsPush remote/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/sync/push", expect.anything()));
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    const pull = within(dialog).getByRole("option", { name: /CommandsPull remote/i }) as HTMLButtonElement;
+    const push = within(dialog).getByRole("option", { name: /CommandsPush remote/i }) as HTMLButtonElement;
+    expect(pull.disabled).toBe(true);
+    expect(push.disabled).toBe(true);
+    expect(pull.title).toBe("sync in progress");
+    fireEvent.click(pull);
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/sync/pull", expect.anything());
+
+    await act(async () => {
+      finishPush?.(jsonResponse({ ok: true, cmd: "sync.push", request_id: "req-sync-action" }));
+    });
   });
 
   it("restores the skills detail route from the URL hash", async () => {

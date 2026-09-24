@@ -20,6 +20,8 @@ interface BindingsPageProps {
   onMutation: () => void;
   readOnly: boolean;
   mutationVersion: number;
+  requestAdd?: number | null;
+  onRequestAddHandled?: () => void;
 }
 
 export function BindingsPage({
@@ -31,8 +33,11 @@ export function BindingsPage({
   onMutation,
   readOnly,
   mutationVersion,
+  requestAdd,
+  onRequestAddHandled,
 }: BindingsPageProps) {
   const [addOpen, setAddOpen] = useState(false);
+  const handledAddRequest = useRef<number | null>(null);
   const [deleteLivePaths, setDeleteLivePaths] = useState(false);
   const selectedBindingRef = useRef(selectedBinding);
   selectedBindingRef.current = selectedBinding;
@@ -62,6 +67,13 @@ export function BindingsPage({
   useEffect(() => {
     if (readOnly) setAddOpen(false);
   }, [readOnly]);
+
+  useEffect(() => {
+    if (requestAdd == null || handledAddRequest.current === requestAdd) return;
+    handledAddRequest.current = requestAdd;
+    onRequestAddHandled?.();
+    if (!readOnly && targets.length > 0) setAddOpen(true);
+  }, [requestAdd, readOnly, targets.length, onRequestAddHandled]);
 
   return (
     <>

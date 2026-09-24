@@ -12,7 +12,7 @@ import { SyncPage } from "./panel/SyncPage";
 import { DoctorPage } from "./panel/DoctorPage";
 import { FirstRunPage } from "./panel/FirstRunPage";
 import { TelemetryPage } from "./panel/TelemetryPage";
-import { selectPanelViewModel } from "../lib/panel_view_model";
+import { selectPanelViewModel, type PaletteActionKey } from "../lib/panel_view_model";
 
 const TweakPanel = lazy(() =>
   import("../components/panel/TweakPanel").then((module) => ({ default: module.TweakPanel })),
@@ -117,6 +117,9 @@ export function PanelApp() {
   const [selectedSkill, setSelectedSkill] = useState<string | null>(skillRouteSelection);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [selectedBinding, setSelectedBinding] = useState<string | null>(null);
+  const [paletteActionRequest, setPaletteActionRequest] = useState<{ id: number; action: PaletteActionKey } | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const nextPaletteActionId = useRef(0);
   const [toasts, setToasts] = useState<ToastViewModel[]>([]);
   const toastIdRef = useRef(0);
 
@@ -256,12 +259,21 @@ export function PanelApp() {
     setSelectedSkill(null);
     writeSkillRoute(null);
   };
-  const selectBindingFromHistory = (id: string) => {
+  const selectBindingFromShell = (id: string) => {
     setSelectedBinding(id);
     setSelectedSkill(null);
     setSelectedTarget(null);
+  };
+  const selectBindingFromHistory = (id: string) => {
+    selectBindingFromShell(id);
     navigatePage("bindings");
   };
+  const runPaletteAction = (action: PaletteActionKey) => {
+    if (!viewModel.actions[action].enabled || (syncBusy && (action === "syncPull" || action === "syncPush"))) return;
+    setPaletteActionRequest({ id: ++nextPaletteActionId.current, action });
+    navigatePage(action === "addTarget" ? "targets" : action === "addBinding" ? "bindings" : "sync");
+  };
+  const clearPaletteActionRequest = () => setPaletteActionRequest(null);
   const controlPlane = (initialTab: "targets" | "bindings" | "projections") => (
     <Suspense fallback={null}>
       <ControlPlanePage
@@ -279,6 +291,9 @@ export function PanelApp() {
         onNavigate={navigatePage}
         readOnly={readOnly}
         mutationVersion={mutationVersion}
+        requestAddTarget={paletteActionRequest?.action === "addTarget" ? paletteActionRequest.id : null}
+        requestAddBinding={paletteActionRequest?.action === "addBinding" ? paletteActionRequest.id : null}
+        onRequestAddHandled={clearPaletteActionRequest}
       />
     </Suspense>
   );
@@ -386,6 +401,11 @@ export function PanelApp() {
             refreshKey={live.lastUpdated}
             readOnly={readOnly}
             onMutation={onMutation}
+            requestedSync={paletteActionRequest?.action === "syncPull" || paletteActionRequest?.action === "syncPush"
+              ? { id: paletteActionRequest.id, direction: paletteActionRequest.action === "syncPull" ? "pull" : "push" }
+              : null}
+            onRequestedSyncHandled={clearPaletteActionRequest}
+            onBusyChange={setSyncBusy}
           />
         );
         break;
@@ -418,6 +438,9 @@ export function PanelApp() {
       onNavigate={navigatePage}
       onSelectSkill={selectSkillFromShell}
       onSelectTarget={selectTargetFromShell}
+      onSelectBinding={selectBindingFromShell}
+      onRunAction={runPaletteAction}
+      syncBusy={syncBusy}
       onReplayQueued={replayQueued}
       onCycleTheme={cycleTheme}
       onToggleTweaks={() => setTweakVisible((value) => !value)}

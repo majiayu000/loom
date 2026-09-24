@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type OpsPayload, type RegistryOperationRecord } from "../lib/api/client";
+import type { Binding, Skill, Target } from "../lib/types";
 import {
   bucketRegistryOperation,
   describeRegistryOperation,
@@ -33,6 +34,12 @@ interface SkillMAuditHistoryProps {
   refreshKey: string | null;
   loadOperations?: typeof api.ops;
   sourceLabel?: string;
+  skills?: Skill[];
+  targets?: Target[];
+  bindings?: Binding[];
+  onOpenSkill?: (name: string) => void;
+  onOpenTarget?: (id: string) => void;
+  onOpenBinding?: (id: string) => void;
 }
 
 interface HistoryState {
@@ -47,7 +54,7 @@ const INITIAL_HISTORY_STATE: HistoryState = {
   data: null,
 };
 
-export function SkillMAuditHistory({ live, refreshKey, loadOperations = api.ops, sourceLabel = "本机仓库操作记录" }: SkillMAuditHistoryProps) {
+export function SkillMAuditHistory({ live, refreshKey, loadOperations = api.ops, sourceLabel = "本机仓库操作记录", skills = [], targets = [], bindings = [], onOpenSkill, onOpenTarget, onOpenBinding }: SkillMAuditHistoryProps) {
   const [offset, setOffset] = useState(0);
   const [textFilter, setTextFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<AuditStatusFilter>("all");
@@ -200,17 +207,22 @@ export function SkillMAuditHistory({ live, refreshKey, loadOperations = api.ops,
       {!state.error && operations.length > 0 && filteredRows.length === 0 && (
         <div className="ops-empty">No audit history matches the current filters.</div>
       )}
-      {filteredRows.map((row) => <AuditHistoryLine key={historyId(row.op)} op={row.op} label={row.label} />)}
+      {filteredRows.map((row) => <AuditHistoryLine key={historyId(row.op)} op={row.op} label={row.label} skills={skills} targets={targets} bindings={bindings} onOpenSkill={onOpenSkill} onOpenTarget={onOpenTarget} onOpenBinding={onOpenBinding} />)}
     </section>
   );
 }
 
-function AuditHistoryLine({ op, label }: { op: RegistryOperationRecord; label: AuditRowLabel }) {
+function AuditHistoryLine({ op, label, skills: skillsInventory = [], targets, bindings, onOpenSkill, onOpenTarget, onOpenBinding }: { op: RegistryOperationRecord; label: AuditRowLabel } & Pick<SkillMAuditHistoryProps, "skills" | "targets" | "bindings" | "onOpenSkill" | "onOpenTarget" | "onOpenBinding">) {
   const [expanded, setExpanded] = useState(false);
   const rowClass = historyClass(op);
   const details = registryOperationDetailParts(op);
   const skills = op.skill ? splitOperationSkills(op.skill) : [];
   const summaryChip = auditSummaryChip(op, skills);
+  const related = [
+    ...skills.map((name) => ({ kind: "skill", id: name, exists: Boolean(skillsInventory.some((skill) => skill.name === name || skill.id === name)), open: onOpenSkill })),
+    ...(op.target ? [{ kind: "target", id: op.target, exists: Boolean(targets?.some((target) => target.id === op.target)), open: onOpenTarget }] : []),
+    ...(op.binding ? [{ kind: "binding", id: op.binding, exists: Boolean(bindings?.some((binding) => binding.id === op.binding)), open: onOpenBinding }] : []),
+  ];
 
   return (
     <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} className={`op-row op-log-row audit-history-row op-row-${rowClass}`}>
@@ -239,6 +251,7 @@ function AuditHistoryLine({ op, label }: { op: RegistryOperationRecord; label: A
             <span>updated</span><code>{op.updated_at}</code>
           </div>
           {details.length > 0 ? <div className="op-detail-line">{details.join(" · ")}</div> : null}
+          {related.length > 0 && <div className="op-skill-block"><span className="op-skill-label">related</span><div className="op-skill-chips">{related.map((item) => item.exists && item.open ? <button type="button" key={`${item.kind}-${item.id}`} className="btn-ghost xs" onClick={() => item.open?.(item.id)}>Open {item.kind} {item.id}</button> : <span key={`${item.kind}-${item.id}`}>{item.kind} {item.id} unavailable</span>)}</div></div>}
           {skills.length > 0 ? (
             <div className="op-skill-block">
               <span className="op-skill-label">skills</span>

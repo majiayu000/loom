@@ -71,7 +71,7 @@ describe("SkillMAuditHistory", () => {
     expect(within(row!).getByText("succeeded")).toBeTruthy();
     expect(within(row!).getByText("daemon-source")).toBeTruthy();
     expect(within(row!).getByText("op_raw_123")).toBeTruthy();
-    expect(within(row!).getByText(/target_claude_proj_a/)).toBeTruthy();
+    expect(within(row!).getAllByText(/target_claude_proj_a/).length).toBeGreaterThan(0);
     expect(within(row!).getByText("2026-04-09T10:06:00Z")).toBeTruthy();
   });
 

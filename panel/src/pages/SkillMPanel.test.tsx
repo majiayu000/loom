@@ -148,6 +148,88 @@ afterEach(() => {
 });
 
 describe("SkillMPanel", () => {
+  it("links live audit objects to their production-shell detail and marks deleted objects unavailable", async () => {
+    panelData.current = {
+      ...panelData.liveOps,
+      skills: [{ id: "demo", name: "demo", tag: "workflow", sourceStatus: "present", releaseTags: [], snapshotTags: [], latestRev: "", ruleCount: 0, bindingCount: 1, projectionCount: 0, changed: "now", targets: [] }],
+      targets: [{ id: "target_codex", agent: "codex", path: "/tmp/codex", profile: "default", ownership: "managed", projectedSkills: 0 }],
+      bindings: [{ id: "bind-demo", skill: "demo", target: "target_codex", policy: "default", matcher: "tag:workflow", method: "copy" }],
+    };
+    window.history.replaceState(null, "", "/?view=history");
+    vi.spyOn(api, "ops").mockResolvedValue({ ok: true, data: { count: 2, loaded_count: 2, offset: 0, limit: 100, has_more: false, operations: [
+      { op_id: "related", intent: "binding.add", status: "succeeded", ack: true, skill: "demo", target: "target_codex", binding: "bind-demo", created_at: "2026-06-12T09:00:00Z", updated_at: "2026-06-12T09:00:00Z" },
+      { op_id: "deleted", intent: "binding.remove", status: "succeeded", ack: true, binding: "bind-deleted", created_at: "2026-06-12T09:01:00Z", updated_at: "2026-06-12T09:01:00Z" },
+    ] } });
+
+    const { container } = render(<SkillMPanel />);
+    await screen.findByText("2 loaded audit changes.");
+    const related = container.querySelectorAll<HTMLDetailsElement>(".audit-history-row")[0];
+    expect(related).toBeTruthy();
+    await userEvent.click(within(related).getByText("详情"));
+    await userEvent.click(within(related).getByRole("button", { name: "Open skill demo" }));
+    expect(new URL(window.location.href).searchParams.get("view")).toBe("skills");
+    await userEvent.click(screen.getByRole("button", { name: "Audit log" }));
+    await userEvent.click(within(container.querySelectorAll<HTMLDetailsElement>(".audit-history-row")[0]).getByText("详情"));
+    await userEvent.click(within(container.querySelectorAll<HTMLDetailsElement>(".audit-history-row")[0]).getByRole("button", { name: "Open target target_codex" }));
+    expect(screen.getByRole("region", { name: "Target detail target_codex" })).toHaveTextContent("/tmp/codex");
+    await userEvent.click(screen.getByRole("button", { name: "Audit log" }));
+    await userEvent.click(within(container.querySelectorAll<HTMLDetailsElement>(".audit-history-row")[0]).getByText("详情"));
+    await userEvent.click(within(container.querySelectorAll<HTMLDetailsElement>(".audit-history-row")[0]).getByRole("button", { name: "Open binding bind-demo" }));
+    expect(screen.getByRole("region", { name: "Binding detail bind-demo" })).toHaveTextContent("demo → target_codex");
+    await userEvent.click(screen.getByRole("button", { name: "Audit log" }));
+    await screen.findByText("2 loaded audit changes.");
+    const deleted = container.querySelectorAll<HTMLDetailsElement>(".audit-history-row")[1];
+    expect(deleted).toBeTruthy();
+    await userEvent.click(within(deleted).getByText("详情"));
+    expect(within(deleted).getByText("binding bind-deleted unavailable")).toBeTruthy();
+    expect(within(deleted).queryByRole("button", { name: /bind-deleted/ })).toBeNull();
+  });
+
+  it("opens binding detail and existing add forms from the production command palette", async () => {
+    panelData.current = { ...panelData.liveOps,
+      targets: [{ id: "target_codex", agent: "codex", path: "/tmp/codex", profile: "default", ownership: "managed", projectedSkills: 0 }],
+      bindings: [{ id: "bind-demo", skill: "demo", target: "target_codex", policy: "default", matcher: "tag:workflow", method: "copy" }],
+    };
+    render(<SkillMPanel />);
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await userEvent.type(screen.getByRole("textbox", { name: "搜索命令" }), "bind-demo");
+    await userEvent.click(screen.getByRole("button", { name: /Open binding bind-demo/ }));
+    expect(screen.getByRole("region", { name: "Binding detail bind-demo" })).toBeTruthy();
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Command palette" })).getByRole("button", { name: "New binding" }));
+    expect(screen.getByRole("form", { name: "Add binding" })).toBeTruthy();
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Command palette" })).getByRole("button", { name: "New target" }));
+    expect(screen.getByRole("form", { name: "Add target" })).toBeTruthy();
+  });
+
+  it("enforces palette prerequisites and reports sync failure through the existing confirmation", async () => {
+    panelData.current = { ...panelData.liveOps, mode: "offline-stale", live: false };
+    const pull = vi.spyOn(api, "syncPull").mockRejectedValue(new Error("remote rejected update"));
+    const { rerender } = render(<SkillMPanel />);
+    await userEvent.keyboard("{Control>}k{/Control}");
+    expect(screen.getByRole("button", { name: "New target" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync pull" })).toHaveAttribute("title", "Registry data is not ready; mutations are disabled.");
+    expect(pull).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "关闭命令面板" }));
+
+    panelData.current = panelData.liveOps;
+    rerender(<SkillMPanel />);
+    await userEvent.keyboard("{Control>}k{/Control}");
+    expect(screen.getByRole("button", { name: "New binding" })).toHaveAttribute("title", "Create a target before adding a binding.");
+    expect(screen.getByRole("button", { name: "Sync pull" })).toHaveAttribute("title", "Configure a Git remote before pulling or pushing.");
+    await userEvent.click(screen.getByRole("button", { name: "关闭命令面板" }));
+
+    panelData.current = { ...panelData.liveOps, remote: { configured: true, url: "https://example.test/registry" } };
+    rerender(<SkillMPanel />);
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await userEvent.click(screen.getByRole("button", { name: "Sync pull" }));
+    expect(pull).not.toHaveBeenCalled();
+    await userEvent.click(within(screen.getByRole("dialog", { name: "拉取远端注册表？" })).getByRole("button", { name: "确认拉取" }));
+    await waitFor(() => expect(screen.getByText("remote rejected update")).toBeTruthy());
+    expect(panelData.refetch).not.toHaveBeenCalled();
+  });
+
   it("shows the real first-run initialization flow when registry state is missing", async () => {
     panelData.current = panelData.firstRun;
     render(<SkillMPanel />);

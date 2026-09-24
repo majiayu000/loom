@@ -227,6 +227,10 @@ export function SkillMPanel() {
   const [view, setView] = useState<SkillMPage>(initialView);
   const [query, setQuery] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
+  const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
+  const [selectedBinding, setSelectedBinding] = useState<string | null>(null);
+  const [targetAddOpen, setTargetAddOpen] = useState(false);
+  const [bindingAddOpen, setBindingAddOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [termOpen, setTermOpen] = useState(false);
   const [tweaksOpen, setTweaksOpen] = useState(false);
@@ -289,6 +293,22 @@ export function SkillMPanel() {
     await runAction(action.label, action.fn);
   };
 
+  const openSkill = (name: string) => { setSelectedSkill(live.skills.find((skill) => skill.id === name || skill.name === name)?.name ?? name); go("skills"); setPaletteOpen(false); };
+  const openTarget = (id: string) => { setSelectedTarget(id); go("targets"); setPaletteOpen(false); };
+  const openBinding = (id: string) => { setSelectedBinding(id); go("bindings"); setPaletteOpen(false); };
+  const openAdd = (kind: "target" | "binding") => {
+    if (live.mode !== "live" || (kind === "binding" && live.targets.length === 0)) return;
+    if (kind === "target") { setTargetAddOpen(true); go("targets"); }
+    else { setBindingAddOpen(true); go("bindings"); }
+    setPaletteOpen(false);
+  };
+  const openSync = (kind: "pull" | "push") => {
+    if (live.mode !== "live" || !(live.remote?.configured || live.remote?.url || live.remote?.remote)) return;
+    go("sync");
+    setPaletteOpen(false);
+    setConfirm(syncConfirmation(live, kind));
+  };
+
   const trapConfirmFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key !== "Tab") return;
     const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
@@ -348,8 +368,8 @@ export function SkillMPanel() {
             <>
               {view === "overview" && <Overview live={live} counts={counts} go={go} />}
               {view === "skills" && <Skills skills={live.skills} targets={live.targets} query={query} setQuery={setQuery} selected={selected} setSelectedSkill={setSelectedSkill} convergenceSupported={live.backendCapabilities?.skill_convergence?.apply === true} onApplied={live.refetch} readOnly={live.mode !== "live"} />}
-              {(view === "targets" || view === "bindings" || view === "projections") && <Plane live={live} tab={view} go={go} />}
-              {(view === "ops" || view === "history") && <Ops live={live} history={view === "history"} go={go} confirm={setConfirm} />}
+              {(view === "targets" || view === "bindings" || view === "projections") && <Plane live={live} tab={view} go={go} selectedTarget={selectedTarget} selectedBinding={selectedBinding} targetAddOpen={targetAddOpen} setTargetAddOpen={setTargetAddOpen} bindingAddOpen={bindingAddOpen} setBindingAddOpen={setBindingAddOpen} />}
+              {(view === "ops" || view === "history") && <Ops live={live} history={view === "history"} go={go} confirm={setConfirm} openSkill={openSkill} openTarget={openTarget} openBinding={openBinding} />}
               {view === "sync" && <Sync live={live} confirm={setConfirm} />}
               {view === "doctor" && <Doctor live={live} go={go} />}
               {view === "settings" && <Settings live={live} dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} />}
@@ -361,7 +381,7 @@ export function SkillMPanel() {
         </main>
       </div>
       <StatusBar live={live} counts={counts} dark={dark} setDark={setDark} onSync={() => go("sync")} onTerm={() => setTermOpen((open) => !open)} onTweaks={() => setTweaksOpen((open) => !open)} />
-      {paletteOpen && <Palette skills={live.skills} go={(page) => { go(page); setPaletteOpen(false); }} openSkill={(name) => { setSelectedSkill(name); go("skills"); setPaletteOpen(false); }} close={() => setPaletteOpen(false)} />}
+      {paletteOpen && <Palette live={live} go={(page) => { go(page); setPaletteOpen(false); }} openSkill={openSkill} openTarget={openTarget} openBinding={openBinding} openAdd={openAdd} openSync={openSync} close={() => setPaletteOpen(false)} />}
       {tweaksOpen && <Tweaks dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} close={() => setTweaksOpen(false)} />}
       {confirm && (
         <div className="sm-veil">
@@ -733,15 +753,15 @@ function Skills({ skills, targets, query, setQuery, selected, setSelectedSkill, 
   );
 }
 
-function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: "targets" | "bindings" | "projections"; go: (page: SkillMPage) => void }) {
+function Plane({ live, tab, go, selectedTarget, selectedBinding, targetAddOpen, setTargetAddOpen, bindingAddOpen, setBindingAddOpen }: { live: ReturnType<typeof usePanelData>; tab: "targets" | "bindings" | "projections"; go: (page: SkillMPage) => void; selectedTarget: string | null; selectedBinding: string | null; targetAddOpen: boolean; setTargetAddOpen: (open: boolean) => void; bindingAddOpen: boolean; setBindingAddOpen: (open: boolean) => void }) {
   const drifts = live.projections.filter((p) => p.observed_drift || p.health === "drifted").length;
   const pending = pendingQueueCount(live);
   const panelHost = panelHostLabel();
   const [projectionPage, setProjectionPage] = useState(0);
-  const [targetAddOpen, setTargetAddOpen] = useState(false);
-  const [bindingAddOpen, setBindingAddOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
   const readOnly = live.mode !== "live";
+  const targetDetail = live.targets.find((target) => target.id === selectedTarget);
+  const bindingDetail = live.bindings.find((binding) => binding.id === selectedBinding);
   const projectionPageCount = Math.max(1, Math.ceil(live.projections.length / PROJECTION_PAGE_SIZE)), activeProjectionPage = Math.min(projectionPage, projectionPageCount - 1), scopedProjections = live.projections.slice(activeProjectionPage * PROJECTION_PAGE_SIZE, activeProjectionPage * PROJECTION_PAGE_SIZE + PROJECTION_PAGE_SIZE);
   const allProjectionSkills = new Set(live.projections.map((p) => p.skill_id)), allProjectionTargets = new Set(live.projections.map((p) => p.target_id)), scopedProjectionSkills = new Set(scopedProjections.map((p) => p.skill_id)), scopedProjectionTargets = new Set(scopedProjections.map((p) => p.target_id));
   const graphSkills = live.projections.length ? live.skills.filter((skill) => scopedProjectionSkills.has(skill.name)) : live.skills, graphTargets = live.projections.length ? live.targets.filter((target) => scopedProjectionTargets.has(target.id)) : live.targets;
@@ -765,8 +785,8 @@ function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: 
       <header className="view-head">
         <div><h1>控制平面</h1><p>把注册表里的 skill 通过 binding 投影到各 agent 目录 · symlink / copy / materialize</p></div>
         <div className="ops-head-actions">
-          {tab === "targets" && <button type="button" className="btn-grad sm" disabled={readOnly} title={readOnly ? "Registry data is not ready; target creation is disabled." : undefined} onClick={() => setTargetAddOpen((open) => !open)}><Icon d="plus" size={14} />{targetAddOpen ? "Close" : "New target"}</button>}
-          {tab === "bindings" && <button type="button" className="btn-grad sm" disabled={readOnly || live.targets.length === 0} title={readOnly ? "Registry data is not ready; binding creation is disabled." : live.targets.length === 0 ? "Create a target before adding a binding." : undefined} onClick={() => setBindingAddOpen((open) => !open)}><Icon d="plus" size={14} />{bindingAddOpen ? "Close" : "New binding"}</button>}
+          {tab === "targets" && <button type="button" className="btn-grad sm" disabled={readOnly} title={readOnly ? "Registry data is not ready; target creation is disabled." : undefined} onClick={() => setTargetAddOpen(!targetAddOpen)}><Icon d="plus" size={14} />{targetAddOpen ? "Close" : "New target"}</button>}
+          {tab === "bindings" && <button type="button" className="btn-grad sm" disabled={readOnly || live.targets.length === 0} title={readOnly ? "Registry data is not ready; binding creation is disabled." : live.targets.length === 0 ? "Create a target before adding a binding." : undefined} onClick={() => setBindingAddOpen(!bindingAddOpen)}><Icon d="plus" size={14} />{bindingAddOpen ? "Close" : "New binding"}</button>}
           {tab === "projections" && <button type="button" className="btn-grad sm" disabled={readOnly || live.skills.length === 0 || live.bindings.length === 0} title={readOnly ? "Registry data is not ready; projection is disabled." : live.skills.length === 0 ? "Import a skill before projecting." : live.bindings.length === 0 ? "Create a binding before projecting." : undefined} onClick={() => setProjectOpen((open) => !open)}><Icon d="bolt" size={14} />{projectOpen ? "Close" : "Project skill"}</button>}
         </div>
       </header>
@@ -782,11 +802,13 @@ function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: 
         {([["projections", "投影关系图", "graph"], ["targets", "Targets", "target"], ["bindings", "Bindings", "branch"]] as const).map(([id, label, icon]) => <button type="button" key={id} className={`det-tab ${tab === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={icon} size={14} />{label}</button>)}
         <span className="tab-flex" />
       </nav>
-      {tab === "targets" && targetAddOpen && <div className="skillm-control-form"><TargetAddForm onCancel={() => setTargetAddOpen(false)} onSuccess={completeMutation} /></div>}
-      {tab === "bindings" && bindingAddOpen && <div className="skillm-control-form"><BindingAddForm targets={live.targets} onCancel={() => setBindingAddOpen(false)} onSuccess={completeMutation} /></div>}
+      {tab === "targets" && !readOnly && targetAddOpen && <div className="skillm-control-form"><TargetAddForm onCancel={() => setTargetAddOpen(false)} onSuccess={completeMutation} /></div>}
+      {tab === "bindings" && !readOnly && live.targets.length > 0 && bindingAddOpen && <div className="skillm-control-form"><BindingAddForm targets={live.targets} onCancel={() => setBindingAddOpen(false)} onSuccess={completeMutation} /></div>}
       {tab === "projections" && projectOpen && <SkillMProjectForm skills={live.skills} bindings={live.bindings} readOnly={readOnly} onCancel={() => setProjectOpen(false)} onSuccess={completeMutation} />}
       {tab === "targets" && <div className="targets-grid">{live.targets.map((t) => <TargetCard key={t.id} target={t} />)}{live.targets.length === 0 && <EmptyPanel text="No target rows from backend." />}</div>}
-      {tab === "bindings" && <BindingsTable bindings={live.bindings} />}
+      {tab === "targets" && targetDetail && <section className="panel related-detail" aria-label={`Target detail ${targetDetail.id}`}><h3>Target detail · {targetDetail.id}</h3><p>{targetDetail.agent} · {targetDetail.profile} · {targetDetail.ownership}</p><code>{targetDetail.path}</code></section>}
+      {tab === "bindings" && <BindingsTable bindings={live.bindings} selectedBinding={selectedBinding} />}
+      {tab === "bindings" && bindingDetail && <section className="panel related-detail" aria-label={`Binding detail ${bindingDetail.id}`}><h3>Binding detail · {bindingDetail.id}</h3><p>{bindingDetail.skill} → {bindingDetail.target} · {bindingDetail.policy} · {bindingDetail.method}</p><code>{bindingDetail.matcher}</code></section>}
       {tab === "projections" && (
         <section className="panel">
           <div className="panel-head projection-head"><h3><Icon d="graph" />Projection graph</h3><div className="projection-scope-controls"><span className="panel-hint">{scopedProjections.length} of {live.projections.length} edges</span>{projectionPageCount > 1 && <div className="scope-pager"><button type="button" aria-label="Previous projection page" disabled={activeProjectionPage === 0} onClick={() => setProjectionPage(Math.max(0, activeProjectionPage - 1))}>Prev</button><span>Page {activeProjectionPage + 1} of {projectionPageCount}</span><button type="button" aria-label="Next projection page" disabled={activeProjectionPage >= projectionPageCount - 1} onClick={() => setProjectionPage(Math.min(projectionPageCount - 1, activeProjectionPage + 1))}>Next</button></div>}</div></div>
@@ -897,8 +919,8 @@ function OwnBadge({ ownership }: { ownership: string }) {
   return <span className={`own-badge own-${ownership}`} style={{ "--oc": color } as CSSProperties}><Icon d={ownership === "managed" ? "check" : "eye"} size={12} />{ownership}</span>;
 }
 
-function BindingsTable({ bindings }: { bindings: ReturnType<typeof usePanelData>["bindings"] }) {
-  return <div className="bindings-table"><div className="bt-head"><span>Skill</span><span>Policy</span><span>Matcher</span><span>Target</span><span>方式</span><span>Status</span></div>{bindings.map((b) => <div className="bt-row" key={b.id}><span className="bt-skill"><Glyph>{b.skill}</Glyph>{b.skill}</span><span className="bt-agent"><i />{b.policy}</span><span className="bt-matcher"><b>{b.matcher.split(":")[0]}</b><code>{b.matcher.split(":").slice(1).join(":") || "—"}</code></span><span className="bt-target"><code>{shortName(b.target)}</code></span><span><MethodTag method={b.method} /></span><span className="bt-act"><span className="mini-state">configured</span></span></div>)}{bindings.length === 0 && <div className="panel-empty">No bindings yet. Create a real binding before Loom can materialize projections.</div>}</div>;
+function BindingsTable({ bindings, selectedBinding }: { bindings: ReturnType<typeof usePanelData>["bindings"]; selectedBinding: string | null }) {
+  return <div className="bindings-table"><div className="bt-head"><span>Skill</span><span>Policy</span><span>Matcher</span><span>Target</span><span>方式</span><span>Status</span></div>{bindings.map((b) => <div className="bt-row" data-selected={b.id === selectedBinding ? "true" : undefined} key={b.id}><span className="bt-skill"><Glyph>{b.skill}</Glyph>{b.skill}</span><span className="bt-agent"><i />{b.policy}</span><span className="bt-matcher"><b>{b.matcher.split(":")[0]}</b><code>{b.matcher.split(":").slice(1).join(":") || "—"}</code></span><span className="bt-target"><code>{shortName(b.target)}</code></span><span><MethodTag method={b.method} /></span><span className="bt-act"><span className="mini-state">configured</span></span></div>)}{bindings.length === 0 && <div className="panel-empty">No bindings yet. Create a real binding before Loom can materialize projections.</div>}</div>;
 }
 
 function DataGrid({ columns, rows }: { columns: string[]; rows: Array<Array<string | number>> }) {
@@ -931,7 +953,7 @@ function EmptyPanel({ text }: { text: string }) {
   return <div className="panel"><div className="panel-empty">{text}</div></div>;
 }
 
-function Ops({ live, history, go, confirm }: { live: ReturnType<typeof usePanelData>; history: boolean; go: (page: SkillMPage) => void; confirm: (action: Confirm) => void }) {
+function Ops({ live, history, go, confirm, openSkill, openTarget, openBinding }: { live: ReturnType<typeof usePanelData>; history: boolean; go: (page: SkillMPage) => void; confirm: (action: Confirm) => void; openSkill: (name: string) => void; openTarget: (id: string) => void; openBinding: (id: string) => void }) {
   const counts = live.operationCounts;
   const queue = counts ? live.ops.filter((op) => op.actionable) : live.ops.filter((op) => op.status !== "ok");
   const queueCount = counts?.actionable_operations ?? Math.max(queue.length, live.queuedWriteCount);
@@ -946,16 +968,38 @@ function Ops({ live, history, go, confirm }: { live: ReturnType<typeof usePanelD
       </header>
       <div className="ops-stats">{[["可执行操作", counts?.actionable_operations], ["本地 journal", counts?.local_journal_events], ["待推送 history", counts?.unpushed_history_events], ["仅本地 history", counts?.local_only_history_events]].map(([label, value]) => <div className="pstat" key={label}><span className="pstat-l">{label}</span><span className="pstat-n">{value ?? "—"}</span></div>)}</div>
       <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button type="button" key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queueCount ? <span className="tab-count">{queueCount}</span> : null}</button>)}<span className="tab-flex" /></nav>
-      {history ? <SkillMAuditHistory live={live.live} refreshKey={live.lastUpdated} /> : <section className="ops-table">{rows.map((op) => <OperationLogRow key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>队列已清空 · 没有待处理或失败的操作</p></div>}</section>}
+      {history ? <SkillMAuditHistory live={live.live} refreshKey={live.lastUpdated} skills={live.skills} targets={live.targets} bindings={live.bindings} onOpenSkill={openSkill} onOpenTarget={openTarget} onOpenBinding={openBinding} /> : <section className="ops-table">{rows.map((op) => <OperationLogRow key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>队列已清空 · 没有待处理或失败的操作</p></div>}</section>}
     </div>
   );
+}
+
+function syncConfirmation(live: ReturnType<typeof usePanelData>, kind: "pull" | "push" | "replay"): Confirm {
+  const remoteLabel = live.remote?.url || live.remote?.remote || "local-only registry";
+  const operationBacklog = live.operationCounts?.actionable_operations ?? live.remote?.operation_backlog ?? live.queuedWriteCount;
+  const action = kind === "pull" ? api.syncPull : kind === "push" ? api.syncPush : api.syncReplay;
+  const title = kind === "pull" ? "拉取远端注册表？" : kind === "push" ? "推送本地注册表？" : "重放同步队列？";
+  const impact = kind === "pull"
+    ? "将调用 Sync pull API，把远端注册表变更合并到本地工作区。"
+    : kind === "push"
+      ? "将调用 Sync push API，把本地注册表提交发布到已配置远端。"
+      : "将调用 Sync replay API，重试同步队列并可能更新本地注册表同步状态。";
+  return {
+    label: `Sync ${kind}`,
+    action: kind === "pull" ? "确认拉取" : kind === "push" ? "确认推送" : "确认重放",
+    title,
+    scope: `Git sync · ${remoteLabel}`,
+    count: kind === "replay" ? operationBacklog : undefined,
+    undo: kind === "push" ? "远端更新不能由面板自动撤销；需要后续提交或 Git 恢复。" : "同步调度本身不能撤销；结果会写入审计事件。",
+    impact,
+    tone: "sync",
+    fn: action,
+  };
 }
 
 function Sync({ live, confirm }: { live: ReturnType<typeof usePanelData>; confirm: (action: Confirm) => void }) {
   const remote = live.remote;
   const remoteConfigured = Boolean(remote?.configured || remote?.url || remote?.remote);
   const readOnly = live.mode !== "live";
-  const remoteLabel = remote?.url || remote?.remote || "local-only registry";
   const remoteDisabledReason = readOnly
     ? "Registry data is not ready; sync mutations are disabled."
     : !remoteConfigured
@@ -963,26 +1007,7 @@ function Sync({ live, confirm }: { live: ReturnType<typeof usePanelData>; confir
       : undefined;
   const syncOps = live.ops.filter((op) => op.kind.startsWith("sync."));
   const operationBacklog = live.operationCounts?.actionable_operations ?? remote?.operation_backlog ?? live.queuedWriteCount;
-  const requestSync = (kind: "pull" | "push" | "replay") => {
-    const action = kind === "pull" ? api.syncPull : kind === "push" ? api.syncPush : api.syncReplay;
-    const title = kind === "pull" ? "拉取远端注册表？" : kind === "push" ? "推送本地注册表？" : "重放同步队列？";
-    const impact = kind === "pull"
-      ? "将调用 Sync pull API，把远端注册表变更合并到本地工作区。"
-      : kind === "push"
-        ? "将调用 Sync push API，把本地注册表提交发布到已配置远端。"
-        : "将调用 Sync replay API，重试同步队列并可能更新本地注册表同步状态。";
-    confirm({
-      label: `Sync ${kind}`,
-      action: kind === "pull" ? "确认拉取" : kind === "push" ? "确认推送" : "确认重放",
-      title,
-      scope: `Git sync · ${remoteLabel}`,
-      count: kind === "replay" ? operationBacklog : undefined,
-      undo: kind === "push" ? "远端更新不能由面板自动撤销；需要后续提交或 Git 恢复。" : "同步调度本身不能撤销；结果会写入审计事件。",
-      impact,
-      tone: "sync",
-      fn: action,
-    });
-  };
+  const requestSync = (kind: "pull" | "push" | "replay") => confirm(syncConfirmation(live, kind));
   return (
     <div className="view view-sync">
       <header className="view-head">
@@ -1041,12 +1066,23 @@ function Terminal({ live, close }: { live: ReturnType<typeof usePanelData>; clos
   );
 }
 
-function Palette({ skills, go, openSkill, close }: { skills: Skill[]; go: (page: SkillMPage) => void; openSkill: (name: string) => void; close: () => void }) {
+function Palette({ live, go, openSkill, openTarget, openBinding, openAdd, openSync, close }: { live: ReturnType<typeof usePanelData>; go: (page: SkillMPage) => void; openSkill: (name: string) => void; openTarget: (id: string) => void; openBinding: (id: string) => void; openAdd: (kind: "target" | "binding") => void; openSync: (kind: "pull" | "push") => void; close: () => void }) {
   const [filter, setFilter] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const q = filter.trim().toLowerCase();
   const filteredPages = pages.filter((page) => !q || `${page.label} ${page.group} ${page.preview ? "preview not connected" : ""}`.toLowerCase().includes(q));
-  const filteredSkills = skills.filter((skill) => !q || `${skill.name} ${skill.tag} ${skill.description ?? ""}`.toLowerCase().includes(q)).slice(0, 8);
+  const filteredSkills = live.skills.filter((skill) => !q || `${skill.name} ${skill.tag} ${skill.description ?? ""}`.toLowerCase().includes(q)).slice(0, 8);
+  const filteredTargets = live.targets.filter((target) => !q || `${target.id} ${target.agent} ${target.path}`.toLowerCase().includes(q)).slice(0, 8);
+  const filteredBindings = live.bindings.filter((binding) => !q || `${binding.id} ${binding.skill} ${binding.target} ${binding.matcher}`.toLowerCase().includes(q)).slice(0, 8);
+  const readOnlyReason = live.mode !== "live" ? "Registry data is not ready; mutations are disabled." : undefined;
+  const addBindingReason = readOnlyReason ?? (live.targets.length === 0 ? "Create a target before adding a binding." : undefined);
+  const syncReason = readOnlyReason ?? (!(live.remote?.configured || live.remote?.url || live.remote?.remote) ? "Configure a Git remote before pulling or pushing." : undefined);
+  const actions = [
+    { label: "New target", run: () => openAdd("target"), reason: readOnlyReason },
+    { label: "New binding", run: () => openAdd("binding"), reason: addBindingReason },
+    { label: "Sync pull", run: () => openSync("pull"), reason: syncReason },
+    { label: "Sync push", run: () => openSync("push"), reason: syncReason },
+  ].filter((action) => !q || action.label.toLowerCase().includes(q));
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -1055,11 +1091,14 @@ function Palette({ skills, go, openSkill, close }: { skills: Skill[]; go: (page:
   return (
     <div className="sm-veil">
       <div className="cmd-pal" role="dialog" aria-modal="true" aria-label="Command palette">
-        <div className="cmd-search"><Icon d="search" /><input ref={inputRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索页面或 skill" aria-label="搜索命令" /><button type="button" className="btn-icon" aria-label="关闭命令面板" onClick={close}><Icon d="x" /></button></div>
+        <div className="cmd-search"><Icon d="search" /><input ref={inputRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索页面、对象或操作" aria-label="搜索命令" /><button type="button" className="btn-icon" aria-label="关闭命令面板" onClick={close}><Icon d="x" /></button></div>
         <div className="cmd-list">
           {filteredPages.map((page) => <button type="button" key={page.id} className={`cmd-item ${page.preview ? "preview" : ""}`} aria-label={page.preview ? `Go to ${page.label} Preview not connected` : `Go to ${page.label}`} onClick={() => go(page.id)}><Icon d={page.icon} />Go to {page.label}<span>{page.preview ? "Preview · not connected" : page.group}</span></button>)}
           {filteredSkills.map((skill) => <button type="button" key={skill.name} className="cmd-item" onClick={() => openSkill(skill.name)}><Icon d="eye" />Open {skill.name}<span>{sourceLabel(skill)}</span></button>)}
-          {filteredPages.length + filteredSkills.length === 0 ? <div className="panel-empty">没有匹配的命令。</div> : null}
+          {filteredTargets.map((target) => <button type="button" key={target.id} className="cmd-item" onClick={() => openTarget(target.id)}><Icon d="target" />Open target {target.id}<span>{target.agent}</span></button>)}
+          {filteredBindings.map((binding) => <button type="button" key={binding.id} className="cmd-item" onClick={() => openBinding(binding.id)}><Icon d="branch" />Open binding {binding.id}<span>{binding.skill} → {binding.target}</span></button>)}
+          {actions.map((action) => <button type="button" key={action.label} className="cmd-item" aria-label={action.label} disabled={Boolean(action.reason)} title={action.reason} onClick={action.run}><Icon d="bolt" />{action.label}<span>{action.reason ?? "action"}</span></button>)}
+          {filteredPages.length + filteredSkills.length + filteredTargets.length + filteredBindings.length + actions.length === 0 ? <div className="panel-empty">没有匹配的命令。</div> : null}
         </div>
       </div>
     </div>

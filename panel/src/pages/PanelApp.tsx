@@ -116,6 +116,7 @@ export function PanelApp() {
   const [tweakVisible, setTweakVisible] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(skillRouteSelection);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
+  const [selectedBinding, setSelectedBinding] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastViewModel[]>([]);
   const toastIdRef = useRef(0);
 
@@ -255,6 +256,12 @@ export function PanelApp() {
     setSelectedSkill(null);
     writeSkillRoute(null);
   };
+  const selectBindingFromHistory = (id: string) => {
+    setSelectedBinding(id);
+    setSelectedSkill(null);
+    setSelectedTarget(null);
+    navigatePage("bindings");
+  };
   const controlPlane = (initialTab: "targets" | "bindings" | "projections") => (
     <Suspense fallback={null}>
       <ControlPlanePage
@@ -265,6 +272,8 @@ export function PanelApp() {
         projections={live.projections}
         selectedTarget={selectedTarget}
         onSelectTarget={toggleTarget}
+        selectedBinding={selectedBinding}
+        onSelectBinding={setSelectedBinding}
         onRemoveTarget={onRemoveTarget}
         onMutation={onMutation}
         onNavigate={navigatePage}
@@ -346,6 +355,20 @@ export function PanelApp() {
             live={live.live}
             mode={live.mode}
             mutationVersion={mutationVersion}
+            skills={skills}
+            targets={targets}
+            bindings={bindings}
+            onSelectSkill={(id) => {
+              const skill = skills.find((item) => item.id === id || item.name === id);
+              if (!skill) return;
+              selectSkillFromShell(skill.id);
+              navigatePage("skills");
+            }}
+            onSelectTarget={(id) => {
+              selectTargetFromShell(id);
+              navigatePage("targets");
+            }}
+            onSelectBinding={selectBindingFromHistory}
             refreshKey={live.lastUpdated}
             readOnly={historyReadOnly}
             readOnlyReason={historyReadOnlyReason}

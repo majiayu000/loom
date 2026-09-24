@@ -51,6 +51,8 @@ describe("BindingsPage orphan cleanup", () => {
       <BindingsPage
         bindings={[binding]}
         targets={[target]}
+        selectedBinding={null}
+        onSelectBinding={() => {}}
         projections={[orphanProjection]}
         readOnly={false}
         mutationVersion={0}

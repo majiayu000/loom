@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Binding, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { MutationBanner } from "../../components/panel/MutationBanner";
@@ -15,6 +15,8 @@ interface BindingsPageProps {
   bindings: Binding[];
   targets: Target[];
   projections?: RegistryProjection[];
+  selectedBinding: string | null;
+  onSelectBinding: (id: string | null) => void;
   onMutation: () => void;
   readOnly: boolean;
   mutationVersion: number;
@@ -24,14 +26,17 @@ export function BindingsPage({
   bindings,
   targets,
   projections = [],
+  selectedBinding,
+  onSelectBinding,
   onMutation,
   readOnly,
   mutationVersion,
 }: BindingsPageProps) {
   const [addOpen, setAddOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteLivePaths, setDeleteLivePaths] = useState(false);
-  const sel = bindings.find((b) => b.id === selectedId) ?? null;
+  const selectedBindingRef = useRef(selectedBinding);
+  selectedBindingRef.current = selectedBinding;
+  const sel = bindings.find((b) => b.id === selectedBinding) ?? null;
   const cleanOrphans = useMutation();
   const orphanProjections = projections.filter((p) => !p.binding_id && p.health === "orphaned");
 
@@ -194,8 +199,8 @@ export function BindingsPage({
                     return (
                       <tr
                         key={b.id}
-                        className={selectedId === b.id ? "selected" : ""}
-                        onClick={() => setSelectedId(b.id === selectedId ? null : b.id)}
+                        className={selectedBinding === b.id ? "selected" : ""}
+                        onClick={() => onSelectBinding(b.id === selectedBinding ? null : b.id)}
                       >
                         <td className="mono dim" data-label="Binding">
                           {b.id}
@@ -241,7 +246,9 @@ export function BindingsPage({
                   readOnly={readOnly}
                   onMutation={onMutation}
                   mutationVersion={mutationVersion}
-                  onRemoved={(bindingId) => setSelectedId((cur) => (cur === bindingId ? null : cur))}
+                  onRemoved={(bindingId) => {
+                    if (selectedBindingRef.current === bindingId) onSelectBinding(null);
+                  }}
                 />
               ) : (
                 <div className="empty">Select a binding to inspect its rules, projections, and default target.</div>

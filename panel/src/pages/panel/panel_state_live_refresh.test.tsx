@@ -9,6 +9,15 @@ import { DoctorPage } from "./DoctorPage";
 import { api } from "../../lib/api/client";
 
 import { bindingPayload, buttonByLabel, clickableRows, doctorPayload, flush, makeBinding, makeOperation, makeSkill, makeTarget, markup, opsPayload, targetPayload, textOf } from "./panel_state_test_utils";
+
+const historyNavigation = {
+  skills: [],
+  targets: [],
+  bindings: [],
+  onSelectSkill: () => {},
+  onSelectTarget: () => {},
+  onSelectBinding: () => {},
+};
 test("HistoryPage refetches when a panel mutation completes", async () => {
   const originalOps = api.ops;
   const seen: string[] = [];
@@ -21,7 +30,7 @@ test("HistoryPage refetches when a panel mutation completes", async () => {
   try {
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<HistoryPage live={true} mode="live" mutationVersion={0} />);
+      renderer = create(<HistoryPage {...historyNavigation} live={true} mode="live" mutationVersion={0} />);
     });
     await flush();
 
@@ -30,7 +39,7 @@ test("HistoryPage refetches when a panel mutation completes", async () => {
 
     response = opsPayload(makeOperation("succeeded", true, "op-new", "sync.replay"));
     await act(async () => {
-      renderer!.update(<HistoryPage live={true} mode="live" mutationVersion={1} />);
+      renderer!.update(<HistoryPage {...historyNavigation} live={true} mode="live" mutationVersion={1} />);
     });
     await flush();
 
@@ -54,13 +63,13 @@ test("HistoryPage refetches when the shared live refresh key changes", async () 
   try {
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<HistoryPage live={true} mode="live" mutationVersion={0} refreshKey="tick-1" />);
+      renderer = create(<HistoryPage {...historyNavigation} live={true} mode="live" mutationVersion={0} refreshKey="tick-1" />);
     });
     await flush();
 
     response = opsPayload(makeOperation("succeeded", true, "op-new", "sync.replay"));
     await act(async () => {
-      renderer!.update(<HistoryPage live={true} mode="live" mutationVersion={0} refreshKey="tick-2" />);
+      renderer!.update(<HistoryPage {...historyNavigation} live={true} mode="live" mutationVersion={0} refreshKey="tick-2" />);
     });
     await flush();
 
@@ -320,6 +329,7 @@ test("BindingsPage keeps a newer selection when a previous binding delete comple
 
   try {
     function Harness() {
+      const [selectedBinding, setSelectedBinding] = React.useState<string | null>(null);
       return (
         <BindingsPage
           bindings={[
@@ -334,6 +344,8 @@ test("BindingsPage keeps a newer selection when a previous binding delete comple
             },
           ]}
           targets={[makeTarget()]}
+          selectedBinding={selectedBinding}
+          onSelectBinding={setSelectedBinding}
           readOnly={false}
           mutationVersion={0}
           onMutation={() => {}}
@@ -388,17 +400,23 @@ test("BindingsPage skips live detail fetches in read-only mode", async () => {
   };
 
   try {
-    let renderer: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
+    function Harness() {
+      const [selectedBinding, setSelectedBinding] = React.useState<string | null>(null);
+      return (
         <BindingsPage
           bindings={[makeBinding()]}
           targets={[makeTarget()]}
+          selectedBinding={selectedBinding}
+          onSelectBinding={setSelectedBinding}
           readOnly={true}
           mutationVersion={0}
           onMutation={() => {}}
-        />,
+        />
       );
+    }
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Harness />);
     });
     await act(async () => {
       clickableRows(renderer!)[0]?.props.onClick();
@@ -456,7 +474,7 @@ test("HistoryPage skips live activity fetches when offline", async () => {
   try {
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<HistoryPage live={false} mode="offline-empty" mutationVersion={0} />);
+      renderer = create(<HistoryPage {...historyNavigation} live={false} mode="offline-empty" mutationVersion={0} />);
     });
     await flush();
 

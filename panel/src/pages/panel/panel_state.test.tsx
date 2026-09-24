@@ -52,6 +52,8 @@ test("table-heavy panel pages expose mobile card row labels", () => {
     <BindingsPage
       bindings={[makeBinding()]}
       targets={[makeTarget()]}
+      selectedBinding={null}
+      onSelectBinding={() => {}}
       readOnly={false}
       mutationVersion={0}
       onMutation={() => {}}
@@ -291,10 +293,13 @@ test("BindingsPage refetches selected binding details after a successful project
   try {
     function Harness() {
       const [mutationVersion, setMutationVersion] = React.useState(0);
+      const [selectedBinding, setSelectedBinding] = React.useState<string | null>(null);
       return (
         <BindingsPage
           bindings={[binding]}
           targets={[target]}
+          selectedBinding={selectedBinding}
+          onSelectBinding={setSelectedBinding}
           readOnly={false}
           mutationVersion={mutationVersion}
           onMutation={() => setMutationVersion((cur) => cur + 1)}
@@ -352,6 +357,8 @@ test("BindingsPage exposes orphan cleanup from live projection data", async () =
         <BindingsPage
           bindings={[makeBinding()]}
           targets={[makeTarget()]}
+          selectedBinding={null}
+          onSelectBinding={() => {}}
           projections={[makeOrphanProjection()]}
           readOnly={false}
           mutationVersion={0}

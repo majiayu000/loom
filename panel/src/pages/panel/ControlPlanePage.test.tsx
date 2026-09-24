@@ -75,6 +75,8 @@ function renderControlPlane(initialTab: "targets" | "bindings" | "projections" =
       projections={projections}
       selectedTarget={null}
       onSelectTarget={() => {}}
+      selectedBinding={null}
+      onSelectBinding={() => {}}
       onRemoveTarget={() => {}}
       onMutation={() => {}}
       onNavigate={onNavigate}

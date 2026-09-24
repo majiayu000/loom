@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Op } from "../../lib/types";
@@ -6,6 +7,16 @@ import { HistoryPage } from "./HistoryPage";
 import { OpsPage } from "./OpsPage";
 import { SyncPage } from "./SyncPage";
 import { ZERO_OPERATION_COUNTS } from "../../types";
+import { makeBinding, makeSkill, makeTarget } from "./panel_state_test_utils";
+
+const historyNavigation = {
+  skills: [],
+  targets: [],
+  bindings: [],
+  onSelectSkill: () => {},
+  onSelectTarget: () => {},
+  onSelectBinding: () => {},
+};
 
 function activity(status: Op["status"], id: string): Op {
   return {
@@ -108,8 +119,10 @@ describe("Ops, History, and Sync pages", () => {
 
     const retryButton = screen.getByRole("button", { name: /Retry replayable \(2\)/i }) as HTMLButtonElement;
     expect(retryButton.disabled).toBe(false);
-    fireEvent.click(retryButton);
-    await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      fireEvent.click(retryButton);
+    });
+    expect(retry).toHaveBeenCalledTimes(1);
     expect((screen.getByRole("button", { name: /Clear replayable/i }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -127,7 +140,7 @@ describe("Ops, History, and Sync pages", () => {
     });
     vi.spyOn(api, "opsHistoryDiagnose").mockResolvedValue(diagnosePayload());
 
-    render(<HistoryPage live={true} mode="live" mutationVersion={0} />);
+    render(<HistoryPage {...historyNavigation} live={true} mode="live" mutationVersion={0} />);
 
     expect(await screen.findByText(/skill.writer skill projection pending/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Skill filter"), { target: { value: "writer" } });
@@ -163,11 +176,60 @@ describe("Ops, History, and Sync pages", () => {
     });
     vi.spyOn(api, "opsHistoryDiagnose").mockResolvedValue(diagnosePayload());
 
-    render(<HistoryPage live={true} mode="live" mutationVersion={0} />);
+    render(<HistoryPage {...historyNavigation} live={true} mode="live" mutationVersion={0} />);
     fireEvent.click(await screen.findByText(/skill.writer skill projection pending/i));
 
     expect(screen.getByText(/^note:x{77}\.\.\.$/)).toBeInTheDocument();
     expect(screen.queryByText(`note:${"x".repeat(120)}`)).not.toBeInTheDocument();
+  });
+
+  it("opens available related objects from an Audit History record", async () => {
+    vi.spyOn(api, "ops").mockResolvedValue({
+      ok: true,
+      data: { count: 1, loaded_count: 1, offset: 0, limit: 100, has_more: false, operations: [operation()] },
+    });
+    vi.spyOn(api, "opsHistoryDiagnose").mockResolvedValue(diagnosePayload());
+    const onSelectSkill = vi.fn();
+    const onSelectTarget = vi.fn();
+    const onSelectBinding = vi.fn();
+
+    render(
+      <HistoryPage
+        live={true}
+        mode="live"
+        mutationVersion={0}
+        skills={[makeSkill()]}
+        targets={[makeTarget()]}
+        bindings={[makeBinding()]}
+        onSelectSkill={onSelectSkill}
+        onSelectTarget={onSelectTarget}
+        onSelectBinding={onSelectBinding}
+      />,
+    );
+    fireEvent.click(await screen.findByText(/skill.writer skill projection pending/i));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open skill skill.writer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open target target-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open binding binding-1" }));
+    expect(onSelectSkill).toHaveBeenCalledWith("skill.writer");
+    expect(onSelectTarget).toHaveBeenCalledWith("target-1");
+    expect(onSelectBinding).toHaveBeenCalledWith("binding-1");
+  });
+
+  it("marks missing related objects unavailable without offering broken navigation", async () => {
+    vi.spyOn(api, "ops").mockResolvedValue({
+      ok: true,
+      data: { count: 1, loaded_count: 1, offset: 0, limit: 100, has_more: false, operations: [operation()] },
+    });
+    vi.spyOn(api, "opsHistoryDiagnose").mockResolvedValue(diagnosePayload());
+
+    render(<HistoryPage {...historyNavigation} live={true} mode="live" mutationVersion={0} />);
+    fireEvent.click(await screen.findByText(/skill.writer skill projection pending/i));
+
+    expect(screen.getByText("skill skill.writer (unavailable)")).toBeInTheDocument();
+    expect(screen.getByText("target target-1 (unavailable)")).toBeInTheDocument();
+    expect(screen.getByText("binding binding-1 (unavailable)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Open (skill|target|binding)/ })).not.toBeInTheDocument();
   });
 
   it("exposes a manual Sync history diagnosis action", async () => {
@@ -184,9 +246,14 @@ describe("Ops, History, and Sync pages", () => {
       />,
     );
 
-    await waitFor(() => expect(diagnose).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: "Diagnose history" }));
-    await waitFor(() => expect(diagnose).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(diagnose).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Diagnose history" }));
+    });
+    expect(diagnose).toHaveBeenCalledTimes(2);
   });
 
   it("renders the four non-overlapping operation counters", async () => {

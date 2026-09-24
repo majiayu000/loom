@@ -17,6 +17,8 @@ interface ControlPlanePageProps {
   projections: RegistryProjection[];
   selectedTarget: string | null;
   onSelectTarget: (id: string) => void;
+  selectedBinding: string | null;
+  onSelectBinding: (id: string | null) => void;
   onRemoveTarget: (id: string) => void;
   onMutation: () => void;
   onNavigate: (page: PanelPageKey) => void;
@@ -39,6 +41,8 @@ export function ControlPlanePage({
   projections,
   selectedTarget,
   onSelectTarget,
+  selectedBinding,
+  onSelectBinding,
   onRemoveTarget,
   onMutation,
   onNavigate,
@@ -96,6 +100,8 @@ export function ControlPlanePage({
           bindings={bindings}
           targets={targets}
           projections={projections}
+          selectedBinding={selectedBinding}
+          onSelectBinding={onSelectBinding}
           onMutation={onMutation}
           readOnly={readOnly}
           mutationVersion={mutationVersion}

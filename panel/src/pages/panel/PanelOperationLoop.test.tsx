@@ -190,6 +190,12 @@ test("HistoryPage repairs diagnosed history conflicts from the panel", async () 
     await act(async () => {
       renderer = create(
         <HistoryPage
+          skills={[]}
+          targets={[]}
+          bindings={[]}
+          onSelectSkill={() => {}}
+          onSelectTarget={() => {}}
+          onSelectBinding={() => {}}
           live={true}
           mode="live"
           mutationVersion={0}
@@ -236,6 +242,12 @@ test("HistoryPage disables history repair actions in read-only mode", async () =
     await act(async () => {
       renderer = create(
         <HistoryPage
+          skills={[]}
+          targets={[]}
+          bindings={[]}
+          onSelectSkill={() => {}}
+          onSelectTarget={() => {}}
+          onSelectBinding={() => {}}
           live={true}
           mode="live"
           mutationVersion={0}

@@ -10,6 +10,7 @@ import {
 import { useMutation } from "../../lib/useMutation";
 import { useApiQuery } from "../../lib/useApiQuery";
 import { COUNT_TERMS, filterLabel, summarizeOps } from "../../lib/count_labels";
+import type { Binding, Skill, Target } from "../../lib/types";
 import { SearchIcon } from "../../components/icons/nav_icons";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
@@ -43,6 +44,12 @@ interface HistoryPageProps {
   live: boolean;
   mode: PanelDataMode;
   mutationVersion: number;
+  skills: Skill[];
+  targets: Target[];
+  bindings: Binding[];
+  onSelectSkill: (id: string) => void;
+  onSelectTarget: (id: string) => void;
+  onSelectBinding: (id: string) => void;
   refreshKey?: string | null;
   readOnly?: boolean;
   readOnlyReason?: string;
@@ -53,6 +60,12 @@ export function HistoryPage({
   live,
   mode,
   mutationVersion,
+  skills,
+  targets,
+  bindings,
+  onSelectSkill,
+  onSelectTarget,
+  onSelectBinding,
   refreshKey,
   readOnly = false,
   readOnlyReason,
@@ -357,7 +370,16 @@ export function HistoryPage({
         </div>
 
         {selectedOperation && (
-          <HistoryDetailDrawer op={selectedOperation} onClose={() => setSelectedId(null)} />
+          <HistoryDetailDrawer
+            op={selectedOperation}
+            skills={skills}
+            targets={targets}
+            bindings={bindings}
+            onSelectSkill={onSelectSkill}
+            onSelectTarget={onSelectTarget}
+            onSelectBinding={onSelectBinding}
+            onClose={() => setSelectedId(null)}
+          />
         )}
 
         {checkpoint && (
@@ -452,9 +474,26 @@ function FilterInput({ label, value, onChange }: { label: string; value: string;
   );
 }
 
-function HistoryDetailDrawer({ op, onClose }: { op: RegistryOperationRecord; onClose: () => void }) {
+function HistoryDetailDrawer({
+  op,
+  skills,
+  targets,
+  bindings,
+  onSelectSkill,
+  onSelectTarget,
+  onSelectBinding,
+  onClose,
+}: Pick<HistoryPageProps, "skills" | "targets" | "bindings" | "onSelectSkill" | "onSelectTarget" | "onSelectBinding"> & {
+  op: RegistryOperationRecord;
+  onClose: () => void;
+}) {
   const payload = summarizePayload(op.payload);
   const effects = summarizePayload(op.effects);
+  const related = [
+    { kind: "skill", id: op.skill, exists: skills.some((skill) => skill.id === op.skill || skill.name === op.skill), open: onSelectSkill },
+    { kind: "target", id: op.target, exists: targets.some((target) => target.id === op.target), open: onSelectTarget },
+    { kind: "binding", id: op.binding, exists: bindings.some((binding) => binding.id === op.binding), open: onSelectBinding },
+  ];
   return (
     <div className="card" style={{ marginTop: 14 }}>
       <div className="card-head">
@@ -478,7 +517,19 @@ function HistoryDetailDrawer({ op, onClose }: { op: RegistryOperationRecord; onC
           <div className="k">Effects</div>
           <div className="v mono">{effects}</div>
           <div className="k">Related objects</div>
-          <div className="v mono">{relatedObjects(op).join(" · ") || "—"}</div>
+          <div className="v mono" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {related.some((item) => item.id) ? related.map((item) => {
+              const id = item.id;
+              if (!id) return null;
+              return item.exists ? (
+                <button type="button" key={item.kind} className="btn sm" onClick={() => item.open(id)}>
+                  Open {item.kind} {id}
+                </button>
+              ) : (
+                <span key={item.kind}>{item.kind} {id} (unavailable)</span>
+              );
+            }) : "—"}
+          </div>
         </div>
       </div>
     </div>
@@ -511,14 +562,6 @@ function payloadValue(value: unknown): string {
   if (value && typeof value === "object") return "{...}";
   const text = String(value);
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
-}
-
-function relatedObjects(op: RegistryOperationRecord): string[] {
-  return [
-    op.skill ? `skill ${op.skill}` : null,
-    op.target ? `target ${op.target}` : null,
-    op.binding ? `binding ${op.binding}` : null,
-  ].filter((item): item is string => Boolean(item));
 }
 
 function Kpi({ label, value, tone }: { label: string; value: string | number; tone?: "pending" | "err" }) {

@@ -1,3 +1,5 @@
+> **Status:** no new features. Install skills from [spellbook](https://github.com/majiayu000/spellbook). The public index is [claude-skill-registry](https://github.com/majiayu000/claude-skill-registry).
+
 <div align="center">
   <img src="./assets/loom-icon.svg" alt="Loom" width="120" />
 

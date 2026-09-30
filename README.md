@@ -2,7 +2,9 @@
 
 <div align="center">
   <img src="./assets/loom-icon.svg" alt="Loom" width="120" />
+
   <h1>Loom</h1>
+
   <p><strong>The skill registry and projection control plane for AI coding agents.</strong></p>
 
   <p>

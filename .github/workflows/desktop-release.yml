@@ -34,7 +34,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.inputs.release_tag }}
           GH_TOKEN: ${{ github.token }}
-        run: |
+        run: &release_identity_check |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             RELEASE_TAG="$GITHUB_REF_NAME"
@@ -163,11 +163,19 @@ jobs:
           path: desktop/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
-      - name: Publish GitHub Release
+      - name: Recheck release identity before publishing
+        id: release_publication
         if: steps.release_identity.outputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.release_identity.outputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: *release_identity_check
+
+      - name: Publish GitHub Release
+        if: steps.release_publication.outputs.release_tag != ''
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.release_identity.outputs.release_tag }}
+          tag_name: ${{ steps.release_publication.outputs.release_tag }}
           target_commitish: ${{ github.event_name == 'push' && github.sha || '' }}
           overwrite_files: true
           files: desktop/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg

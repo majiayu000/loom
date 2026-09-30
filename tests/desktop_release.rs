@@ -31,7 +31,12 @@ fn git(repo: &Path, args: &[&str]) -> String {
         .to_string()
 }
 
-fn run_identity(event: &str, tag: &str, release_status: &str) -> (Output, String, String) {
+fn run_identity(
+    event: &str,
+    tag: &str,
+    release_status: &str,
+    move_tag: bool,
+) -> (Output, String, String) {
     let fixture = TestDir::new("desktop-release");
     let remote = fixture.path().join("remote");
     let checkout = fixture.path().join("checkout");
@@ -96,12 +101,25 @@ fn run_identity(event: &str, tag: &str, release_status: &str) -> (Output, String
     let calls_path = fixture.path().join("gh-calls");
     write_file(&output_path, "");
     write_file(&calls_path, "");
-    let script = workflow_steps()
+    let mut script = workflow_steps()
         .iter()
         .take_while(|step| step["name"].as_str() != Some("Require Apple signing secrets"))
         .filter_map(|step| step["run"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
+    if move_tag {
+        script.push_str(
+            "\ngit -C \"$FIXTURE_REMOTE\" -c commit.gpgsign=false commit --allow-empty -m moved\ngit -C \"$FIXTURE_REMOTE\" tag -f \"$RELEASE_TAG\"\n",
+        );
+    }
+    if let Some(publication) = workflow_steps()
+        .iter()
+        .find(|step| step["id"].as_str() == Some("release_publication"))
+        .and_then(|step| step["run"].as_str())
+    {
+        script.push_str("\n: > \"$GITHUB_OUTPUT\"\n");
+        script.push_str(publication);
+    }
     let output = Command::new("bash")
         .args(["-c", &script])
         .current_dir(&checkout)
@@ -121,6 +139,7 @@ fn run_identity(event: &str, tag: &str, release_status: &str) -> (Output, String
         .env("RELEASE_TAG", tag)
         .env("RELEASE_STATUS", release_status)
         .env("GH_CALLS", &calls_path)
+        .env("FIXTURE_REMOTE", &remote)
         .output()
         .expect("run workflow identity step");
     (
@@ -132,7 +151,7 @@ fn run_identity(event: &str, tag: &str, release_status: &str) -> (Output, String
 
 #[test]
 fn dispatch_rejects_tag_for_another_commit() {
-    let (output, published, calls) = run_identity("workflow_dispatch", "v0.1.0", "0");
+    let (output, published, calls) = run_identity("workflow_dispatch", "v0.1.0", "0", false);
     assert!(
         !output.status.success(),
         "wrong commit accepted: {output:?}"
@@ -144,7 +163,7 @@ fn dispatch_rejects_tag_for_another_commit() {
 
 #[test]
 fn dispatch_rejects_missing_tag() {
-    let (output, published, calls) = run_identity("workflow_dispatch", "v9.9.9", "0");
+    let (output, published, calls) = run_identity("workflow_dispatch", "v9.9.9", "0", false);
     assert!(!output.status.success(), "missing tag accepted: {output:?}");
     assert!(published.is_empty());
     assert!(calls.is_empty());
@@ -153,7 +172,7 @@ fn dispatch_rejects_missing_tag() {
 #[test]
 fn dispatch_rejects_missing_release_and_api_failure() {
     for status in ["1", "2"] {
-        let (output, published, calls) = run_identity("workflow_dispatch", "v0.2.0", status);
+        let (output, published, calls) = run_identity("workflow_dispatch", "v0.2.0", status, false);
         assert!(
             !output.status.success(),
             "release query failure accepted: {output:?}"
@@ -166,16 +185,19 @@ fn dispatch_rejects_missing_release_and_api_failure() {
 #[test]
 fn dispatch_accepts_matching_lightweight_and_annotated_tags() {
     for tag in ["v0.2.0", "v0.3.0"] {
-        let (output, published, calls) = run_identity("workflow_dispatch", tag, "0");
+        let (output, published, calls) = run_identity("workflow_dispatch", tag, "0", false);
         assert!(output.status.success(), "matching tag failed: {output:?}");
         assert_eq!(published, format!("release_tag={tag}\n"));
-        assert_eq!(calls, format!("release view {tag} --repo fixture/loom\n"));
+        assert_eq!(
+            calls,
+            format!("release view {tag} --repo fixture/loom\n").repeat(2)
+        );
     }
 }
 
 #[test]
 fn blank_dispatch_only_builds_an_artifact() {
-    let (output, published, calls) = run_identity("workflow_dispatch", "", "1");
+    let (output, published, calls) = run_identity("workflow_dispatch", "", "1", false);
     assert!(
         output.status.success(),
         "artifact-only dispatch failed: {output:?}"
@@ -186,7 +208,7 @@ fn blank_dispatch_only_builds_an_artifact() {
 
 #[test]
 fn tag_push_can_create_a_release_at_the_pushed_commit() {
-    let (output, published, calls) = run_identity("push", "", "1");
+    let (output, published, calls) = run_identity("push", "", "1", false);
     assert!(output.status.success(), "tag push failed: {output:?}");
     assert_eq!(published, "release_tag=v0.2.0\n");
     assert!(calls.is_empty());
@@ -212,21 +234,48 @@ fn publish_uses_only_the_verified_identity() {
         steps[identity]["env"]["GH_TOKEN"].as_str(),
         Some("${{ github.token }}")
     );
+    let publication = steps
+        .iter()
+        .position(|step| step["id"].as_str() == Some("release_publication"))
+        .expect("publication identity step");
+    assert_eq!(steps[publication]["run"], steps[identity]["run"]);
+    assert_eq!(
+        steps[publication]["if"].as_str(),
+        Some("steps.release_identity.outputs.release_tag != ''")
+    );
+    assert_eq!(
+        steps[publication]["env"]["RELEASE_TAG"].as_str(),
+        Some("${{ steps.release_identity.outputs.release_tag }}")
+    );
+    assert_eq!(
+        steps[publication + 1]["name"].as_str(),
+        Some("Publish GitHub Release")
+    );
     let publish = steps
         .iter()
         .find(|step| step["name"].as_str() == Some("Publish GitHub Release"))
         .expect("publish step");
     assert_eq!(
         publish["if"].as_str(),
-        Some("steps.release_identity.outputs.release_tag != ''")
+        Some("steps.release_publication.outputs.release_tag != ''")
     );
     assert_eq!(
         publish["with"]["tag_name"].as_str(),
-        Some("${{ steps.release_identity.outputs.release_tag }}")
+        Some("${{ steps.release_publication.outputs.release_tag }}")
     );
     assert_eq!(
         publish["with"]["target_commitish"].as_str(),
         Some("${{ github.event_name == 'push' && github.sha || '' }}")
     );
     assert_eq!(publish["with"]["overwrite_files"].as_bool(), Some(true));
+}
+
+#[test]
+fn tag_movement_during_build_blocks_publication() {
+    for tag in ["v0.2.0", "v0.3.0"] {
+        let (output, published, _) = run_identity("workflow_dispatch", tag, "0", true);
+        assert!(!output.status.success(), "moved tag accepted: {output:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("does not match"));
+        assert!(published.is_empty());
+    }
 }

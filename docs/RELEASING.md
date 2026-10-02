@@ -32,7 +32,7 @@ Configure repository secrets:
 
 ## Release Steps
 
-1. Update `Cargo.toml` version.
+1. Set the same release version in `Cargo.toml`, `desktop/Cargo.toml`, and `desktop/tauri.conf.json`; update the root and desktop `Cargo.lock` package entries to match.
 2. Run local verification:
 
    ```bash
@@ -56,7 +56,7 @@ Configure repository secrets:
    git push origin main --tags
    ```
 
-5. Watch the `Release` workflow.
+5. Watch the `Release` and `Desktop Release` workflows. Verify the desktop asset is named `Loom_<version>_aarch64.dmg` and the app's `CFBundleShortVersionString` and `CFBundleVersion` match the release version and bundled CLI.
 6. Merge the Homebrew tap PR if the workflow opens one.
 
 Missing publishing tokens produce explicit workflow warnings and job summaries. A green release workflow therefore proves the GitHub Release, but crates.io and Homebrew must each be checked independently before those install paths are advertised.

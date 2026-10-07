@@ -26,7 +26,7 @@ use walkdir::WalkDir;
 #[path = "watch_stability.rs"]
 mod watch_stability;
 
-use watch_stability::collect_stable_watch_plan;
+use watch_stability::{collect_stable_watch_plan, ensure_watch_snapshot_unchanged};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct WatchPlan {
@@ -169,8 +169,8 @@ impl App {
             ensure_no_unresolved_conflicts(&self.ctx)?;
         }
 
-        let plan = collect_stable_watch_plan(&self.ctx, args)?;
-        if plan.is_empty() {
+        let snapshot = collect_stable_watch_plan(&self.ctx, args)?;
+        if snapshot.plan.is_empty() {
             return Ok((
                 json!({
                     "changed_skills": [],
@@ -185,23 +185,8 @@ impl App {
 
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         ensure_no_unresolved_conflicts(&self.ctx)?;
-        if collect_watch_plan(&self.ctx, args)? != plan {
-            return Err(CommandFailure::new(
-                ErrorCode::CaptureConflict,
-                "skill files changed after autosave debounce; retry after edits settle",
-            ));
-        }
-
-        let path_count = plan.path_count();
-        if path_count > args.max_batch {
-            return Err(CommandFailure::new(
-                ErrorCode::DependencyConflict,
-                format!(
-                    "watch batch has {} changed paths, exceeding --max-batch {}; run manual skill save",
-                    path_count, args.max_batch
-                ),
-            ));
-        }
+        ensure_watch_snapshot_unchanged(&self.ctx, args, &snapshot)?;
+        let plan = snapshot.plan;
 
         self.autosave_watch_plan(plan, request_id, continue_on_skill_error)
     }

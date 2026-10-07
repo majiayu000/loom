@@ -905,7 +905,7 @@ Write command.
 Rules:
 
 1. watches the named registry skill, or all registry skills when the positional is omitted
-2. autosaves stable edits after changes stay quiet for `--debounce-ms` milliseconds (default 3000)
+2. autosaves stable edits after changes stay quiet for `--debounce-ms` milliseconds (default 3000); compares scoped file contents and entry metadata between samples and again under the workspace lock before saving
 3. one autosave batch allows at most `--max-batch` changed paths (default 20)
 4. `--dry-run` prints the autosave plan without committing
 5. `--once` runs one scan and exits; without it, the command keeps watching

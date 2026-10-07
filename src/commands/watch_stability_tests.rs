@@ -272,7 +272,10 @@ fn oversized_observations_can_settle_within_the_batch_limit() {
     fs::write(&extra, "extra").unwrap();
     let oversized = collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap();
     assert_eq!(oversized.plan.path_count(), 2);
-    assert!(oversized.entries.is_empty(), "do not read an oversized batch");
+    assert!(
+        oversized.entries.is_empty(),
+        "do not read an oversized batch"
+    );
     let mut waits = 0;
     let settled = collect_stable_watch_plan_with_wait(&fixture.ctx, &fixture.args, |_| {
         waits += 1;

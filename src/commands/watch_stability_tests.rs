@@ -390,3 +390,41 @@ fn oversized_observations_can_settle_within_the_batch_limit() {
     assert_eq!(settled.plan.path_count(), 1);
     assert_eq!(settled.entries.len(), 1);
 }
+
+#[test]
+fn snapshot_rejects_a_sparse_file_before_hashing_its_logical_size() {
+    let fixture = Fixture::new();
+    let sparse = fixture.ctx.root.join("skills/demo/sparse.bin");
+    fs::File::create(&sparse)
+        .unwrap()
+        .set_len(1_u64 << 40)
+        .unwrap();
+    let mut plan = super::super::collect_watch_plan(&fixture.ctx, &fixture.args).unwrap();
+    plan.skills[0].paths = vec!["skills/demo/sparse.bin".to_string()];
+    let error = super::watch_snapshot::snapshot_paths(&fixture.ctx, &plan).unwrap_err();
+    assert_eq!(error.code, ErrorCode::CaptureConflict);
+    assert!(error.message.contains("use manual skill capture"));
+    assert_eq!(fs::metadata(sparse).unwrap().len(), 1_u64 << 40);
+}
+
+#[test]
+fn snapshot_content_budget_is_shared_across_files() {
+    let fixture = Fixture::new();
+    let half = super::watch_snapshot::MAX_SNAPSHOT_CONTENT_BYTES / 2;
+    for (name, length) in [("first.bin", half), ("second.bin", half + 1)] {
+        fs::File::create(fixture.ctx.root.join("skills/demo").join(name))
+            .unwrap()
+            .set_len(length)
+            .unwrap();
+    }
+    let mut plan = super::super::collect_watch_plan(&fixture.ctx, &fixture.args).unwrap();
+    plan.skills[0].paths = vec![
+        "skills/demo/first.bin".to_string(),
+        "skills/demo/second.bin".to_string(),
+    ];
+    let error = super::watch_snapshot::snapshot_paths(&fixture.ctx, &plan).unwrap_err();
+    assert_eq!(error.code, ErrorCode::CaptureConflict);
+    assert!(error.message.contains("snapshot content exceeds 16 MiB"));
+    plan.skills[0].paths.truncate(1);
+    assert!(super::watch_snapshot::snapshot_paths(&fixture.ctx, &plan).is_ok());
+}

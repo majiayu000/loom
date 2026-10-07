@@ -11,6 +11,8 @@ use crate::types::ErrorCode;
 use super::super::super::CommandFailure;
 use super::super::WatchPlan;
 
+pub(super) const MAX_SNAPSHOT_CONTENT_BYTES: u64 = 16 * 1024 * 1024;
+
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum WatchPathSnapshot {
     Missing,
@@ -65,10 +67,15 @@ pub(super) fn snapshot_paths(
         return Ok(Vec::new());
     }
     let reader = SnapshotReader::new(&ctx.root).map_err(snapshot_error)?;
+    let mut remaining_bytes = MAX_SNAPSHOT_CONTENT_BYTES;
     plan.skills
         .iter()
         .flat_map(|skill| &skill.paths)
-        .map(|path| reader.snapshot(Path::new(path)).map_err(snapshot_error))
+        .map(|path| {
+            reader
+                .snapshot(Path::new(path), &mut remaining_bytes)
+                .map_err(snapshot_error)
+        })
         .collect()
 }
 
@@ -99,7 +106,11 @@ impl SnapshotReader {
         })
     }
 
-    fn snapshot(&self, relative: &Path) -> io::Result<WatchPathSnapshot> {
+    fn snapshot(
+        &self,
+        relative: &Path,
+        remaining_bytes: &mut u64,
+    ) -> io::Result<WatchPathSnapshot> {
         if relative
             .components()
             .any(|part| !matches!(part, std::path::Component::Normal(_)))
@@ -121,6 +132,12 @@ impl SnapshotReader {
                 stamp,
             }
         } else if metadata.is_file() {
+            if stamp.length > *remaining_bytes {
+                return Err(io::Error::other(
+                    "autosave snapshot content exceeds 16 MiB; use manual skill capture for this batch",
+                ));
+            }
+            *remaining_bytes -= stamp.length;
             let mut file = self.open_file(relative)?;
             if FileStamp::from_metadata(&file.metadata()?) != stamp {
                 return Err(changed());

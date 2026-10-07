@@ -59,7 +59,7 @@ impl Fixture {
             &[
                 "submodule",
                 "add",
-                source.to_str().unwrap(),
+                "./submodule-source",
                 "skills/demo/module",
             ],
         )

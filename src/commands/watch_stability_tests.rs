@@ -392,19 +392,20 @@ fn oversized_observations_can_settle_within_the_batch_limit() {
 }
 
 #[test]
-fn snapshot_rejects_a_sparse_file_before_hashing_its_logical_size() {
+fn snapshot_rejects_an_oversized_file_before_hashing_its_logical_size() {
     let fixture = Fixture::new();
     let sparse = fixture.ctx.root.join("skills/demo/sparse.bin");
+    let oversized = super::watch_snapshot::MAX_SNAPSHOT_CONTENT_BYTES + 1;
     fs::File::create(&sparse)
         .unwrap()
-        .set_len(1_u64 << 40)
+        .set_len(oversized)
         .unwrap();
     let mut plan = super::super::collect_watch_plan(&fixture.ctx, &fixture.args).unwrap();
     plan.skills[0].paths = vec!["skills/demo/sparse.bin".to_string()];
     let error = super::watch_snapshot::snapshot_paths(&fixture.ctx, &plan).unwrap_err();
     assert_eq!(error.code, ErrorCode::CaptureConflict);
     assert!(error.message.contains("use manual skill capture"));
-    assert_eq!(fs::metadata(sparse).unwrap().len(), 1_u64 << 40);
+    assert_eq!(fs::metadata(sparse).unwrap().len(), oversized);
 }
 
 #[test]

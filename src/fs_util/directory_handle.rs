@@ -379,14 +379,59 @@ impl DirectoryHandle {
     }
 
     #[cfg(unix)]
+    pub(crate) fn open_regular_file(&self, relative: &Path) -> io::Result<File> {
+        let (parent, name) = self.resolve_parent(relative, false)?;
+        let file = parent.open_file_with_flags(&name, libc::O_NONBLOCK)?;
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "snapshot source is not a regular file",
+            ));
+        }
+        Ok(file)
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn read_link(&self, relative: &Path) -> io::Result<std::path::PathBuf> {
+        let (parent, name) = self.resolve_parent(relative, false)?;
+        let name = c_string(&name)?;
+        let mut bytes = [0_u8; 4096];
+        // SAFETY: the directory descriptor, component string and writable
+        // buffer remain valid. readlinkat does not follow the final symlink.
+        let length = unsafe {
+            libc::readlinkat(
+                parent.file.as_raw_fd(),
+                name.as_ptr(),
+                bytes.as_mut_ptr().cast(),
+                bytes.len(),
+            )
+        };
+        if length < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length as usize == bytes.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "snapshot symlink target exceeds the read limit",
+            ));
+        }
+        Ok(Path::new(OsStr::from_bytes(&bytes[..length as usize])).to_path_buf())
+    }
+
+    #[cfg(unix)]
     fn open_file(&self, name: &OsStr) -> io::Result<File> {
+        self.open_file_with_flags(name, 0)
+    }
+
+    #[cfg(unix)]
+    fn open_file_with_flags(&self, name: &OsStr, flags: libc::c_int) -> io::Result<File> {
         let name = c_string(name)?;
         // SAFETY: the directory fd and component string remain live.
         let fd = unsafe {
             libc::openat(
                 self.file.as_raw_fd(),
                 name.as_ptr(),
-                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | flags,
             )
         };
         if fd < 0 {

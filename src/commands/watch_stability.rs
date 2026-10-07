@@ -8,23 +8,57 @@ use crate::types::ErrorCode;
 use super::super::CommandFailure;
 use super::{WatchPlan, collect_watch_plan};
 
+#[path = "watch_snapshot.rs"]
+mod watch_snapshot;
+
+use watch_snapshot::{WatchPathSnapshot, snapshot_paths};
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct WatchSnapshot {
+    pub(super) plan: WatchPlan,
+    entries: Vec<WatchPathSnapshot>,
+}
+
+fn collect_watch_snapshot(
+    ctx: &AppContext,
+    args: &WatchArgs,
+) -> std::result::Result<WatchSnapshot, CommandFailure> {
+    let plan = collect_watch_plan(ctx, args)?;
+    // Oversized observations still get a chance to settle. They cannot be
+    // committed, so avoid reading their contents until they fit the batch.
+    let entries = if plan.path_count() > args.max_batch {
+        Vec::new()
+    } else {
+        snapshot_paths(ctx, &plan)?
+    };
+    Ok(WatchSnapshot { plan, entries })
+}
+
 pub(super) fn collect_stable_watch_plan(
     ctx: &AppContext,
     args: &WatchArgs,
-) -> std::result::Result<WatchPlan, CommandFailure> {
-    let first = collect_watch_plan(ctx, args)?;
-    if first.is_empty() || args.debounce_ms == 0 {
+) -> std::result::Result<WatchSnapshot, CommandFailure> {
+    collect_stable_watch_plan_with_wait(ctx, args, thread::sleep)
+}
+
+fn collect_stable_watch_plan_with_wait(
+    ctx: &AppContext,
+    args: &WatchArgs,
+    mut wait: impl FnMut(Duration),
+) -> std::result::Result<WatchSnapshot, CommandFailure> {
+    let first = collect_watch_snapshot(ctx, args)?;
+    if first.plan.is_empty() || args.debounce_ms == 0 {
         return Ok(first);
     }
 
-    thread::sleep(Duration::from_millis(args.debounce_ms));
-    let second = collect_watch_plan(ctx, args)?;
+    wait(Duration::from_millis(args.debounce_ms));
+    let second = collect_watch_snapshot(ctx, args)?;
     if first == second {
         return Ok(second);
     }
 
-    thread::sleep(Duration::from_millis(args.debounce_ms));
-    let third = collect_watch_plan(ctx, args)?;
+    wait(Duration::from_millis(args.debounce_ms));
+    let third = collect_watch_snapshot(ctx, args)?;
     if second == third {
         return Ok(third);
     }
@@ -34,3 +68,21 @@ pub(super) fn collect_stable_watch_plan(
         "skill files changed during autosave debounce; retry after edits settle",
     ))
 }
+
+pub(super) fn ensure_watch_snapshot_unchanged(
+    ctx: &AppContext,
+    args: &WatchArgs,
+    expected: &WatchSnapshot,
+) -> std::result::Result<(), CommandFailure> {
+    if collect_watch_snapshot(ctx, args)? != *expected {
+        return Err(CommandFailure::new(
+            ErrorCode::CaptureConflict,
+            "skill files changed after autosave debounce; retry after edits settle",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "watch_stability_tests.rs"]
+mod tests;

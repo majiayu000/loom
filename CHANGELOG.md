@@ -5,6 +5,10 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+### Fixed
+
+- Autosave debounce now detects repeated edits to the same dirty path and rechecks content before saving.
+
 ## [0.2.0] - 2026-09-22
 
 ### Changed

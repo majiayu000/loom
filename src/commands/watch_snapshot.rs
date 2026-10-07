@@ -3,6 +3,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::gitops;
 use crate::sha256::Sha256;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
@@ -13,9 +14,18 @@ use super::super::WatchPlan;
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum WatchPathSnapshot {
     Missing,
-    File { stamp: FileStamp, digest: [u8; 32] },
-    Symlink { stamp: FileStamp, target: PathBuf },
-    Directory(FileStamp),
+    File {
+        stamp: FileStamp,
+        digest: [u8; 32],
+    },
+    Symlink {
+        stamp: FileStamp,
+        target: PathBuf,
+    },
+    Directory {
+        stamp: FileStamp,
+        gitlink_head: Option<String>,
+    },
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -137,8 +147,28 @@ impl SnapshotReader {
                 digest: hasher.finalize(),
             }
         } else if metadata.is_dir() {
-            // Git can report a gitlink. Do not recursively widen watch scope.
-            WatchPathSnapshot::Directory(stamp)
+            #[cfg(unix)]
+            let directory = self.directory.open_dir(relative)?;
+            #[cfg(windows)]
+            let _ancestors = self.hold_ancestors(&relative.join(".git"))?;
+            let identity = gitops::run_git_in_dir(
+                &path,
+                gitops::FileProtocol::Blocked,
+                &["rev-parse", "--show-prefix", "--verify", "HEAD"],
+            )
+            .map_err(io::Error::other)?;
+            #[cfg(unix)]
+            if !directory.matches_path(&path)? {
+                return Err(changed());
+            }
+            // An empty prefix identifies a nested repository root. Ordinary
+            // directories also print their prefix, not just the parent HEAD.
+            // Track the gitlink commit without reading submodule contents.
+            let gitlink_head = (!identity.contains('\n')).then_some(identity);
+            WatchPathSnapshot::Directory {
+                stamp,
+                gitlink_head,
+            }
         } else {
             // Never open pipes/devices, which could block or read indefinitely.
             return Err(io::Error::other(

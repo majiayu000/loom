@@ -42,6 +42,44 @@ impl Fixture {
             },
         }
     }
+
+    fn add_gitlink(&self) -> PathBuf {
+        gitops::run_git(&self.ctx, &["checkout", "--", "skills/demo/SKILL.md"]).unwrap();
+        let source = self.ctx.root.join("submodule-source");
+        fs::create_dir(&source).unwrap();
+        gitops::run_git_in_dir(&source, gitops::FileProtocol::Blocked, &["init"]).unwrap();
+        let source_ctx = AppContext::new(Some(source.clone())).unwrap();
+        gitops::ensure_repo_initialized(&source_ctx).unwrap();
+        fs::write(source.join("content"), "unchanged\n").unwrap();
+        gitops::run_git(&source_ctx, &["add", "content"]).unwrap();
+        gitops::run_git(&source_ctx, &["commit", "-m", "initial submodule"]).unwrap();
+        gitops::run_git_in_dir(
+            &self.ctx.root,
+            gitops::FileProtocol::Allowed,
+            &[
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "skills/demo/module",
+            ],
+        )
+        .unwrap();
+        gitops::run_git(&self.ctx, &["commit", "-m", "add submodule"]).unwrap();
+        let module = self.ctx.root.join("skills/demo/module");
+        let module_ctx = AppContext::new(Some(module.clone())).unwrap();
+        gitops::ensure_repo_initialized(&module_ctx).unwrap();
+        advance_gitlink(&module);
+        module
+    }
+}
+
+fn advance_gitlink(module: &std::path::Path) {
+    gitops::run_git_in_dir(
+        module,
+        gitops::FileProtocol::Blocked,
+        &["commit", "--allow-empty", "-m", "advance submodule HEAD"],
+    )
+    .unwrap();
 }
 
 impl Drop for Fixture {
@@ -103,6 +141,67 @@ fn locked_recheck_rejects_same_path_edit_after_debounce() {
         ensure_watch_snapshot_unchanged(&fixture.ctx, &fixture.args, &snapshot).unwrap_err();
     assert_eq!(error.code, ErrorCode::CaptureConflict);
     assert!(error.message.contains("after autosave debounce"));
+}
+
+#[test]
+fn gitlink_head_changes_between_every_sample_are_not_stable() {
+    let fixture = Fixture::new();
+    let module = fixture.add_gitlink();
+    let mut waits = 0;
+    let result = collect_stable_watch_plan_with_wait(&fixture.ctx, &fixture.args, |_| {
+        waits += 1;
+        advance_gitlink(&module);
+    });
+    assert_eq!(result.unwrap_err().code, ErrorCode::CaptureConflict);
+    assert_eq!(waits, 2);
+}
+
+#[test]
+fn quiet_gitlink_head_is_stable() {
+    let fixture = Fixture::new();
+    fixture.add_gitlink();
+    let mut waits = 0;
+    let snapshot =
+        collect_stable_watch_plan_with_wait(&fixture.ctx, &fixture.args, |_| waits += 1).unwrap();
+    assert_eq!(waits, 1);
+    assert_eq!(snapshot.plan.path_count(), 1);
+    ensure_watch_snapshot_unchanged(&fixture.ctx, &fixture.args, &snapshot).unwrap();
+}
+
+#[test]
+fn locked_recheck_rejects_gitlink_head_change_after_debounce() {
+    let fixture = Fixture::new();
+    let module = fixture.add_gitlink();
+    let snapshot =
+        collect_stable_watch_plan_with_wait(&fixture.ctx, &fixture.args, |_| {}).unwrap();
+    let _workspace = fixture.ctx.lock_workspace().unwrap();
+    advance_gitlink(&module);
+    let error =
+        ensure_watch_snapshot_unchanged(&fixture.ctx, &fixture.args, &snapshot).unwrap_err();
+    assert_eq!(error.code, ErrorCode::CaptureConflict);
+    assert!(error.message.contains("after autosave debounce"));
+}
+
+#[test]
+fn gitlink_snapshot_failure_is_a_capture_conflict() {
+    let fixture = Fixture::new();
+    let module = fixture.add_gitlink();
+    let plan = super::super::collect_watch_plan(&fixture.ctx, &fixture.args).unwrap();
+    fs::write(module.join(".git"), "gitdir: missing\n").unwrap();
+    let error = super::watch_snapshot::snapshot_paths(&fixture.ctx, &plan).unwrap_err();
+    assert_eq!(error.code, ErrorCode::CaptureConflict);
+}
+
+#[test]
+fn ordinary_directory_snapshots_do_not_track_the_parent_repository_head() {
+    let fixture = Fixture::new();
+    fs::create_dir(fixture.ctx.root.join("skills/demo/plain")).unwrap();
+    let mut plan = super::super::collect_watch_plan(&fixture.ctx, &fixture.args).unwrap();
+    plan.skills[0].paths = vec!["skills/demo/plain".to_string()];
+    let before = super::watch_snapshot::snapshot_paths(&fixture.ctx, &plan).unwrap();
+    advance_gitlink(&fixture.ctx.root);
+    let after = super::watch_snapshot::snapshot_paths(&fixture.ctx, &plan).unwrap();
+    assert_eq!(before, after);
 }
 
 #[test]
@@ -220,6 +319,9 @@ fn snapshot_reader_rejects_symlinked_ancestors_and_special_files() {
     symlink(&outside, &link).unwrap();
     let mut plan = super::super::collect_watch_plan(&fixture.ctx, &fixture.args).unwrap();
     plan.skills[0].paths = vec!["skills/demo/link/file".to_string()];
+    assert!(super::watch_snapshot::snapshot_paths(&fixture.ctx, &plan).is_err());
+    fs::create_dir(outside.join("directory")).unwrap();
+    plan.skills[0].paths = vec!["skills/demo/link/directory".to_string()];
     assert!(super::watch_snapshot::snapshot_paths(&fixture.ctx, &plan).is_err());
     let fifo = fixture.ctx.root.join("skills/demo/pipe");
     let name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();

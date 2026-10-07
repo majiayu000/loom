@@ -189,14 +189,18 @@ impl SnapshotReader {
     fn hold_ancestors(&self, relative: &Path) -> io::Result<Vec<File>> {
         use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
         use windows_sys::Win32::Storage::FileSystem::{
-            FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
         };
 
         let mut handles = Vec::new();
         let mut path = self.root.clone();
         let ancestors = std::iter::once(None).chain(
-            relative.parent().into_iter().flat_map(Path::components).map(Some),
+            relative
+                .parent()
+                .into_iter()
+                .flat_map(Path::components)
+                .map(Some),
         );
         for component in ancestors {
             if let Some(component) = component {
@@ -258,5 +262,7 @@ fn opened_path(file: &File) -> io::Result<PathBuf> {
     if length == 0 || length as usize >= buffer.len() {
         return Err(changed());
     }
-    Ok(PathBuf::from(OsString::from_wide(&buffer[..length as usize])))
+    Ok(PathBuf::from(OsString::from_wide(
+        &buffer[..length as usize],
+    )))
 }

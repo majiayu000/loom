@@ -188,6 +188,17 @@ impl App {
         ensure_watch_snapshot_unchanged(&self.ctx, args, &snapshot)?;
         let plan = snapshot.plan;
 
+        let path_count = plan.path_count();
+        if path_count > args.max_batch {
+            return Err(CommandFailure::new(
+                ErrorCode::DependencyConflict,
+                format!(
+                    "watch batch has {} changed paths, exceeding --max-batch {}; run manual skill save",
+                    path_count, args.max_batch
+                ),
+            ));
+        }
+
         self.autosave_watch_plan(plan, request_id, continue_on_skill_error)
     }
 

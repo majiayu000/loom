@@ -75,15 +75,18 @@ fn same_path_edit_restarts_the_quiet_period() {
     })
     .unwrap();
     assert_eq!(waits, 2);
-    assert_eq!(snapshot, collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap());
+    assert_eq!(
+        snapshot,
+        collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap()
+    );
 }
 
 #[test]
 fn quiet_edits_need_only_one_wait() {
     let fixture = Fixture::new();
     let mut waits = 0;
-    let snapshot = collect_stable_watch_plan_with_wait(&fixture.ctx, &fixture.args, |_| waits += 1)
-        .unwrap();
+    let snapshot =
+        collect_stable_watch_plan_with_wait(&fixture.ctx, &fixture.args, |_| waits += 1).unwrap();
     assert_eq!(waits, 1);
     assert_eq!(snapshot.plan.path_count(), 1);
     ensure_watch_snapshot_unchanged(&fixture.ctx, &fixture.args, &snapshot).unwrap();
@@ -139,7 +142,10 @@ fn untracked_same_path_content_changes_are_detected() {
         (
             super::watch_snapshot::WatchPathSnapshot::File { digest: before, .. },
             super::watch_snapshot::WatchPathSnapshot::File { digest: after, .. },
-        ) => assert_ne!(before, after, "same size and mtime still require content identity"),
+        ) => assert_ne!(
+            before, after,
+            "same size and mtime still require content identity"
+        ),
         _ => panic!("expected binary file snapshots"),
     }
 }
@@ -150,9 +156,15 @@ fn deletions_are_stable_but_recreation_changes_the_snapshot() {
     fs::remove_file(&fixture.file).unwrap();
     let snapshot =
         collect_stable_watch_plan_with_wait(&fixture.ctx, &fixture.args, |_| {}).unwrap();
-    assert!(matches!(snapshot.entries[0], super::watch_snapshot::WatchPathSnapshot::Missing));
+    assert!(matches!(
+        snapshot.entries[0],
+        super::watch_snapshot::WatchPathSnapshot::Missing
+    ));
     fs::write(&fixture.file, "# demo\n\nv3\n").unwrap();
-    assert_ne!(snapshot, collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap());
+    assert_ne!(
+        snapshot,
+        collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap()
+    );
 }
 
 #[test]
@@ -182,10 +194,16 @@ fn symlink_snapshots_track_link_targets_without_reading_referents() {
     symlink(&outside, &link).unwrap();
     let first = collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap();
     fs::write(&outside, "outside v2").unwrap();
-    assert_eq!(first, collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap());
+    assert_eq!(
+        first,
+        collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap()
+    );
     fs::remove_file(&link).unwrap();
     symlink(fixture.ctx.root.join("missing-target"), &link).unwrap();
-    assert_ne!(first, collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap());
+    assert_ne!(
+        first,
+        collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap()
+    );
 }
 
 #[cfg(unix)]
@@ -247,14 +265,23 @@ fn snapshot_reader_rejects_in_root_junction_ancestors() {
 }
 
 #[test]
-fn oversized_batches_fail_before_content_reads_or_waits() {
+fn oversized_observations_can_settle_within_the_batch_limit() {
     let mut fixture = Fixture::new();
     fixture.args.max_batch = 1;
-    fs::write(fixture.ctx.root.join("skills/demo/extra.md"), "extra").unwrap();
-    let error = collect_stable_watch_plan_with_wait(&fixture.ctx, &fixture.args, |_| {
-        panic!("oversized batch must not wait")
+    let extra = fixture.ctx.root.join("skills/demo/extra.md");
+    fs::write(&extra, "extra").unwrap();
+    let oversized = collect_watch_snapshot(&fixture.ctx, &fixture.args).unwrap();
+    assert_eq!(oversized.plan.path_count(), 2);
+    assert!(oversized.entries.is_empty(), "do not read an oversized batch");
+    let mut waits = 0;
+    let settled = collect_stable_watch_plan_with_wait(&fixture.ctx, &fixture.args, |_| {
+        waits += 1;
+        if waits == 1 {
+            fs::remove_file(&extra).unwrap();
+        }
     })
-    .unwrap_err();
-    assert_eq!(error.code, ErrorCode::DependencyConflict);
-    assert!(error.message.contains("2 changed paths"));
+    .unwrap();
+    assert_eq!(waits, 2);
+    assert_eq!(settled.plan.path_count(), 1);
+    assert_eq!(settled.entries.len(), 1);
 }

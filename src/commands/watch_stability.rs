@@ -24,17 +24,13 @@ fn collect_watch_snapshot(
     args: &WatchArgs,
 ) -> std::result::Result<WatchSnapshot, CommandFailure> {
     let plan = collect_watch_plan(ctx, args)?;
-    let path_count = plan.path_count();
-    if path_count > args.max_batch {
-        return Err(CommandFailure::new(
-            ErrorCode::DependencyConflict,
-            format!(
-                "watch batch has {} changed paths, exceeding --max-batch {}; run manual skill save",
-                path_count, args.max_batch
-            ),
-        ));
-    }
-    let entries = snapshot_paths(ctx, &plan)?;
+    // Oversized observations still get a chance to settle. They cannot be
+    // committed, so avoid reading their contents until they fit the batch.
+    let entries = if plan.path_count() > args.max_batch {
+        Vec::new()
+    } else {
+        snapshot_paths(ctx, &plan)?
+    };
     Ok(WatchSnapshot { plan, entries })
 }
 

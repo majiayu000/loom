@@ -1,4 +1,6 @@
 mod common;
+#[path = "backup/recovery.rs"]
+mod recovery;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -96,7 +98,8 @@ fn backup_export_inspect_restore_round_trips_registry_snapshot() {
     );
 
     let restored = TestDir::new("backup-restored");
-    let restored_arg = restored.path().to_string_lossy().into_owned();
+    let destination = restored.path().join("destination");
+    let restored_arg = destination.to_string_lossy().into_owned();
     let (restore_output, restore_env) = run_loom(
         root.path(),
         &["backup", "restore", &artifact_arg, "--root", &restored_arg],
@@ -112,16 +115,16 @@ fn backup_export_inspect_restore_round_trips_registry_snapshot() {
         restore_env["data"]["source_head"],
         Value::String(head_before)
     );
-    assert!(restored.path().join(".git").is_dir());
-    assert!(restored.path().join("state/registry").is_dir());
+    assert!(destination.join(".git").is_dir());
+    assert!(destination.join("state/registry").is_dir());
     assert_eq!(
-        fs::read_to_string(restored.path().join("skills/demo-skill/SKILL.md"))
+        fs::read_to_string(destination.join("skills/demo-skill/SKILL.md"))
             .expect("read restored skill"),
         "# Demo Skill\n\nBacked up while uncommitted.\n"
     );
-    assert!(restored.path().join("trash/old-skill/NOTE.md").is_file());
+    assert!(destination.join("trash/old-skill/NOTE.md").is_file());
 
-    let (status_output, status_env) = run_loom(restored.path(), &["workspace", "status"]);
+    let (status_output, status_env) = run_loom(&destination, &["workspace", "status"]);
     assert!(
         status_output.status.success(),
         "restored registry status failed: stdout={} stderr={}",

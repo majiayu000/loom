@@ -32,13 +32,13 @@ pub(super) fn activate(
     _destination_existed: bool,
     _force_empty_root: bool,
 ) -> std::result::Result<(), CommandFailure> {
-    test_pause("before_activation")?;
-    test_pause("before_rename")?;
+    test_pause("before_activation", staging)?;
+    test_pause("before_rename", staging)?;
     rename_no_replace_atomic(staging, root).map_err(map_io)
 }
 
 #[cfg(debug_assertions)]
-fn test_pause(point: &str) -> std::result::Result<(), CommandFailure> {
+pub(super) fn test_pause(point: &str, staging: &Path) -> std::result::Result<(), CommandFailure> {
     if std::env::var("LOOM_TEST_BACKUP_RESTORE_PAUSE_POINT")
         .ok()
         .as_deref()
@@ -55,7 +55,11 @@ fn test_pause(point: &str) -> std::result::Result<(), CommandFailure> {
             )
         })?;
     fs::create_dir_all(&directory).map_err(map_io)?;
-    fs::write(directory.join("ready"), point).map_err(map_io)?;
+    fs::write(
+        directory.join("ready"),
+        staging.to_string_lossy().as_bytes(),
+    )
+    .map_err(map_io)?;
     for _ in 0..2_000 {
         if directory.join("release").try_exists().map_err(map_io)? {
             return Ok(());
@@ -69,6 +73,6 @@ fn test_pause(point: &str) -> std::result::Result<(), CommandFailure> {
 }
 
 #[cfg(not(debug_assertions))]
-fn test_pause(_point: &str) -> std::result::Result<(), CommandFailure> {
+pub(super) fn test_pause(_point: &str, _staging: &Path) -> std::result::Result<(), CommandFailure> {
     Ok(())
 }

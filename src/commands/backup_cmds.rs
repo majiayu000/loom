@@ -52,10 +52,12 @@ struct InspectedBackup {
     manifest: BackupManifest,
     bundle_path: PathBuf,
     bundle_verify_output: String,
+    target_cache_present: bool,
 }
 
 struct TempPath {
     path: PathBuf,
+    cleanup: bool,
 }
 
 impl TempPath {
@@ -63,7 +65,10 @@ impl TempPath {
         let path = std::env::temp_dir().join(format!("{prefix}-{}", Uuid::new_v4().simple()));
         fs::create_dir_all(&path)
             .with_context(|| format!("failed to create {}", path.display()))?;
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            cleanup: true,
+        })
     }
 
     fn new_in(parent: &Path, prefix: &str) -> Result<Self> {
@@ -71,17 +76,26 @@ impl TempPath {
             .with_context(|| format!("failed to create {}", parent.display()))?;
         let path = parent.join(format!("{prefix}-{}", Uuid::new_v4().simple()));
         fs::create_dir(&path).with_context(|| format!("failed to create {}", path.display()))?;
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            cleanup: true,
+        })
     }
 
     fn path(&self) -> &Path {
         &self.path
     }
+
+    fn keep(&mut self) {
+        self.cleanup = false;
+    }
 }
 
 impl Drop for TempPath {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
+        if self.cleanup {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }
 
@@ -179,9 +193,13 @@ impl App {
         let destination_existed = restore::validate_root(&self.ctx.root, args.force_empty_root)?;
 
         let parent = parent_or_cwd(&self.ctx.root);
-        let staging = TempPath::new_in(parent, ".loom-restore").map_err(map_io)?;
+        let mut staging = TempPath::new_in(parent, ".loom-restore").map_err(map_io)?;
         clone_bundle_to(&inspected.bundle_path, staging.path()).map_err(map_git)?;
-        overlay_registry_snapshot(&inspected.root_dir.join("registry"), staging.path())?;
+        overlay_registry_snapshot(
+            &inspected.root_dir.join("registry"),
+            staging.path(),
+            inspected.target_cache_present,
+        )?;
         let restored_head = verify_restored_root(staging.path())?;
 
         restore::activate(
@@ -190,6 +208,8 @@ impl App {
             destination_existed,
             args.force_empty_root,
         )?;
+        staging.keep();
+        restore::test_pause("after_activation", staging.path())?;
 
         Ok((
             json!({
@@ -454,6 +474,18 @@ fn inspect_backup_artifact(
             ));
         }
     }
+    let target_cache_present =
+        match fs::symlink_metadata(root_dir.join("registry/state/target-cache")) {
+            Ok(metadata) if metadata.is_dir() => true,
+            Ok(_) => {
+                return Err(CommandFailure::new(
+                    ErrorCode::StateCorrupt,
+                    "backup artifact path must be a directory: state/target-cache",
+                ));
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => false,
+            Err(err) => return Err(map_io(err)),
+        };
     let bundle_path = root_dir.join("git.bundle");
     let bundle_verify_output = verify_bundle_file(&bundle_path).map_err(map_git)?;
     Ok(InspectedBackup {
@@ -462,6 +494,7 @@ fn inspect_backup_artifact(
         manifest,
         bundle_path,
         bundle_verify_output,
+        target_cache_present,
     })
 }
 
@@ -526,6 +559,7 @@ fn find_extracted_root(temp: &Path) -> std::result::Result<PathBuf, CommandFailu
 fn overlay_registry_snapshot(
     registry_snapshot: &Path,
     dst_root: &Path,
+    target_cache_present: bool,
 ) -> std::result::Result<(), CommandFailure> {
     replace_dir(&registry_snapshot.join("skills"), &dst_root.join("skills"))?;
     replace_dir(&registry_snapshot.join("trash"), &dst_root.join("trash"))?;
@@ -533,19 +567,11 @@ fn overlay_registry_snapshot(
         &registry_snapshot.join("state/registry"),
         &dst_root.join("state/registry"),
     )?;
-    let target_cache = registry_snapshot.join("state/target-cache");
-    match fs::symlink_metadata(&target_cache) {
-        Ok(metadata) if metadata.is_dir() => {
-            replace_dir(&target_cache, &dst_root.join("state/target-cache"))?;
-        }
-        Ok(_) => {
-            return Err(CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "backup artifact path must be a directory: state/target-cache",
-            ));
-        }
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => return Err(map_io(err)),
+    if target_cache_present {
+        replace_dir(
+            &registry_snapshot.join("state/target-cache"),
+            &dst_root.join("state/target-cache"),
+        )?;
     }
     remove_path_if_exists(&dst_root.join(".gitignore")).map_err(map_io)?;
     fs::copy(

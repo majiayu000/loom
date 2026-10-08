@@ -115,6 +115,13 @@ fn assert_non_directory_target_cache_restore_rejected(artifact: &Path) {
     let destination = TestDir::new("backup-invalid-target-cache-destination");
     let root = destination.path().join("root");
 
+    let (output, env) = run_loom(&root, &["backup", "inspect", artifact.to_str().unwrap()]);
+    assert!(
+        !output.status.success(),
+        "inspection accepted invalid cache: {env}"
+    );
+    assert_eq!(env["error"]["code"], "STATE_CORRUPT");
+
     let (output, env) = run_loom(&root, &["backup", "restore", artifact.to_str().unwrap()]);
     assert!(
         !output.status.success(),
@@ -251,6 +258,28 @@ mod activation_races {
                 let _ = child.wait();
             }
         }
+    }
+
+    #[test]
+    fn backup_restore_preserves_recreated_staging_after_activation() {
+        let (_source, artifact) = exported_backup();
+        let container = TestDir::new("backup-recreated-staging");
+        let destination = container.path().join("destination");
+        let restore = PausedRestore::start(&destination, &artifact, "after_activation", false);
+        let staging =
+            PathBuf::from(fs::read_to_string(restore.pause.path().join("ready")).unwrap());
+        assert!(!staging.exists(), "activation must have moved staging");
+        write_file(&staging.join("keep.txt"), "concurrent user data\n");
+        let (output, env) = restore.finish();
+        assert!(output.status.success(), "restore failed: {env}");
+        assert_eq!(
+            fs::read_to_string(staging.join("keep.txt")).unwrap(),
+            "concurrent user data\n"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("skills/demo/SKILL.md")).unwrap(),
+            "# Demo\n"
+        );
     }
 
     #[test]

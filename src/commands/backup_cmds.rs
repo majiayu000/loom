@@ -534,8 +534,18 @@ fn overlay_registry_snapshot(
         &dst_root.join("state/registry"),
     )?;
     let target_cache = registry_snapshot.join("state/target-cache");
-    if target_cache.exists() {
-        replace_dir(&target_cache, &dst_root.join("state/target-cache"))?;
+    match fs::symlink_metadata(&target_cache) {
+        Ok(metadata) if metadata.is_dir() => {
+            replace_dir(&target_cache, &dst_root.join("state/target-cache"))?;
+        }
+        Ok(_) => {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "backup artifact path must be a directory: state/target-cache",
+            ));
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(map_io(err)),
     }
     remove_path_if_exists(&dst_root.join(".gitignore")).map_err(map_io)?;
     fs::copy(

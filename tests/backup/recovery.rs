@@ -61,6 +61,77 @@ fn backup_restores_optional_untracked_target_cache() {
 }
 
 #[test]
+fn backup_restore_rejects_regular_file_target_cache_root() {
+    let source = TestDir::new("backup-file-target-cache-source");
+    let (output, env) = run_loom(source.path(), &["workspace", "init"]);
+    assert!(output.status.success(), "init failed: {env}");
+    let cache = source.path().join("state/target-cache");
+    fs::write(&cache, b"cache root bytes\0\xff").expect("write cache root");
+
+    let (output, env) = run_loom(
+        source.path(),
+        &["backup", "export", "--include-target-cache"],
+    );
+    assert!(output.status.success(), "export failed: {env}");
+    assert_eq!(env["data"]["target_cache_included"], true);
+    let artifact = env["data"]["artifact"].as_str().expect("artifact");
+    assert_non_directory_target_cache_restore_rejected(Path::new(artifact));
+    assert_eq!(fs::read(cache).unwrap(), b"cache root bytes\0\xff");
+}
+
+#[cfg(unix)]
+#[test]
+fn backup_restore_rejects_symlink_target_cache_root() {
+    let (_source, artifact) = exported_backup();
+    let mut archive = tar::Archive::new(fs::File::open(&artifact).unwrap());
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut cache_path = None;
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        let path = entry.path().unwrap().into_owned();
+        if path.ends_with("registry/state/registry") {
+            cache_path = Some(path.with_file_name("target-cache"));
+        }
+        builder.append(&entry.header().clone(), &mut entry).unwrap();
+    }
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Symlink);
+    header.set_mode(0o777);
+    header.set_size(0);
+    header.set_mtime(0);
+    builder
+        .append_link(
+            &mut header,
+            cache_path.expect("registry directory"),
+            "registry",
+        )
+        .unwrap();
+    fs::write(&artifact, builder.into_inner().unwrap()).unwrap();
+
+    assert_non_directory_target_cache_restore_rejected(&artifact);
+}
+
+fn assert_non_directory_target_cache_restore_rejected(artifact: &Path) {
+    let destination = TestDir::new("backup-invalid-target-cache-destination");
+    let root = destination.path().join("root");
+
+    let (output, env) = run_loom(&root, &["backup", "restore", artifact.to_str().unwrap()]);
+    assert!(
+        !output.status.success(),
+        "non-directory cache root was accepted: {env}"
+    );
+    assert_eq!(env["error"]["code"], "STATE_CORRUPT");
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("state/target-cache")
+    );
+    assert!(!root.exists(), "rejected restore activated the destination");
+    assert_eq!(fs::read_dir(destination.path()).unwrap().count(), 0);
+}
+
+#[test]
 fn backup_restore_rejects_existing_empty_and_scaffold_roots() {
     let (_source, artifact) = exported_backup();
     for scaffold in [false, true] {

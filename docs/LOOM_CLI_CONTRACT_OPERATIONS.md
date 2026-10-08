@@ -810,9 +810,12 @@ Write command.
 
 Rules:
 
-1. restores a backup artifact into a new empty registry root
-2. a destination root that already contains registry data is rejected
-3. `--force-empty-root` permits a destination root that contains only safe empty scaffolding
+1. restores a backup artifact into a registry root whose path does not exist
+2. every existing destination root is rejected with `ARG_INVALID`, including empty directories and scaffolding
+3. `--force-empty-root` cannot override the absent-root requirement
+4. activation uses an atomic no-replace move; a concurrent destination entry is preserved and causes `IO_ERROR`
+5. restore never removes or clears an existing destination root
+6. optional `state/target-cache/` data included by export is restored; backups without that directory remain valid
 
 ## 21. Observation Alias
 
@@ -880,6 +883,7 @@ Rules:
 3. `skill trash restore` restores the newest trash entry for the skill unless `--trash-id` selects a specific entry
 4. `skill trash purge` permanently removes one trash entry by id; `--dry-run` shows the plan without deleting files
 5. unknown trash entries fail with `TRASH_ENTRY_NOT_FOUND`
+6. restore activation never replaces an existing live skill; unexpected trash content prevents cleanup and survives. Failed `restore` or `purge` rollback preserves existing entry/live content and the independent backup, reporting recovery conflicts and `backup_path` in `error.details.rollback_errors` for manual recovery; restore cleanup atomically captures metadata before comparing it with the snapshot. Changed or unreadable metadata is retained at the recovery error’s `path`, alongside the snapshot at `backup_path`, and fails with `IO_ERROR`
 
 ### 23.3 `skill orphan`
 

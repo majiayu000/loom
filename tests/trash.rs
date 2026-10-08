@@ -7,6 +7,8 @@ use serde_json::Value;
 #[path = "trash/activation_edge_cases.rs"]
 mod activation_edge_cases;
 mod common;
+#[path = "trash/recovery.rs"]
+mod recovery;
 
 use common::actions::save_skill;
 use common::{TestDir, operations_log, run_loom, run_loom_with_env, write_file, write_skill};

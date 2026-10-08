@@ -9,7 +9,7 @@ pub enum BackupCommand {
     Export(BackupExportArgs),
     #[command(about = "Inspect and validate a registry backup artifact")]
     Inspect(BackupInspectArgs),
-    #[command(about = "Restore a registry backup into a new empty root")]
+    #[command(about = "Restore a registry backup into an absent root")]
     Restore(BackupRestoreArgs),
 }
 
@@ -39,7 +39,7 @@ pub struct BackupRestoreArgs {
     /// Backup artifact to restore.
     pub artifact: PathBuf,
 
-    /// Permit a destination root that contains only safe empty scaffolding.
+    /// Existing roots are always rejected; this flag cannot override that boundary.
     #[arg(long)]
     pub force_empty_root: bool,
 }

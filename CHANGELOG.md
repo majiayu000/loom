@@ -8,6 +8,9 @@ archives, checksums, and provenance details on GitHub Releases.
 ### Fixed
 
 - Autosave debounce now detects repeated edits to the same dirty path and rechecks content before saving.
+- Backup restore preserves files written concurrently to the destination and uses atomic activation without overwriting an existing path.
+- Trash restore and purge retain recovery backups and report their paths when payload rollback fails.
+- Backup restore now restores optional target cache data included by `--include-target-cache`.
 
 ## [0.2.0] - 2026-09-22
 

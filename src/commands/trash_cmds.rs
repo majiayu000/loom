@@ -9,12 +9,14 @@ use uuid::Uuid;
 
 use crate::cli::{TrashAddArgs, TrashPurgeArgs, TrashRestoreArgs};
 use crate::envelope::Meta;
-use crate::fs_util::remove_path_if_exists;
+use crate::fs_util::{remove_path_if_exists, rename_no_replace_atomic};
 use crate::gitops;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
-use super::file_ops::{backup_path_if_exists, restore_path_from_backup};
+use super::file_ops::{
+    backup_path_if_exists, restore_path_from_backup, restore_path_from_backup_if_absent,
+};
 use super::helpers::{
     ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_registry_state, slugify,
     validate_skill_name,
@@ -134,14 +136,39 @@ impl App {
         let trash_backup = backup_path_if_exists(&self.ctx, &entry.entry_path, "trash-restore")
             .map_err(map_registry_state)?;
 
-        if let Err(err) = fs::rename(&trash_skill_path, &skill_path) {
+        if let Err(err) = trash_test_pause("before_restore_activation")
+            .and_then(|()| rename_no_replace_atomic(&trash_skill_path, &skill_path))
+        {
             remove_temp_backup_best_effort(trash_backup.as_ref());
             return Err(map_io(err));
         }
-        if let Err(err) = remove_path_if_exists(&entry.entry_path) {
-            rollback_restore_from_backup(&skill_path, &entry.entry_path, trash_backup.as_ref());
-            remove_temp_backup_best_effort(trash_backup.as_ref());
-            return Err(map_io(err));
+        let mut metadata_capture = None;
+        if let Err(err) = trash_test_pause("before_restore_cleanup").and_then(|()| {
+            let backup_path = trash_backup
+                .as_ref()
+                .and_then(|backup| backup["backup_path"].as_str())
+                .map(Path::new)
+                .ok_or_else(|| std::io::Error::other("trash payload backup is missing"))?;
+            let captured = backup_path.with_extension("metadata-recovery");
+            // Claim the current file atomically before inspecting it. A new
+            // metadata.json created afterwards prevents nonrecursive cleanup.
+            rename_no_replace_atomic(&entry.entry_path.join("metadata.json"), &captured)?;
+            metadata_capture = Some(captured.clone());
+            trash_test_pause("after_restore_metadata_capture")?;
+            if fs::read(&captured)? != fs::read(backup_path.join("metadata.json"))? {
+                return Err(std::io::Error::other(
+                    "trash metadata changed after snapshot; preserving captured metadata",
+                ));
+            }
+            fs::remove_dir(&entry.entry_path)
+        }) {
+            let rollback_errors = rollback_restore_from_backup(
+                &skill_path,
+                &entry.entry_path,
+                trash_backup.as_ref(),
+                metadata_capture.as_deref(),
+            );
+            return Err(map_io(err).with_rollback_errors(rollback_errors));
         }
 
         let op_id = match record_registry_operation(
@@ -159,20 +186,32 @@ impl App {
         ) {
             Ok(op_id) => op_id,
             Err(err) => {
-                rollback_restore_from_backup(&skill_path, &entry.entry_path, trash_backup.as_ref());
-                remove_temp_backup_best_effort(trash_backup.as_ref());
-                let rollback_errors =
-                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
+                let mut rollback_errors = rollback_restore_from_backup(
+                    &skill_path,
+                    &entry.entry_path,
+                    trash_backup.as_ref(),
+                    metadata_capture.as_deref(),
+                );
+                rollback_errors.extend(restore_registry_audit_state_best_effort(
+                    &paths,
+                    &registry_backup,
+                ));
                 unstage_trash_paths(&self.ctx, &[&skill_rel, &trash_rel]);
                 return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
             }
         };
 
         if let Err(err) = stage_trash_commit_paths(&self.ctx, &[&skill_rel, &trash_rel]) {
-            rollback_restore_from_backup(&skill_path, &entry.entry_path, trash_backup.as_ref());
-            remove_temp_backup_best_effort(trash_backup.as_ref());
-            let rollback_errors =
-                restore_registry_audit_state_best_effort(&paths, &registry_backup);
+            let mut rollback_errors = rollback_restore_from_backup(
+                &skill_path,
+                &entry.entry_path,
+                trash_backup.as_ref(),
+                metadata_capture.as_deref(),
+            );
+            rollback_errors.extend(restore_registry_audit_state_best_effort(
+                &paths,
+                &registry_backup,
+            ));
             unstage_trash_paths(&self.ctx, &[&skill_rel, &trash_rel]);
             return Err(err.with_rollback_errors(rollback_errors));
         }
@@ -184,14 +223,23 @@ impl App {
         ) {
             Ok(commit) => commit,
             Err(err) => {
-                rollback_restore_from_backup(&skill_path, &entry.entry_path, trash_backup.as_ref());
-                remove_temp_backup_best_effort(trash_backup.as_ref());
-                let rollback_errors =
-                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
+                let mut rollback_errors = rollback_restore_from_backup(
+                    &skill_path,
+                    &entry.entry_path,
+                    trash_backup.as_ref(),
+                    metadata_capture.as_deref(),
+                );
+                rollback_errors.extend(restore_registry_audit_state_best_effort(
+                    &paths,
+                    &registry_backup,
+                ));
                 unstage_trash_paths(&self.ctx, &[&skill_rel, &trash_rel]);
                 return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
+        if let Some(path) = metadata_capture {
+            let _ = fs::remove_file(path);
+        }
         remove_temp_backup_best_effort(trash_backup.as_ref());
 
         let mut meta = Meta {
@@ -238,9 +286,12 @@ impl App {
         let trash_backup = backup_path_if_exists(&self.ctx, &entry_path, "trash-purge")
             .map_err(map_registry_state)?;
 
-        if let Err(err) = remove_path_if_exists(&entry_path) {
-            remove_temp_backup_best_effort(trash_backup.as_ref());
-            return Err(map_io(err));
+        if let Err(err) = trash_test_pause("before_purge_remove")
+            .and_then(|()| remove_path_if_exists(&entry_path))
+        {
+            let rollback_errors =
+                rollback_trash_payload(&entry_path, trash_backup.as_ref(), None, false);
+            return Err(map_io(err).with_rollback_errors(rollback_errors));
         }
 
         let trash_rel = format!("trash/{}", args.trash_id);
@@ -259,20 +310,24 @@ impl App {
         ) {
             Ok(op_id) => op_id,
             Err(err) => {
-                restore_temp_backup_best_effort(&entry_path, trash_backup.as_ref());
-                remove_temp_backup_best_effort(trash_backup.as_ref());
-                let rollback_errors =
-                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
+                let mut rollback_errors =
+                    rollback_trash_payload(&entry_path, trash_backup.as_ref(), None, false);
+                rollback_errors.extend(restore_registry_audit_state_best_effort(
+                    &paths,
+                    &registry_backup,
+                ));
                 unstage_trash_paths(&self.ctx, &[&trash_rel]);
                 return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
             }
         };
 
         if let Err(err) = stage_trash_commit_paths(&self.ctx, &[&trash_rel]) {
-            restore_temp_backup_best_effort(&entry_path, trash_backup.as_ref());
-            remove_temp_backup_best_effort(trash_backup.as_ref());
-            let rollback_errors =
-                restore_registry_audit_state_best_effort(&paths, &registry_backup);
+            let mut rollback_errors =
+                rollback_trash_payload(&entry_path, trash_backup.as_ref(), None, false);
+            rollback_errors.extend(restore_registry_audit_state_best_effort(
+                &paths,
+                &registry_backup,
+            ));
             unstage_trash_paths(&self.ctx, &[&trash_rel]);
             return Err(err.with_rollback_errors(rollback_errors));
         }
@@ -284,10 +339,12 @@ impl App {
         ) {
             Ok(commit) => commit,
             Err(err) => {
-                restore_temp_backup_best_effort(&entry_path, trash_backup.as_ref());
-                remove_temp_backup_best_effort(trash_backup.as_ref());
-                let rollback_errors =
-                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
+                let mut rollback_errors =
+                    rollback_trash_payload(&entry_path, trash_backup.as_ref(), None, false);
+                rollback_errors.extend(restore_registry_audit_state_best_effort(
+                    &paths,
+                    &registry_backup,
+                ));
                 unstage_trash_paths(&self.ctx, &[&trash_rel]);
                 return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
@@ -569,16 +626,93 @@ fn unstage_trash_paths(ctx: &crate::state::AppContext, paths: &[&str]) {
 fn rollback_restore_from_backup(
     skill_path: &Path,
     entry_path: &Path,
-    backup: Option<&serde_json::Value>,
-) {
-    let _ = remove_path_if_exists(skill_path);
-    restore_temp_backup_best_effort(entry_path, backup);
+    backup: Option<&Value>,
+    metadata_capture: Option<&Path>,
+) -> Vec<Value> {
+    let mut errors = rollback_trash_payload(
+        entry_path,
+        backup,
+        Some(skill_path),
+        metadata_capture.is_some(),
+    );
+    if let Some(path) = metadata_capture {
+        errors.push(trash_rollback_error(
+            "preserve_trash_metadata",
+            path,
+            backup,
+            anyhow!("preserving captured trash metadata for manual recovery"),
+        ));
+    }
+    errors
 }
 
-fn restore_temp_backup_best_effort(path: &Path, backup: Option<&serde_json::Value>) {
-    if let Some(backup) = backup {
-        let _ = restore_path_from_backup(path, backup);
+fn rollback_trash_payload(
+    entry_path: &Path,
+    backup: Option<&Value>,
+    restored_skill_path: Option<&Path>,
+    preserve_backup: bool,
+) -> Vec<Value> {
+    let mut errors = Vec::new();
+    let restore = || -> Result<()> {
+        if std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref()
+            == Some("restore_trash_payload")
+        {
+            return Err(anyhow!("fault injected at restore_trash_payload"));
+        }
+        let backup = backup.ok_or_else(|| anyhow!("trash payload backup is missing"))?;
+        trash_test_pause("before_rollback_restore")?;
+        let candidate =
+            entry_path.with_file_name(format!(".loom-trash-recovery-{}", Uuid::new_v4()));
+        restore_path_from_backup_if_absent(entry_path, &candidate, backup)
+    };
+    if let Err(err) = restore() {
+        errors.push(trash_rollback_error(
+            "restore_trash_payload",
+            entry_path,
+            backup,
+            err,
+        ));
+        return errors;
     }
+
+    // Live data can have changed since the snapshot. Keep it and the backup
+    // for manual recovery rather than deleting an existing path during rollback.
+    if let Some(skill_path) = restored_skill_path {
+        match fs::symlink_metadata(skill_path) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            result => {
+                let err = match result {
+                    Ok(_) => anyhow!("preserving existing live skill for manual recovery"),
+                    Err(err) => anyhow::Error::from(err),
+                };
+                errors.push(trash_rollback_error(
+                    "remove_restored_skill",
+                    skill_path,
+                    backup,
+                    err,
+                ));
+                return errors;
+            }
+        }
+    }
+    if !preserve_backup {
+        remove_temp_backup_best_effort(backup);
+    }
+    errors
+}
+
+fn trash_rollback_error(
+    step: &str,
+    path: &Path,
+    backup: Option<&Value>,
+    err: anyhow::Error,
+) -> Value {
+    json!({
+        "step": step,
+        "message": format!("{err:#}"),
+        "path": path.display().to_string(),
+        "backup_path": backup.and_then(|backup| backup.get("backup_path")),
+    })
 }
 
 fn remove_temp_backup_best_effort(backup: Option<&serde_json::Value>) {
@@ -610,4 +744,34 @@ fn restore_registry_audit_state_best_effort(
         .err()
         .map(|err| vec![json!({"step": step, "message": err.to_string()})])
         .unwrap_or_default()
+}
+
+#[cfg(debug_assertions)]
+fn trash_test_pause(point: &str) -> std::io::Result<()> {
+    if std::env::var("LOOM_TEST_TRASH_PAUSE_POINT").ok().as_deref() == Some(point) {
+        let directory = std::env::var_os("LOOM_TEST_TRASH_PAUSE_DIR")
+            .map(PathBuf::from)
+            .ok_or_else(|| std::io::Error::other("trash pause directory is absent"))?;
+        fs::write(directory.join("ready"), point)?;
+        let mut released = false;
+        for _ in 0..2_000 {
+            if directory.join("release").try_exists()? {
+                released = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        if !released {
+            return Err(std::io::Error::other("trash test pause timed out"));
+        }
+    }
+    if std::env::var("LOOM_TEST_TRASH_FAIL_POINT").ok().as_deref() == Some(point) {
+        return Err(std::io::Error::other(format!("fault injected at {point}")));
+    }
+    Ok(())
+}
+
+#[cfg(not(debug_assertions))]
+fn trash_test_pause(_point: &str) -> std::io::Result<()> {
+    Ok(())
 }

@@ -524,6 +524,40 @@ mod races {
         assert_retained_payload(&env, "restore_trash_payload", root.path(), &metadata);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn restore_cleanup_preserves_metadata_symlink_even_when_bytes_match() {
+        for kind in ["same", "changed", "dangling"] {
+            let (root, _, env, metadata) =
+                paused("restore", "before_restore_cleanup", false, |root, entry| {
+                    let current = entry.join("metadata.json");
+                    let bytes = fs::read(&current).unwrap();
+                    let referent = root.join("concurrent-metadata.json");
+                    match kind {
+                        "same" => fs::write(&referent, &bytes).unwrap(),
+                        "changed" => fs::write(&referent, b"concurrent metadata").unwrap(),
+                        _ => {}
+                    }
+                    fs::remove_file(&current).unwrap();
+                    std::os::unix::fs::symlink(&referent, current).unwrap();
+                });
+            assert_eq!(env["error"]["code"], "IO_ERROR");
+            let captured = retained_metadata(&env);
+            let referent = root.path().join("concurrent-metadata.json");
+            assert_eq!(fs::read_link(&captured).unwrap(), referent);
+            match kind {
+                "same" => assert_eq!(fs::read(&referent).unwrap(), metadata),
+                "changed" => assert_eq!(fs::read(&referent).unwrap(), b"concurrent metadata"),
+                _ => assert!(!referent.exists()),
+            }
+            assert_retained_payload(&env, "restore_trash_payload", root.path(), &metadata);
+            assert_eq!(
+                fs::read(root.path().join("skills/demo/uncommitted.bin")).unwrap(),
+                PAYLOAD
+            );
+        }
+    }
+
     #[test]
     fn failed_purge_preserves_surviving_entry_bytes_and_snapshot() {
         let (root, trash_id, env, metadata) =

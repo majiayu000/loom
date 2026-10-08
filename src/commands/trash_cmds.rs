@@ -155,6 +155,11 @@ impl App {
             rename_no_replace_atomic(&entry.entry_path.join("metadata.json"), &captured)?;
             metadata_capture = Some(captured.clone());
             trash_test_pause("after_restore_metadata_capture")?;
+            if !fs::symlink_metadata(&captured)?.file_type().is_file() {
+                return Err(std::io::Error::other(
+                    "trash metadata type changed after snapshot; preserving captured metadata",
+                ));
+            }
             if fs::read(&captured)? != fs::read(backup_path.join("metadata.json"))? {
                 return Err(std::io::Error::other(
                     "trash metadata changed after snapshot; preserving captured metadata",

@@ -883,7 +883,7 @@ Rules:
 3. `skill trash restore` restores the newest trash entry for the skill unless `--trash-id` selects a specific entry
 4. `skill trash purge` permanently removes one trash entry by id; `--dry-run` shows the plan without deleting files
 5. unknown trash entries fail with `TRASH_ENTRY_NOT_FOUND`
-6. restore activation never replaces an existing live skill; unexpected trash content prevents cleanup and survives. Failed `restore` or `purge` rollback preserves existing entry/live content and the independent backup, reporting recovery conflicts and `backup_path` in `error.details.rollback_errors` for manual recovery; restore cleanup atomically captures metadata before comparing it with the snapshot. Changed or unreadable metadata is retained at the recovery error’s `path`, alongside the snapshot at `backup_path`, and fails with `IO_ERROR`
+6. restore activation never replaces an existing live skill; unexpected trash content prevents cleanup and survives. Failed `restore` or `purge` rollback preserves existing entry/live content and the independent backup, reporting recovery conflicts and `backup_path` in `error.details.rollback_errors` for manual recovery; restore cleanup atomically captures metadata before comparing it with the snapshot. Changed, unreadable, or non-regular metadata is retained at the recovery error’s `path`, alongside the snapshot at `backup_path`, and fails with `IO_ERROR`
 
 ### 23.3 `skill orphan`
 

@@ -28,7 +28,10 @@ fn skill_add_resolves_refs_when_source_head_is_another_branch() {
     let source = TestDir::new("skill-ref-source");
     git(source.path(), &["init"]);
     git(source.path(), &["config", "user.name", "Skill Source"]);
-    git(source.path(), &["config", "user.email", "source@example.com"]);
+    git(
+        source.path(),
+        &["config", "user.email", "source@example.com"],
+    );
     git(source.path(), &["checkout", "-b", "main"]);
     write_file(&source.path().join("skill/SKILL.md"), "# Main\n");
     git(source.path(), &["add", "."]);
@@ -77,10 +80,9 @@ fn skill_add_resolves_refs_when_source_head_is_another_branch() {
             fs::read_to_string(root.path().join("skills/demo/SKILL.md")).expect("imported skill"),
             expected_content
         );
-        let lock: Value = serde_json::from_str(
-            &fs::read_to_string(root.path().join("loom.lock")).expect("lock"),
-        )
-        .expect("parse lock");
+        let lock: Value =
+            serde_json::from_str(&fs::read_to_string(root.path().join("loom.lock")).expect("lock"))
+                .expect("parse lock");
         assert_eq!(lock["skills"]["demo"]["ref"], json!(reference));
         assert_eq!(lock["skills"]["demo"]["commit"], json!(expected_commit));
         let tree = git(

@@ -25,6 +25,7 @@ use super::{App, CommandFailure};
 const SOURCES_REL: &str = "state/registry/sources.json";
 const LOCK_REL: &str = "loom.lock";
 
+mod git_ref;
 mod outdated;
 mod team;
 pub(crate) use team::planned_record_files;
@@ -722,7 +723,8 @@ where
         ));
     }
     if let Some(reference) = requested_ref {
-        let checkout = run_git_allow_failure_in(&clone_tmp, &["checkout", "--detach", reference])
+        let resolved = git_ref::resolve_commit(&clone_tmp, reference)?;
+        let checkout = run_git_allow_failure_in(&clone_tmp, &["checkout", "--detach", &resolved])
             .map_err(map_git)?;
         if !checkout.status.success() {
             return Err(CommandFailure::new(

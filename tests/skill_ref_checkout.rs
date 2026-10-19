@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use common::{TestDir, run_loom, write_file};
+use common::{TestDir, run_loom, run_loom_with_env, write_file};
 use serde_json::{Value, json};
 
 fn git(repo: &Path, args: &[&str]) -> String {
@@ -61,8 +61,13 @@ fn skill_add_resolves_refs_when_source_head_is_another_branch() {
         (main.as_str(), main.as_str(), "# Main\n"),
     ] {
         let root = TestDir::new("skill-ref-import");
-        let (output, envelope) = run_loom(
+        let (output, envelope) = run_loom_with_env(
             root.path(),
+            &[
+                ("GIT_CONFIG_COUNT", "1"),
+                ("GIT_CONFIG_KEY_0", "clone.defaultRemoteName"),
+                ("GIT_CONFIG_VALUE_0", "upstream"),
+            ],
             &[
                 "skill",
                 "add",

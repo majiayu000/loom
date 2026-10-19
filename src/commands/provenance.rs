@@ -710,7 +710,13 @@ where
     remove_path_if_exists(&clone_tmp).map_err(map_io)?;
     let clone = run_git_allow_failure_in(
         staging_root,
-        &["clone", source, clone_tmp.to_string_lossy().as_ref()],
+        &[
+            "clone",
+            "--origin",
+            "origin",
+            source,
+            clone_tmp.to_string_lossy().as_ref(),
+        ],
     )
     .map_err(map_git)?;
     if !clone.status.success() {

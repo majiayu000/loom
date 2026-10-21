@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub(super) const TELEMETRY_SCHEMA_VERSION: u32 = 1;
-pub(super) const TELEMETRY_EVENT_SCHEMA_VERSION: u32 = 3;
+pub(super) const TELEMETRY_EVENT_SCHEMA_VERSION: u32 = 4;
 pub(super) const DEFAULT_RETENTION_DAYS: u32 = 90;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,10 +84,23 @@ pub(super) struct TelemetryEvent {
     pub session_id_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<SessionOrigin>,
     pub timestamp: DateTime<Utc>,
     #[serde(default)]
     pub metrics: TelemetryMetrics,
     pub privacy: TelemetryPrivacy,
+}
+
+/// Whether the agent session behind an imported event was driven by a person or by a
+/// program (`claude -p`, an Agent SDK host, `codex exec`). Absent when the log does not say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionOrigin {
+    Interactive,
+    Automated,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -220,6 +233,8 @@ pub(crate) struct TelemetryEventDraft {
     pub(crate) workspace: Option<PathBuf>,
     pub(crate) session_id: Option<String>,
     pub(crate) task: Option<String>,
+    pub(crate) turn: Option<String>,
+    pub(crate) origin: Option<SessionOrigin>,
     pub(crate) timestamp: DateTime<Utc>,
     pub(crate) metrics: TelemetryMetrics,
     pub(crate) event_id_override: Option<String>,
@@ -236,6 +251,8 @@ impl TelemetryEventDraft {
             workspace: None,
             session_id: None,
             task: None,
+            turn: None,
+            origin: None,
             timestamp: Utc::now(),
             metrics: TelemetryMetrics::default(),
             event_id_override: None,

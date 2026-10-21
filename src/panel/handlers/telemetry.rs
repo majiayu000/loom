@@ -34,6 +34,7 @@ impl From<TelemetryReportQuery> for TelemetryReportArgs {
             agent: query.agent,
             workspace: query.workspace,
             since: query.since,
+            origin: None,
         }
     }
 }

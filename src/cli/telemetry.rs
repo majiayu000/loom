@@ -72,6 +72,28 @@ pub struct TelemetryReportArgs {
     /// Include events at or after this date or RFC3339 timestamp.
     #[arg(long)]
     pub since: Option<String>,
+
+    /// Limit the report to sessions started by a person, by a program, or of unknown origin.
+    #[arg(long, value_enum)]
+    pub origin: Option<TelemetryOrigin>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetryOrigin {
+    Interactive,
+    Automated,
+    Unknown,
+}
+
+impl TelemetryOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Automated => "automated",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

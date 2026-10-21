@@ -99,7 +99,8 @@ pub use skillset::{
 };
 pub use telemetry::{
     TelemetryCommand, TelemetryEnableArgs, TelemetryExportArgs, TelemetryExportFormat,
-    TelemetryIngestAgent, TelemetryIngestArgs, TelemetryPurgeArgs, TelemetryReportArgs,
+    TelemetryIngestAgent, TelemetryIngestArgs, TelemetryOrigin, TelemetryPurgeArgs,
+    TelemetryReportArgs,
 };
 pub use use_flow::{UseArgs, UseScope};
 pub use version::{DiffArgs, HistoryArgs, ReleaseArgs, RollbackArgs, SkillCommitArgs};

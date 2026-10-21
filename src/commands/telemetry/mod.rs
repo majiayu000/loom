@@ -32,9 +32,12 @@ pub(crate) use emitters::{
 pub(crate) use evidence::SkillTelemetryEvidenceCache;
 use export::{export_csv, export_format_label, export_jsonl};
 pub(crate) use model::{RecommendationFeedback, failure_category_allowed};
-use model::{TelemetryConfig, TelemetryEventDraft, TelemetryEventType, TelemetryMetrics};
+use model::{
+    SessionOrigin, TelemetryConfig, TelemetryEventDraft, TelemetryEventType, TelemetryMetrics,
+};
 pub(crate) use query::{
-    AgentRef, NormalizedTelemetryDataset, SkillRef, UsageKind, UsageRow, load_dataset, usage_rows,
+    AgentRef, NormalizedTelemetryDataset, SkillRef, UsageKind, UsageRow, load_dataset,
+    origin_matches, usage_rows,
 };
 use query::{NormalizedTelemetryRow, TelemetryFilters, filtered_rows};
 pub(crate) use store::parse_cutoff;
@@ -360,6 +363,9 @@ struct Aggregate {
     activations: u64,
     deactivations: u64,
     invocations: u64,
+    audit_sweep_reads: u64,
+    interactive_invocations: u64,
+    automated_invocations: u64,
     errors: u64,
     eval_runs: u64,
     eval_passed: u64,
@@ -410,6 +416,7 @@ fn filters_from_args(
             .as_ref()
             .map(|path| workspace_hash_for_path(path)),
         since,
+        origin: args.origin,
     })
 }
 
@@ -470,8 +477,20 @@ fn aggregate_entries(
         match event.event_type {
             TelemetryEventType::SkillActivation => checked_add(&mut aggregate.activations, 1)?,
             TelemetryEventType::SkillDeactivation => checked_add(&mut aggregate.deactivations, 1)?,
+            TelemetryEventType::SkillInvocation if entry.audit_sweep => {
+                checked_add(&mut aggregate.audit_sweep_reads, 1)?;
+            }
             TelemetryEventType::SkillInvocation => {
                 checked_add(&mut aggregate.invocations, 1)?;
+                match event.origin {
+                    Some(SessionOrigin::Interactive) => {
+                        checked_add(&mut aggregate.interactive_invocations, 1)?
+                    }
+                    Some(SessionOrigin::Automated) => {
+                        checked_add(&mut aggregate.automated_invocations, 1)?
+                    }
+                    None => {}
+                }
                 max_timestamp(&mut aggregate.last_invoked_at, event.timestamp);
             }
             TelemetryEventType::SkillEval => {
@@ -576,6 +595,14 @@ fn usage_json(aggregate: &Aggregate) -> Value {
         "activations": aggregate.activations,
         "deactivations": aggregate.deactivations,
         "invocations": aggregate.invocations,
+        "invocations_by_origin": {
+            "interactive": aggregate.interactive_invocations,
+            "automated": aggregate.automated_invocations,
+            "unknown": aggregate.invocations
+                - aggregate.interactive_invocations
+                - aggregate.automated_invocations,
+        },
+        "audit_sweep_reads_excluded": aggregate.audit_sweep_reads,
         "errors": aggregate.errors,
         "last_invoked_at": aggregate.last_invoked_at.map(|value| value.to_rfc3339()),
         "last_error_at": aggregate.last_error_at.map(|value| value.to_rfc3339()),
@@ -652,6 +679,7 @@ fn filters_json(filters: &TelemetryFilters) -> Value {
         "agent": filters.agent,
         "workspace_hash": filters.workspace_hash,
         "since": filters.since.map(|value| value.to_rfc3339()),
+        "origin": filters.origin.map(|origin| origin.as_str()),
     })
 }
 

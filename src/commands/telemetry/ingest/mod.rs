@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
 mod cursor;
+mod origin;
 mod plan;
 mod source_file;
 mod stream;
@@ -25,7 +26,7 @@ use crate::types::ErrorCode;
 
 use super::super::helpers::{map_io, map_lock, map_registry_state};
 use super::super::{App, CommandFailure, build_skill_read_model};
-use super::model::{TelemetryEventDraft, TelemetryEventType};
+use super::model::{SessionOrigin, TelemetryEventDraft, TelemetryEventType};
 use super::store::{
     append_events_deduped_locked, observed_skill_name_allowed, parse_cutoff, read_config,
     session_hash_for_text,
@@ -63,6 +64,8 @@ pub(super) struct ImportedRecord {
     session_id: String,
     workspace: Option<PathBuf>,
     timestamp: DateTime<Utc>,
+    turn_id: Option<String>,
+    origin: Option<SessionOrigin>,
     invocations: Vec<ImportedInvocation>,
     rejected_reasons: Vec<&'static str>,
 }
@@ -437,6 +440,8 @@ fn scan_source_once(
                     draft.agent = Some(agent.as_str().to_string());
                     draft.workspace = record.workspace.clone();
                     draft.session_id = Some(record.session_id.clone());
+                    draft.turn = record.turn_id.clone();
+                    draft.origin = record.origin;
                     draft.timestamp = record.timestamp;
                     draft.event_id_override = Some(deterministic_event_id(EventIdentityInput {
                         agent,

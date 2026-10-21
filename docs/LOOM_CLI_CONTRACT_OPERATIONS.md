@@ -440,7 +440,7 @@ loom --json --root <root> telemetry status
 loom --json --root <root> telemetry enable [--local-only]
 loom --json --root <root> telemetry disable
 loom --json --root <root> telemetry ingest --agent claude|codex|all [--since <date>] [--dry-run]
-loom --json --root <root> telemetry report [--skill <skill-id>] [--skillset <skillset-id>] [--agent <agent>] [--workspace <path>] [--since <date>]
+loom --json --root <root> telemetry report [--skill <skill-id>] [--skillset <skillset-id>] [--agent <agent>] [--workspace <path>] [--since <date>] [--origin interactive|automated|unknown]
 loom --json --root <root> telemetry export --format jsonl|csv --output <path> [--redacted]
 loom --json --root <root> telemetry purge [--before <date>] --dry-run
 loom --json --root <root> telemetry purge [--before <date>] --confirm <token>
@@ -458,11 +458,14 @@ Rules:
 1. telemetry is local-first and opt-in; absent config reports `enabled=false`.
 2. enabled config uses `state/telemetry/config.json`; events use append-only
    `state/telemetry/events.jsonl`.
-3. telemetry readers accept event schema versions 1 through 3. New writers use
-   version 3, typed event families, hashed workspace/session/task identifiers,
+3. telemetry readers accept event schema versions 1 through 4. New writers use
+   version 4, typed event families, hashed workspace/session/task identifiers,
    and `privacy.raw_prompt_stored=false`, `privacy.raw_code_stored=false`,
    `privacy.redacted=true`. Version 3 adds validated `observed_skill_name` for
    unmatched invocations; it never stores raw transcript or source paths.
+   Version 4 adds optional `origin` (`interactive` or `automated`) and a hashed
+   `turn_hash` for imported invocations; neither stores the client name or raw
+   turn id.
 4. disabled telemetry must not append telemetry events.
 5. existing malformed event lines are surfaced as quarantined warnings in
    status/report/export/purge responses; they are not silently dropped.
@@ -516,6 +519,18 @@ Rules:
     `skill_id` and validated unmatched `observed_skill_name` through one
     normalized redacted query model. Agentless events match only an unfiltered
     agent query.
+19. Ingest classifies origin from the client recorded in the log: Claude
+    `entrypoint` `sdk-cli`, `sdk-py`, and `sdk-ts` and Codex `originator`
+    `codex_exec` are `automated`; `cli`, `claude-desktop`, `claude-vscode`,
+    `claude-jetbrains`, `codex-tui`, `codex_cli_rs`, `codex_vscode`, and
+    `codex_work_desktop` are `interactive`; any other or missing client leaves
+    origin absent. `--origin unknown` selects events without origin, including
+    every event written before schema 4.
+20. Readers treat one agent turn (same agent, session hash, and turn hash) that
+    invoked eight or more distinct skills as an inventory sweep. Those events are
+    excluded from `usage.invocations`, from `skill stats`, and from
+    `invocations_by_origin`, and are counted in `usage.audit_sweep_reads_excluded`.
+    Events without `turn_hash` are never classified as sweeps.
 
 ## 12. Human-Friendly Use Flow
 

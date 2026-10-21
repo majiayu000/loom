@@ -89,3 +89,9 @@ version = "2.1.0"
 skill_range = ">=2.0.0,<3.0.0"
 change = "Add the typed local workbench endpoint for existing CLI operations and live provider catalog search/preview."
 migration_note = "Workbench clients require the matching Panel or desktop sidecar; existing CLI command paths and the 2.x shipped Skill range remain unchanged."
+
+[[contract]]
+version = "2.2.0"
+skill_range = ">=2.0.0,<3.0.0"
+change = "Record session origin and a hashed turn id on imported telemetry (event schema 4), exclude one-turn inventory sweeps from usage, and add --origin to telemetry report and skill stats."
+migration_note = "Events imported before schema 4 report origin as unknown; purge and re-ingest to classify them. Usage totals drop where a turn loaded eight or more distinct skills; those reads appear as audit_sweep_reads_excluded."

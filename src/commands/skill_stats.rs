@@ -12,7 +12,7 @@ use crate::types::ErrorCode;
 use super::helpers::{map_lock, map_registry_state, validate_skill_name};
 use super::skill_inventory::build_skill_read_model_from_snapshot;
 use super::telemetry::{
-    AgentRef, SkillRef, UsageKind, UsageRow, load_dataset, parse_cutoff, usage_rows,
+    AgentRef, SkillRef, UsageKind, UsageRow, load_dataset, origin_matches, parse_cutoff, usage_rows,
 };
 use super::{App, CommandFailure};
 
@@ -205,8 +205,11 @@ impl App {
             &skill_ids,
             &bound_agents,
             &dataset,
-            args.agent.as_deref(),
-            since,
+            StatsScope {
+                agent: args.agent.as_deref(),
+                origin: args.origin,
+                since,
+            },
             cutoff,
             args.zombie_days,
         )?;
@@ -279,13 +282,17 @@ fn current_bound_agents(
     Ok(result)
 }
 
-#[allow(clippy::too_many_arguments)]
+struct StatsScope<'a> {
+    agent: Option<&'a str>,
+    origin: Option<crate::cli::TelemetryOrigin>,
+    since: Option<DateTime<Utc>>,
+}
+
 fn aggregate_stats(
     skill_ids: &BTreeSet<String>,
     bound_agents: &BTreeMap<String, BTreeSet<String>>,
     dataset: &super::telemetry::NormalizedTelemetryDataset,
-    agent_filter: Option<&str>,
-    since: Option<DateTime<Utc>>,
+    scope: StatsScope<'_>,
     zombie_cutoff: DateTime<Utc>,
     zombie_days: u64,
 ) -> Result<Value, CommandFailure> {
@@ -297,7 +304,15 @@ fn aggregate_stats(
     let mut agentless = AttemptAggregate::default();
     let mut window_events = 0_u64;
 
+    let StatsScope {
+        agent: agent_filter,
+        origin: origin_filter,
+        since,
+    } = scope;
     for row in usage_rows(dataset) {
+        if origin_filter.is_some_and(|origin| !origin_matches(origin, row.origin)) {
+            continue;
+        }
         let registered = match &row.skill_ref {
             SkillRef::Registered(skill) if skill_ids.contains(skill) => Some(skill.as_str()),
             _ => None,
@@ -418,6 +433,7 @@ fn aggregate_stats(
     Ok(json!({
         "since": since.map(|value| value.to_rfc3339()),
         "agent": agent_filter,
+        "origin": origin_filter.map(|origin| origin.as_str()),
         "zombie_days": zombie_days,
         "telemetry_enabled": dataset.telemetry_enabled,
         "telemetry_empty": dataset.persisted_event_count == 0,
@@ -496,6 +512,7 @@ mod tests {
             kind: UsageKind::Invocation,
             timestamp: Utc.with_ymd_and_hms(2026, 7, 18, 0, 0, 0).unwrap(),
             failure_category: None,
+            origin: None,
         };
         let error = aggregate.record(&row, "skills.demo").unwrap_err();
         assert_eq!(error.code, ErrorCode::StateCorrupt);

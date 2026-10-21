@@ -438,6 +438,8 @@ fn redacted_event_from_draft(
             .as_ref()
             .map(|session| hash_identity("session", session)),
         task_hash: draft.task.as_ref().map(|task| task_hash_for_text(task)),
+        turn_hash: draft.turn.as_ref().map(|turn| hash_identity("turn", turn)),
+        origin: draft.origin,
         timestamp: draft.timestamp,
         metrics: draft.metrics,
         privacy: TelemetryPrivacy::default(),
@@ -458,6 +460,12 @@ fn validate_event(event: &TelemetryEvent) -> std::result::Result<(), CommandFail
         return Err(CommandFailure::new(
             ErrorCode::SchemaMismatch,
             "telemetry event_id must start with 'evt_'",
+        ));
+    }
+    if (event.turn_hash.is_some() || event.origin.is_some()) && event.schema_version < 4 {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "turn_hash and origin require telemetry event schema_version 4",
         ));
     }
     if event.observed_skill_name.is_some() && event.schema_version < 3 {

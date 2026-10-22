@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::path::PathBuf;
 
-use super::{ImportedInvocation, ImportedRecord, ParseOutcome};
+use super::{ImportedInvocation, ImportedRecord, ParseOutcome, origin};
 
 pub(super) fn parse_record(value: &Value) -> ParseOutcome {
     let mut invocations = Vec::new();
@@ -82,6 +82,11 @@ fn finish_record(
         session_id: session_id.to_string(),
         workspace: value.get("cwd").and_then(Value::as_str).map(PathBuf::from),
         timestamp,
+        turn_id: None,
+        origin: value
+            .get("entrypoint")
+            .and_then(Value::as_str)
+            .and_then(origin::claude_entrypoint),
         invocations,
         rejected_reasons,
     })
@@ -241,6 +246,7 @@ fn classify_command(name: &str) -> CommandClassification<'_> {
 mod tests {
     use serde_json::json;
 
+    use super::super::super::model::SessionOrigin;
     use super::{ParseOutcome, parse_record};
 
     #[test]
@@ -314,6 +320,29 @@ mod tests {
                 panic!("skill /{name} must be imported");
             };
             assert_eq!(record.invocations[0].name, canonical);
+        }
+    }
+
+    #[test]
+    fn entrypoint_sets_session_origin() {
+        for (entrypoint, expected) in [
+            (Some("sdk-cli"), Some(SessionOrigin::Automated)),
+            (Some("claude-desktop"), Some(SessionOrigin::Interactive)),
+            (None, None),
+        ] {
+            let mut value = json!({
+                "uuid": "record",
+                "sessionId": "session",
+                "timestamp": "2026-07-01T00:00:00Z",
+                "message": {"content": "<command-name>/demo</command-name>"}
+            });
+            if let Some(entrypoint) = entrypoint {
+                value["entrypoint"] = json!(entrypoint);
+            }
+            let ParseOutcome::Record(record) = parse_record(&value) else {
+                panic!("command must parse");
+            };
+            assert_eq!(record.origin, expected);
         }
     }
 

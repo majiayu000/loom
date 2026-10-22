@@ -5,6 +5,11 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ## Unreleased
 
+### Added
+
+- CLI contract 2.2.0: imported telemetry events (schema 4) record whether the session was interactive or automated (`claude -p`, Agent SDK hosts, `codex exec`) and a hashed turn id. `telemetry report` and `skill stats` accept `--origin interactive|automated|unknown`.
+- Telemetry usage excludes inventory sweeps: an agent turn that loads eight or more distinct skills is reported as `audit_sweep_reads_excluded` instead of invocations.
+
 ### Fixed
 
 - Autosave debounce now detects repeated edits to the same dirty path and rechecks content before saving.

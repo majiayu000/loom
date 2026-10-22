@@ -71,4 +71,8 @@ pub struct SkillStatsArgs {
     /// Classify bound skills with no recent attempts as zombies.
     #[arg(long, default_value_t = 30)]
     pub zombie_days: u64,
+
+    /// Count only usage from sessions started by a person, by a program, or of unknown origin.
+    #[arg(long, value_enum)]
+    pub origin: Option<crate::cli::TelemetryOrigin>,
 }

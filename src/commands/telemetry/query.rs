@@ -1,9 +1,12 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use chrono::{DateTime, Utc};
 
+use crate::cli::TelemetryOrigin;
 use crate::state::AppContext;
 
 use super::super::CommandFailure;
-use super::model::{TelemetryConfig, TelemetryEvent, TelemetryEventType};
+use super::model::{SessionOrigin, TelemetryConfig, TelemetryEvent, TelemetryEventType};
 use super::store::{MalformedTelemetryLine, read_config, read_event_log};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +36,13 @@ pub(super) struct NormalizedTelemetryRow {
     pub(super) event: TelemetryEvent,
     pub(super) skill_ref: SkillRef,
     pub(super) agent_ref: AgentRef,
+    /// The invocation came from one agent turn that read many different skills: an
+    /// inventory or audit pass, not use of each skill. Excluded from usage counts.
+    pub(super) audit_sweep: bool,
 }
+
+/// One turn that loads at least this many distinct skills is treated as a sweep.
+pub(crate) const AUDIT_SWEEP_MIN_SKILLS: usize = 8;
 
 pub(crate) struct NormalizedTelemetryDataset {
     pub(crate) telemetry_enabled: bool,
@@ -51,6 +60,7 @@ pub(super) struct TelemetryFilters {
     pub(super) agent: Option<String>,
     pub(super) workspace_hash: Option<String>,
     pub(super) since: Option<DateTime<Utc>>,
+    pub(super) origin: Option<TelemetryOrigin>,
 }
 
 pub(crate) fn load_dataset(
@@ -79,9 +89,11 @@ pub(crate) fn load_dataset(
                 event: entry.event,
                 skill_ref,
                 agent_ref,
+                audit_sweep: false,
             }
         })
         .collect::<Vec<_>>();
+    let rows = mark_audit_sweeps(rows);
     Ok(NormalizedTelemetryDataset {
         telemetry_enabled: config.as_ref().is_some_and(|config| config.enabled),
         persisted_event_count: rows.len(),
@@ -118,8 +130,55 @@ pub(super) fn filtered_rows<'a>(
                 && filters
                     .since
                     .is_none_or(|since| row.event.timestamp >= since)
+                && filters
+                    .origin
+                    .is_none_or(|origin| origin_matches(origin, row.event.origin))
         })
         .collect()
+}
+
+pub(crate) fn origin_matches(filter: TelemetryOrigin, origin: Option<SessionOrigin>) -> bool {
+    match filter {
+        TelemetryOrigin::Interactive => origin == Some(SessionOrigin::Interactive),
+        TelemetryOrigin::Automated => origin == Some(SessionOrigin::Automated),
+        TelemetryOrigin::Unknown => origin.is_none(),
+    }
+}
+
+fn mark_audit_sweeps(mut rows: Vec<NormalizedTelemetryRow>) -> Vec<NormalizedTelemetryRow> {
+    let mut skills_per_turn = BTreeMap::<(&str, &str, &str), BTreeSet<&str>>::new();
+    for row in &rows {
+        if let Some(key) = sweep_key(row)
+            && let Some(skill) = row.skill_ref.label()
+        {
+            skills_per_turn.entry(key).or_default().insert(skill);
+        }
+    }
+    let sweeps = skills_per_turn
+        .into_iter()
+        .filter(|(_, skills)| skills.len() >= AUDIT_SWEEP_MIN_SKILLS)
+        .map(|(key, _)| (key.0.to_string(), key.1.to_string(), key.2.to_string()))
+        .collect::<BTreeSet<_>>();
+    if sweeps.is_empty() {
+        return rows;
+    }
+    for row in &mut rows {
+        row.audit_sweep = sweep_key(row).is_some_and(|(agent, session, turn)| {
+            sweeps.contains(&(agent.to_string(), session.to_string(), turn.to_string()))
+        });
+    }
+    rows
+}
+
+fn sweep_key(row: &NormalizedTelemetryRow) -> Option<(&str, &str, &str)> {
+    if row.event.event_type != TelemetryEventType::SkillInvocation {
+        return None;
+    }
+    Some((
+        row.event.agent.as_deref().unwrap_or(""),
+        row.event.session_id_hash.as_deref()?,
+        row.event.turn_hash.as_deref()?,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,12 +194,16 @@ pub(crate) struct UsageRow {
     pub(crate) kind: UsageKind,
     pub(crate) timestamp: DateTime<Utc>,
     pub(crate) failure_category: Option<String>,
+    pub(crate) origin: Option<SessionOrigin>,
 }
 
 pub(crate) fn usage_rows(
     dataset: &NormalizedTelemetryDataset,
 ) -> impl Iterator<Item = UsageRow> + '_ {
     dataset.rows.iter().filter_map(|row| {
+        if row.audit_sweep {
+            return None;
+        }
         let kind = match row.event.event_type {
             TelemetryEventType::SkillInvocation => UsageKind::Invocation,
             TelemetryEventType::SkillError => UsageKind::Error,
@@ -152,6 +215,7 @@ pub(crate) fn usage_rows(
             kind,
             timestamp: row.event.timestamp,
             failure_category: row.event.metrics.failure_category.clone(),
+            origin: row.event.origin,
         })
     })
 }

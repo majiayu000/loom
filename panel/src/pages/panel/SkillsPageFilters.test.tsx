@@ -218,24 +218,17 @@ describe("SkillsPage filters and detail tabs", () => {
       materialized_path: "/tmp/target/second-skill",
       last_applied_rev: "def67890",
     };
-    function Harness() {
-      const [selectedSkill, setSelectedSkill] = useState<string | null>("ready");
-      return (
-        <SkillsPage
-          skills={[baseSkill, secondSkill]}
-          targets={[target, secondTarget]}
-          bindings={[binding, secondBinding]}
-          projections={[projection, secondProjection]}
-          selectedSkill={selectedSkill}
-          onSelectSkill={setSelectedSkill}
-          onMutation={() => {}}
-          readOnly={false}
-        />
-      );
-    }
+
     (api.project as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
 
-    render(<Harness />);
+    render(
+      <SkillSelectionHarness
+        secondSkill={secondSkill}
+        secondTarget={secondTarget}
+        secondBinding={secondBinding}
+        secondProjection={secondProjection}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Projections (1)" }));
     fireEvent.click(within(screen.getByRole("table")).getByText("second-skill"));
 
@@ -247,3 +240,26 @@ describe("SkillsPage filters and detail tabs", () => {
     );
   });
 });
+
+function SkillSelectionHarness({
+  secondSkill, secondTarget, secondBinding, secondProjection,
+}: {
+  secondSkill: Skill;
+  secondTarget: Target;
+  secondBinding: Binding;
+  secondProjection: RegistryProjection;
+}) {
+  const [selectedSkill, setSelectedSkill] = useState<string | null>("ready");
+  return (
+    <SkillsPage
+      skills={[baseSkill, secondSkill]}
+      targets={[target, secondTarget]}
+      bindings={[binding, secondBinding]}
+      projections={[projection, secondProjection]}
+      selectedSkill={selectedSkill}
+      onSelectSkill={setSelectedSkill}
+      onMutation={() => {}}
+      readOnly={false}
+    />
+  );
+}

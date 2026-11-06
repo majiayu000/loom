@@ -291,25 +291,9 @@ test("BindingsPage refetches selected binding details after a successful project
   };
 
   try {
-    function Harness() {
-      const [mutationVersion, setMutationVersion] = React.useState(0);
-      const [selectedBinding, setSelectedBinding] = React.useState<string | null>(null);
-      return (
-        <BindingsPage
-          bindings={[binding]}
-          targets={[target]}
-          selectedBinding={selectedBinding}
-          onSelectBinding={setSelectedBinding}
-          readOnly={false}
-          mutationVersion={mutationVersion}
-          onMutation={() => setMutationVersion((cur) => cur + 1)}
-        />
-      );
-    }
-
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<Harness />);
+      renderer = create(<BindingMutationHarness binding={binding} target={target} />);
     });
     await act(async () => {
       clickableRows(renderer!)[0]?.props.onClick();
@@ -489,3 +473,22 @@ test("ProjectionsPage cleans orphaned projection metadata", async () => {
     globalThis.confirm = originalConfirm;
   }
 });
+
+function BindingMutationHarness({ binding, target }: {
+  binding: ReturnType<typeof makeBinding>;
+  target: ReturnType<typeof makeTarget>;
+}) {
+  const [mutationVersion, setMutationVersion] = React.useState(0);
+  const [selectedBinding, setSelectedBinding] = React.useState<string | null>(null);
+  return (
+    <BindingsPage
+      bindings={[binding]}
+      targets={[target]}
+      selectedBinding={selectedBinding}
+      onSelectBinding={setSelectedBinding}
+      readOnly={false}
+      mutationVersion={mutationVersion}
+      onMutation={() => setMutationVersion((cur) => cur + 1)}
+    />
+  );
+}

@@ -247,37 +247,9 @@ test("TargetsPage keeps a newer selection when a previous target delete complete
     });
 
   try {
-    function Harness() {
-      const [selectedTarget, setSelectedTarget] = React.useState<string | null>("target-1");
-      return (
-        <TargetsPage
-          targets={[
-            makeTarget(),
-            makeTarget({
-              id: "target-2",
-              agent: "codex",
-              profile: "work",
-              path: "~/.codex/skills",
-            }),
-          ]}
-          skills={[]}
-          selectedTarget={selectedTarget}
-          onSelectTarget={(id) => {
-            setSelectedTarget((cur) => (cur === id ? null : id));
-          }}
-          onRemoveTarget={(id) => {
-            setSelectedTarget((cur) => (cur === id ? null : cur));
-          }}
-          onMutation={() => {}}
-          readOnly={false}
-          mutationVersion={0}
-        />
-      );
-    }
-
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<Harness />);
+      renderer = create(<TargetRemovalHarness />);
     });
     await flush();
 
@@ -328,34 +300,9 @@ test("BindingsPage keeps a newer selection when a previous binding delete comple
     });
 
   try {
-    function Harness() {
-      const [selectedBinding, setSelectedBinding] = React.useState<string | null>(null);
-      return (
-        <BindingsPage
-          bindings={[
-            makeBinding(),
-            {
-              id: "binding-2",
-              skill: "skill.reader",
-              target: "target-1",
-              matcher: "path_prefix:/other",
-              method: "copy",
-              policy: "manual",
-            },
-          ]}
-          targets={[makeTarget()]}
-          selectedBinding={selectedBinding}
-          onSelectBinding={setSelectedBinding}
-          readOnly={false}
-          mutationVersion={0}
-          onMutation={() => {}}
-        />
-      );
-    }
-
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<Harness />);
+      renderer = create(<BindingRemovalHarness />);
     });
     await act(async () => {
       clickableRows(renderer!)[0]?.props.onClick();
@@ -400,23 +347,10 @@ test("BindingsPage skips live detail fetches in read-only mode", async () => {
   };
 
   try {
-    function Harness() {
-      const [selectedBinding, setSelectedBinding] = React.useState<string | null>(null);
-      return (
-        <BindingsPage
-          bindings={[makeBinding()]}
-          targets={[makeTarget()]}
-          selectedBinding={selectedBinding}
-          onSelectBinding={setSelectedBinding}
-          readOnly={true}
-          mutationVersion={0}
-          onMutation={() => {}}
-        />
-      );
-    }
+
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<Harness />);
+      renderer = create(<ReadOnlyBindingHarness />);
     });
     await act(async () => {
       clickableRows(renderer!)[0]?.props.onClick();
@@ -551,3 +485,71 @@ test("SettingsPage renders all live agent directories", async () => {
     api.info = originalInfo;
   }
 });
+
+function TargetRemovalHarness() {
+  const [selectedTarget, setSelectedTarget] = React.useState<string | null>("target-1");
+  return (
+    <TargetsPage
+      targets={[
+        makeTarget(),
+        makeTarget({
+          id: "target-2",
+          agent: "codex",
+          profile: "work",
+          path: "~/.codex/skills",
+        }),
+      ]}
+      skills={[]}
+      selectedTarget={selectedTarget}
+      onSelectTarget={(id) => {
+        setSelectedTarget((cur) => (cur === id ? null : id));
+      }}
+      onRemoveTarget={(id) => {
+        setSelectedTarget((cur) => (cur === id ? null : cur));
+      }}
+      onMutation={() => {}}
+      readOnly={false}
+      mutationVersion={0}
+    />
+  );
+}
+
+function BindingRemovalHarness() {
+  const [selectedBinding, setSelectedBinding] = React.useState<string | null>(null);
+  return (
+    <BindingsPage
+      bindings={[
+        makeBinding(),
+        {
+          id: "binding-2",
+          skill: "skill.reader",
+          target: "target-1",
+          matcher: "path_prefix:/other",
+          method: "copy",
+          policy: "manual",
+        },
+      ]}
+      targets={[makeTarget()]}
+      selectedBinding={selectedBinding}
+      onSelectBinding={setSelectedBinding}
+      readOnly={false}
+      mutationVersion={0}
+      onMutation={() => {}}
+    />
+  );
+}
+
+function ReadOnlyBindingHarness() {
+  const [selectedBinding, setSelectedBinding] = React.useState<string | null>(null);
+  return (
+    <BindingsPage
+      bindings={[makeBinding()]}
+      targets={[makeTarget()]}
+      selectedBinding={selectedBinding}
+      onSelectBinding={setSelectedBinding}
+      readOnly={true}
+      mutationVersion={0}
+      onMutation={() => {}}
+    />
+  );
+}

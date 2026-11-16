@@ -44,7 +44,7 @@ print(f"release crash backtrace: {len(frames)} frames")
 PY
 fi
 
-# Hard ceiling: 6297 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 6301 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -134,7 +134,9 @@ fi
 # keeping the release binary under a fixed, reviewable ceiling. Durable
 # convergence recovery and telemetry ingestion add the final 24 KiB tranche.
 # Project-scope panel use workspace validation adds the final 1 KiB tranche.
-max_bin_bytes=$((6297 * 1024))
+# The zopfli 0.8.4 and libc 0.2.191 dependency refreshes add the final 4 KiB
+# tranche.
+max_bin_bytes=$((6301 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

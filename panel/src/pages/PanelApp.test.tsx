@@ -523,12 +523,12 @@ describe("PanelApp status failure UI", () => {
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     let dialog = await screen.findByRole("dialog", { name: "Command palette" });
-    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsAdd target/i }));
+    fireEvent.click(within(dialog).getByRole("option", { name: /Commands Add target/i }));
     expect(await screen.findByRole("form", { name: "Add target" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     dialog = await screen.findByRole("dialog", { name: "Command palette" });
-    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsAdd binding/i }));
+    fireEvent.click(within(dialog).getByRole("option", { name: /Commands Add binding/i }));
     expect(await screen.findByRole("form", { name: "Add binding" })).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/bindings", expect.anything());
   });
@@ -539,8 +539,8 @@ describe("PanelApp status failure UI", () => {
     await screen.findByRole("heading", { name: "Overview" });
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     let dialog = await screen.findByRole("dialog", { name: "Command palette" });
-    const addBinding = within(dialog).getByRole("option", { name: /CommandsAdd binding/i }) as HTMLButtonElement;
-    const push = within(dialog).getByRole("option", { name: /CommandsPush remote/i }) as HTMLButtonElement;
+    const addBinding = within(dialog).getByRole("option", { name: /Commands Add binding/i }) as HTMLButtonElement;
+    const push = within(dialog).getByRole("option", { name: /Commands Push remote/i }) as HTMLButtonElement;
     expect(addBinding.disabled).toBe(true);
     expect(addBinding.title).toBe("add a target first");
     expect(push.disabled).toBe(true);
@@ -554,8 +554,8 @@ describe("PanelApp status failure UI", () => {
     await screen.findByText(/live API offline/i);
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     dialog = await screen.findByRole("dialog", { name: "Command palette" });
-    const pull = within(dialog).getByRole("option", { name: /CommandsPull remote/i }) as HTMLButtonElement;
-    const addTarget = within(dialog).getByRole("option", { name: /CommandsAdd target/i }) as HTMLButtonElement;
+    const pull = within(dialog).getByRole("option", { name: /Commands Pull remote/i }) as HTMLButtonElement;
+    const addTarget = within(dialog).getByRole("option", { name: /Commands Add target/i }) as HTMLButtonElement;
     expect(pull.disabled).toBe(true);
     expect(pull.title).toBe("registry offline");
     expect(addTarget.disabled).toBe(true);
@@ -571,7 +571,7 @@ describe("PanelApp status failure UI", () => {
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const dialog = await screen.findByRole("dialog", { name: "Command palette" });
-    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsPull remote/i }));
+    fireEvent.click(within(dialog).getByRole("option", { name: /Commands Pull remote/i }));
 
     await screen.findByRole("heading", { name: "Git sync" });
     expect(await screen.findByText(/sync pull: remote unavailable/i)).toBeInTheDocument();
@@ -585,7 +585,7 @@ describe("PanelApp status failure UI", () => {
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const dialog = await screen.findByRole("dialog", { name: "Command palette" });
-    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsPush remote/i }));
+    fireEvent.click(within(dialog).getByRole("option", { name: /Commands Push remote/i }));
 
     await screen.findByRole("heading", { name: "Git sync" });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/sync/push", expect.anything()));
@@ -599,13 +599,13 @@ describe("PanelApp status failure UI", () => {
     await screen.findByRole("heading", { name: "Overview" });
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     let dialog = await screen.findByRole("dialog", { name: "Command palette" });
-    fireEvent.click(within(dialog).getByRole("option", { name: /CommandsPush remote/i }));
+    fireEvent.click(within(dialog).getByRole("option", { name: /Commands Push remote/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/sync/push", expect.anything()));
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     dialog = await screen.findByRole("dialog", { name: "Command palette" });
-    const pull = within(dialog).getByRole("option", { name: /CommandsPull remote/i }) as HTMLButtonElement;
-    const push = within(dialog).getByRole("option", { name: /CommandsPush remote/i }) as HTMLButtonElement;
+    const pull = within(dialog).getByRole("option", { name: /Commands Pull remote/i }) as HTMLButtonElement;
+    const push = within(dialog).getByRole("option", { name: /Commands Push remote/i }) as HTMLButtonElement;
     expect(pull.disabled).toBe(true);
     expect(push.disabled).toBe(true);
     expect(pull.title).toBe("sync in progress");
